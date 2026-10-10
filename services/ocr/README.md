@@ -69,7 +69,7 @@ uv pip install -r services/ocr/requirements.txt
 .venv/bin/python -m pytest services/ocr -q
 ```
 
-Latest results: **157 passed**; synthetic-set field accuracy 33/33 for name,
+Latest results: **164 passed**; synthetic-set field accuracy 33/33 for name,
 strength and form (precision = recall = 1.000); end-to-end through rendered
 images 8/8 name, 8/8 strength, 8/8 form.
 
@@ -92,8 +92,11 @@ images 8/8 name, 8/8 strength, 8/8 form.
   `08:00, 14:00, 20:00`; bedtime -> `20:00`. Patterns tolerate glued OCR
   (`twicedaily`, `oncedaily`, `atbedtime`); weekly, every-N-hours,
   every-other-day and PRN stay `None` (never guessed).
-- All values except the derived `schedule_times` are verbatim substrings of the
-  recognized text; missing fields use the none shape.
+- All values except the derived `schedule_times` are substrings of the
+  recognized text; display fields (`pharmacy_name`, `pharmacy_phone`,
+  `prescriber`) additionally get whitespace-only punctuation repair
+  (`Dr.A.Demo` -> `Dr. A. Demo`, `St.John` -> `St. John`; decimals and phone
+  formats untouched). `raw_text` and general OCR output are never modified.
 - Multi-frame fusion merges `label_meta` by highest confidence.
 
 ### Real-photo quality (M8)
@@ -101,13 +104,14 @@ images 8/8 name, 8/8 strength, 8/8 form.
 Small/distant labels (Varesh's real scan returned a lone `日` at conf 0.90):
 
 - **Bbox-crop upscaling:** when OCR runs on a bbox crop whose long side is
-  < `engine.MIN_CROP_LONG_SIDE` (1000 px), the crop is upscaled with Lanczos
-  (capped at ×4), then recognized. Line boxes are divided by the actual scale
-  before mapping back to full-frame normalized coordinates. The no-bbox
-  full-frame path is unchanged. No contrast enhancement is applied: CLAHE was
-  measured to merge word spaces on clean pharmacy labels (`Take1tabletbymouth`),
-  breaking cadence parsing and pharmacy-name extraction — Lanczos alone preserves
-  spacing while still helping small/distant labels.
+  < `engine.MIN_CROP_LONG_SIDE` (700 px; RapidOCR already upscales internally to
+  min side 736), the crop is upscaled with Lanczos (capped at ×4), then
+  recognized. Line boxes are divided by the actual scale before mapping back to
+  full-frame normalized coordinates. The no-bbox full-frame path is unchanged.
+  No contrast enhancement is applied: CLAHE was measured to merge word spaces on
+  clean pharmacy labels (`Take1tabletbymouth`), breaking cadence parsing and
+  pharmacy-name extraction — Lanczos alone preserves spacing while still helping
+  small/distant labels.
 - **Degenerate-text sanity:** text with no ASCII letters or fewer than three
   alphabetic characters total (`日`, `||`, punctuation-only) is treated as unread.
   `OcrResult.raw_text` stays verbatim and `OcrResult.readable` is `False`, but

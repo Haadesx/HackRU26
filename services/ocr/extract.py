@@ -784,6 +784,19 @@ def _clean_meta_value(text: str) -> str:
     return text.strip().strip(" \t.,;:")
 
 
+def _normalize_meta_spacing(text: str) -> str:
+    """Display-format fix for label_meta strings: space after period before a letter.
+
+    ``"Dr.A.Demo" -> "Dr. A. Demo"``, ``"St.John" -> "St. John"``; decimal
+    points (``1.5``) are untouched and repeated whitespace is collapsed. Only
+    whitespace is inserted — no characters are added or removed. Applied to
+    ``pharmacy_name``, ``pharmacy_phone`` and ``prescriber`` only; ``raw_text``
+    and the general OCR output are never modified.
+    """
+    text = re.sub(r"\.(?=[A-Za-z])", ". ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _find_quantity_start(text: str) -> FieldString:
     match = QUANTITY_RE.search(text)
     if not match:
@@ -804,14 +817,14 @@ def _find_refills(text: str) -> FieldString:
 def _find_pharmacy_name(text: str) -> FieldString:
     labeled = PHARMACY_LABEL_RE.search(text)
     if labeled:
-        value = _clean_meta_value(labeled.group("value"))
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
         if value:
             return FieldString(value=value, confidence=0.8, source="ocr", raw=value)
     for line in text.split("\n"):
         if not PHARMACY_WORD_RE.search(line):
             continue
         candidate = re.split(r"\b(?:Tel|Phone|Ph)\b", line, maxsplit=1, flags=re.IGNORECASE)[0]
-        candidate = _clean_meta_value(candidate)
+        candidate = _normalize_meta_spacing(_clean_meta_value(candidate))
         if candidate:
             return FieldString(value=candidate, confidence=0.75, source="ocr", raw=candidate)
     # Positional fallback: the line immediately above a phone line is the
@@ -820,7 +833,7 @@ def _find_pharmacy_name(text: str) -> FieldString:
     for index, line in enumerate(lines):
         if index == 0 or not PHONE_LABEL_RE.search(line):
             continue
-        candidate = _clean_meta_value(lines[index - 1])
+        candidate = _normalize_meta_spacing(_clean_meta_value(lines[index - 1]))
         if not candidate or len(candidate) > 40 or re.search(r"\d", candidate):
             continue
         if re.search(r"\b(?:only|refills?|prescriber|tablets?|capsules?)\b", candidate, re.IGNORECASE):
@@ -832,12 +845,12 @@ def _find_pharmacy_name(text: str) -> FieldString:
 def _find_pharmacy_phone(text: str) -> FieldString:
     labeled = PHONE_LABEL_RE.search(text)
     if labeled:
-        value = _clean_meta_value(labeled.group("value"))
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
         if re.search(r"\d{3}", value):
             return FieldString(value=value, confidence=0.85, source="ocr", raw=value)
     generic = PHONE_GENERIC_RE.search(text)
     if generic:
-        value = _clean_meta_value(generic.group("value"))
+        value = _normalize_meta_spacing(_clean_meta_value(generic.group("value")))
         return FieldString(value=value, confidence=0.6, source="ocr", raw=value)
     return absent_string()
 
@@ -845,12 +858,12 @@ def _find_pharmacy_phone(text: str) -> FieldString:
 def _find_prescriber(text: str) -> FieldString:
     labeled = PRESCRIBER_RE.search(text)
     if labeled:
-        value = _clean_meta_value(labeled.group("value"))
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
         if value:
             return FieldString(value=value, confidence=0.85, source="ocr", raw=value)
     doctor = PRESCRIBER_DR_RE.search(text)
     if doctor:
-        value = _clean_meta_value(doctor.group("value"))
+        value = _normalize_meta_spacing(_clean_meta_value(doctor.group("value")))
         if value:
             return FieldString(value=value, confidence=0.7, source="ocr", raw=value)
     return absent_string()

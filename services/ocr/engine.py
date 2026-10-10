@@ -28,8 +28,11 @@ BACKEND_NAME = "rapidocr-onnxruntime"
 _ENGINE: Any = None
 
 # Bbox crops whose long side is smaller than this are upscaled before
-# recognition (small/distant labels otherwise collapse to noise glyphs).
-MIN_CROP_LONG_SIDE = 1000
+# recognition. RapidOCR's detector already rescales internally
+# (limit_side_len=736, limit_type=min), so upscaling crops near that size is
+# redundant and can disturb word spacing; below it, Lanczos helps small/distant
+# labels without merging words.
+MIN_CROP_LONG_SIDE = 700
 MAX_CROP_UPSCALE = 4.0
 
 
@@ -122,7 +125,9 @@ def _prepare_crop(crop: np.ndarray) -> tuple[np.ndarray, float, float]:
 
     Lanczos upscaling alone is used: contrast enhancement (CLAHE) was measured to
     merge word spacing on synthetic pharmacy labels ("Take1 tabletbymouth..."),
-    which breaks cadence parsing and pharmacy-name extraction.
+    which breaks cadence parsing and pharmacy-name extraction. Crops at or above
+    RapidOCR's internal detector limit (limit_side_len=736) read natively and are
+    returned unchanged.
     """
     height, width = crop.shape[:2]
     long_side = max(height, width)
