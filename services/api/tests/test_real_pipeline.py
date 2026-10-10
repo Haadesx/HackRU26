@@ -269,6 +269,51 @@ def test_label_meta_missing_fields_are_null_with_none_source():
     assert meta["schedule_times"]["value"] == "08:00, 20:00"
 
 
+def test_label_meta_contract_is_preferred_when_present():
+    from services.api.real_pipeline import _label_meta_payload
+    from services.common.contract import LabelMeta
+
+    class WithContract:
+        def label_meta_contract(self):
+            return {
+                "quantity_start": {"value": "7", "confidence": 0.9, "source": "ocr"},
+                "refills_remaining": {"value": None, "confidence": 0.0, "source": "none"},
+                "pharmacy_name": {"value": "Rx", "confidence": 0.8, "source": "ocr"},
+                "pharmacy_phone": {"value": None, "confidence": 0.0, "source": "none"},
+                "prescriber": {"value": None, "confidence": 0.0, "source": "none"},
+                "schedule_times": {"value": "08:00, 20:00", "confidence": 0.72, "source": "ocr"},
+            }
+
+    meta = _label_meta_payload(WithContract())
+    assert isinstance(meta, LabelMeta)
+    assert meta.quantity_start.value == "7"
+    assert meta.schedule_times.confidence == 0.72  # PI-2 value passes through
+    assert meta.prescriber.source == "none"
+
+
+def test_label_meta_contract_none_shape_keeps_null_fields():
+    from services.api.real_pipeline import _label_meta_payload
+
+    class EmptyContract:
+        def label_meta_contract(self):
+            return {
+                key: {"value": None, "confidence": 0.0, "source": "none"}
+                for key in (
+                    "quantity_start",
+                    "refills_remaining",
+                    "pharmacy_name",
+                    "pharmacy_phone",
+                    "prescriber",
+                    "schedule_times",
+                )
+            }
+
+    meta = _label_meta_payload(EmptyContract())
+    assert meta is not None
+    assert meta.quantity_start.value is None
+    assert meta.quantity_start.source == "none"
+
+
 @pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)
 def test_real_scan_follows_vision_quality_verdict(sample, monkeypatch):
     """The API must obey vision's acceptable flag, whatever the calibration.
