@@ -36,3 +36,32 @@ def analyze_frame(image_bytes: bytes, hints: dict | None = None) -> "VisionResul
 
 - Do not edit `services/api`, `services/ocr`, `services/vlm`, or `contracts/`.
 - No real drug labels; use synthetic images you generate.
+
+## Implemented surface (feat/vision-atlas)
+
+```python
+from services.vision import analyze_frame
+
+result = analyze_frame(jpeg_bytes, hints={"max_side": 1280, "detector": "auto"})
+```
+
+- `result.quality` — `FrameQuality`: `acceptable`, `score`, `blur`/`exposure`/`glare`
+  sub-scores in `[0,1]`, quality-only `guidance`.
+- `result.bottle` — `Bottle`: `detected`, `confidence`, normalized `bbox`.
+- `result.label` — `Label`: `detected`, `confidence`, normalized `bbox`.
+- `result.guidance` — ordered camera guidance (quality fixes first, then framing).
+- `result.timing` — `total_ms` plus per-stage `stages` (`preprocess`, `quality`, `detect`, `label`).
+- `result.detector` — detector actually used (`yolo` or `heuristic`).
+
+Recognized `hints`: `max_side`, `clahe`, `denoise`, `detector`
+(`auto|heuristic|yolo|none`), `model_path`, `device` (`auto|cpu|cuda`). Unknown
+keys are ignored so the API can pass extra metadata. YOLO is optional
+(`ultralytics` + weights, never committed); without it the deterministic CPU
+heuristic runs. No GPU is required on any path.
+
+```bash
+uv pip install -p .venv -r services/vision/requirements-dev.txt
+.venv/bin/python -m pytest services/vision
+# Regenerate committed synthetic fixtures:
+.venv/bin/python -m services.vision.tests.fixtures.generate_fixtures
+```
