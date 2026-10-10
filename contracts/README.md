@@ -43,3 +43,12 @@ version bump in `contracts/` + `services/common/contract.py` + CHANGELOG entry.
 `contract_version` is included in every response. Additive optional fields bump the
 minor version (`1.1.0`); breaking changes bump the major version and require a new
 `vN/` directory. v1 consumers must ignore unknown optional fields.
+
+**Changelog**
+
+- `1.1.0` (2026-10-10) — additive: `instructions.dose` (`{quantity, unit, confidence,
+  source}`), the structured per-dose quantity as written on the label. Added so the
+  backend's `POST /api/v1/scans` gets a real numeric quantity from inference instead of
+  clients guessing. Absent/`null` when the label does not clearly state a per-dose
+  quantity; never a package count.
+- `1.0.0` — initial frozen contract.

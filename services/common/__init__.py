@@ -5,6 +5,7 @@ from services.common.contract import (  # noqa: F401
     BBox,
     Bottle,
     Candidate,
+    DoseInfo,
     ErrorInfo,
     FieldStrength,
     FieldString,

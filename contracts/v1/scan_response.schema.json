@@ -11,7 +11,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "contract_version": { "type": "string", "const": "1.0.0" },
+    "contract_version": { "type": "string", "const": "1.1.0" },
     "request_id": { "type": "string", "minLength": 8 },
     "status": {
       "type": "string",
@@ -116,6 +116,18 @@
               },
               "text": { "type": "string" }
             }
+          }
+        },
+        "dose": {
+          "type": ["object", "null"],
+          "description": "v1.1 additive: structured per-dose quantity as written on the label (never a package count). Null when not clearly stated.",
+          "additionalProperties": false,
+          "required": ["quantity", "unit", "confidence", "source"],
+          "properties": {
+            "quantity": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "unit": { "type": ["string", "null"] },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "source": { "type": "string", "enum": ["ocr", "vlm", "registry", "none"] }
           }
         }
       }

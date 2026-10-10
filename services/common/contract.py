@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
 
 SAFETY_DISCLAIMER = (
     "Informational only; not medical advice. "
@@ -98,10 +98,25 @@ class InstructionItem(BaseModel):
     text: str
 
 
+class DoseInfo(BaseModel):
+    """v1.1 additive: structured per-dose quantity as written on the label.
+
+    Never a package count. Consumers may ignore this object; the API also uses it
+    to feed the backend's ``POST /scans`` quantity field.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    quantity: Optional[float] = Field(None, gt=0)
+    unit: Optional[str] = None
+    confidence: float = Field(0.0, ge=0, le=1)
+    source: str = Field("none", pattern="^(ocr|vlm|registry|none)$")
+
+
 class Instructions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     raw_text: Optional[str] = None
     parsed: List[InstructionItem] = Field(default_factory=list)
+    dose: Optional[DoseInfo] = None
 
 
 class CandidateStrength(BaseModel):
