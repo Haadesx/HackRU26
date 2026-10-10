@@ -7,6 +7,7 @@ Public API::
 
 from .engine import BACKEND_NAME, OcrUnavailableError, is_available, read_text
 from .extract import extract_fields, find_form, find_manufacturer, find_name, find_strengths, parse_instructions
+from .matcher import DEFAULT_THRESHOLD, match_candidates
 from .types import (
     BBox,
     Extraction,
@@ -21,6 +22,7 @@ from .types import (
 __all__ = [
     "BACKEND_NAME",
     "BBox",
+    "DEFAULT_THRESHOLD",
     "Extraction",
     "FieldString",
     "FieldStrength",
@@ -35,6 +37,7 @@ __all__ = [
     "find_name",
     "find_strengths",
     "is_available",
+    "match_candidates",
     "parse_instructions",
     "read_text",
 ]

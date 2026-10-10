@@ -16,6 +16,10 @@ shapely==2.2.0
 six==1.17.0
 pyyaml==6.0.3
 
+# Shared frozen contract models (services/common/contract.py) used by the
+# registered-candidate matcher; declared here so services/ocr runs standalone.
+pydantic==2.14.0
+
 # Test-only dependencies (synthetic label rendering + test runner).
 pytest==9.1.1
 pillow==12.3.0
@@ -26,3 +30,6 @@ pluggy==1.6.0
 protobuf==7.36.2
 pygments==2.21.0
 tqdm==4.70.1
+pydantic-core==2.50.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
