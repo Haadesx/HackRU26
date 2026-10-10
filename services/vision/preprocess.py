@@ -7,8 +7,9 @@ same photo bytes always yield the same analysis frame.
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
@@ -110,6 +111,114 @@ def crop_normalized(rgb: np.ndarray, bbox: BBox) -> np.ndarray:
     x1 = max(x0 + 1, min(x1, w))
     y1 = max(y0 + 1, min(y1, h))
     return rgb[y0:y1, x0:x1]
+
+
+#: Accepted bbox shapes for the label-crop helpers.
+BBoxLike = Union[BBox, Dict[str, float], Sequence[float], np.ndarray]
+
+
+def _coerce_bbox(bbox: BBoxLike) -> Tuple[float, float, float, float]:
+    """Validate a user-supplied bbox and return raw (x, y, w, h) floats."""
+    if isinstance(bbox, BBox):
+        raw = [bbox.x, bbox.y, bbox.w, bbox.h]
+    elif isinstance(bbox, dict):
+        missing = [key for key in ("x", "y", "w", "h") if key not in bbox]
+        if missing:
+            raise ValueError(f"bbox dict is missing keys: {', '.join(missing)}")
+        raw = [bbox["x"], bbox["y"], bbox["w"], bbox["h"]]
+    elif isinstance(bbox, (tuple, list, np.ndarray)):
+        if len(bbox) != 4:
+            raise ValueError("bbox sequence must contain exactly 4 values (x, y, w, h)")
+        raw = list(bbox)
+    else:
+        raise TypeError(f"unsupported bbox type {type(bbox).__name__}; expected BBox, dict, 4-tuple or ndarray")
+    try:
+        values = [float(value) for value in raw]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("bbox values must be numbers") from exc
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("bbox values must be finite")
+    x, y, w, h = values
+    if w <= 0.0 or h <= 0.0:
+        raise ValueError(f"bbox must have positive w/h, got w={w}, h={h}")
+    return x, y, w, h
+
+
+def _clamped_crop(rgb: np.ndarray, bbox: BBoxLike, pad: float) -> np.ndarray:
+    """Crop a validated bbox with padding, clamped to the frame."""
+    x, y, w, h = _coerce_bbox(bbox)
+    if x >= 1.0 or y >= 1.0 or x + w <= 0.0 or y + h <= 0.0:
+        raise ValueError("bbox does not overlap the frame")
+    frame_h, frame_w = rgb.shape[:2]
+    x0 = int(math.floor(max(0.0, x - pad) * frame_w))
+    y0 = int(math.floor(max(0.0, y - pad) * frame_h))
+    x1 = int(math.ceil(min(1.0, x + w + pad) * frame_w))
+    y1 = int(math.ceil(min(1.0, y + h + pad) * frame_h))
+    x0 = max(0, min(x0, frame_w - 1))
+    y0 = max(0, min(y0, frame_h - 1))
+    x1 = max(x0 + 1, min(x1, frame_w))
+    y1 = max(y0 + 1, min(y1, frame_h))
+    return rgb[y0:y1, x0:x1]
+
+
+def crop_label(
+    image_bytes: bytes,
+    bbox: BBoxLike,
+    *,
+    fmt: str = "jpeg",
+    quality: int = 95,
+    pad: float = 0.01,
+) -> bytes:
+    """Return the label crop as encoded JPEG/PNG bytes — the vision→OCR handoff.
+
+    Args:
+        image_bytes: original frame bytes (JPEG/PNG); decoded EXIF-safe at full resolution.
+        bbox: normalized label box as a contract `BBox`, `{"x","y","w","h"}` dict,
+            4-sequence or ndarray. Clamped to the frame; must overlap it.
+        fmt: ``"jpeg"`` (default, small) or ``"png"`` (lossless).
+        quality: JPEG quality 1–100 (ignored for PNG).
+        pad: extra margin as a fraction of the frame, then clamped.
+
+    Raises:
+        ImageDecodeError: undecodable image bytes.
+        TypeError / ValueError: malformed or empty/off-frame bbox, bad fmt/quality.
+    """
+    fmt_normalized = fmt.lower()
+    if fmt_normalized in ("jpg", "jpeg"):
+        if not 1 <= int(quality) <= 100:
+            raise ValueError(f"JPEG quality must be within [1, 100], got {quality}")
+        extension, params = ".jpg", [cv2.IMWRITE_JPEG_QUALITY, int(quality)]
+    elif fmt_normalized == "png":
+        extension, params = ".png", [cv2.IMWRITE_PNG_COMPRESSION, 9]
+    else:
+        raise ValueError(f"unsupported crop format {fmt!r}; expected 'jpeg' or 'png'")
+
+    rgb = decode_image(image_bytes)
+    crop = _clamped_crop(rgb, bbox, pad)
+    ok, buffer = cv2.imencode(extension, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR), params)
+    if not ok:  # pragma: no cover - encoder failure is exceptional
+        raise RuntimeError("failed to encode label crop")
+    return buffer.tobytes()
+
+
+def crop_label_array(
+    image_bytes: bytes,
+    bbox: BBoxLike,
+    *,
+    channel_order: str = "rgb",
+    pad: float = 0.01,
+) -> np.ndarray:
+    """Label crop as a numpy array for direct OCR-engine consumption.
+
+    `channel_order="bgr"` matches `services.ocr.engine.read_text`'s default.
+    """
+    rgb = decode_image(image_bytes)
+    crop = _clamped_crop(rgb, bbox, pad)
+    if channel_order == "bgr":
+        crop = crop[:, :, ::-1]
+    elif channel_order != "rgb":
+        raise ValueError(f"channel_order must be 'rgb' or 'bgr', got {channel_order!r}")
+    return np.ascontiguousarray(crop)
 
 
 def preprocess(image_bytes: bytes, config: Optional[VisionConfig] = None) -> Preprocessed:

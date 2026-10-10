@@ -24,3 +24,15 @@ def load_bytes():
 @pytest.fixture(scope="session")
 def labels() -> dict:
     return json.loads((FIXTURES_DIR / "labels.json").read_text())
+
+
+@pytest.fixture(scope="session")
+def fixture_path():
+    """Return a resolver for committed fixture paths."""
+
+    def _path(name: str) -> Path:
+        path = FIXTURES_DIR / name
+        assert path.is_file(), f"missing fixture {name!r}; run generate_fixtures.py"
+        return path
+
+    return _path

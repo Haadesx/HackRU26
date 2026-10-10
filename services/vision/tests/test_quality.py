@@ -1,4 +1,5 @@
 """Frame-quality tests on the synthetic fixtures."""
+import numpy as np
 import pytest
 
 from services.vision.preprocess import decode_image
@@ -51,6 +52,14 @@ def test_glare_frame_fails_with_glare_guidance(load_bytes):
     assert quality.glare is not None and quality.glare.has_glare
     assert quality.glare.score < 1.0
     assert any("glare" in text.lower() for text in quality.guidance)
+
+
+def test_dominant_white_surface_is_not_reported_as_glare():
+    # A mostly-saturated frame is overexposure, not a specular highlight.
+    frame = np.full((120, 120, 3), 255, dtype=np.uint8)
+    quality = evaluate_quality(frame)
+    assert quality.glare is not None and not quality.glare.has_glare
+    assert quality.exposure is not None and quality.exposure.too_bright
 
 
 @pytest.mark.parametrize(

@@ -38,6 +38,9 @@ GLARE_LEVEL = 250
 GLARE_FRACTION = 0.02
 #: The saturated pixels must form one blob at least this fraction of the frame.
 GLARE_BLOB_FRACTION = 0.012
+#: Above this fraction of saturated pixels the frame is overexposed rather than
+#: showing a localized specular highlight; the exposure term owns it.
+GLARE_DOMINANT_FRACTION = 0.50
 
 
 def _clip01(value: float) -> float:
@@ -86,6 +89,11 @@ def _glare(gray: np.ndarray) -> tuple[float, bool]:
 
     count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
     largest = float(stats[1:, cv2.CC_STAT_AREA].max()) / total if count > 1 else 0.0
+
+    if fraction >= GLARE_DOMINANT_FRACTION:
+        # Most of the frame is saturated: that is overexposure (already reported
+        # by the exposure term), not a specular highlight on the label.
+        return 1.0, False
 
     has_glare = fraction >= GLARE_FRACTION and largest >= GLARE_BLOB_FRACTION
     score = _clip01(1.0 - fraction / 0.25)
