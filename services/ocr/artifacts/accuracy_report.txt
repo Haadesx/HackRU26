@@ -1,0 +1,44 @@
+MedCheck OCR — field-level accuracy on synthetic labels
+dataset: services/ocr/fixtures/synthetic_labels.json
+labels: 33 | layer: text extraction (services/ocr/extract.py)
+
+id   name(pred | exp)                strength(pred | exp)   form(pred | exp)         result
+------------------------------------------------------------------------------------------------
+L01  Metformin | Metformin                500 mg |   500 mg   tablet | tablet   ok
+L02  Lisinopril | Lisinopril                10 mg |    10 mg   tablet | tablet   ok
+L03  Atorvastatin | Atorvastatin              20 mg |    20 mg   tablet | tablet   ok
+L04  Amoxicillin | Amoxicillin              250 mg |   250 mg  capsule | capsule  ok
+L05  Omeprazole | Omeprazole                20 mg |    20 mg  capsule | capsule  ok
+L06  Losartan | Losartan                  50 mg |    50 mg   tablet | tablet   ok
+L07  Gabapentin | Gabapentin               300 mg |   300 mg  capsule | capsule  ok
+L08  Sertraline | Sertraline                50 mg |    50 mg   tablet | tablet   ok
+L09  Metoprolol | Metoprolol                25 mg |    25 mg   tablet | tablet   ok
+L10  Levothyroxine | Levothyroxine           100 mcg |  100 mcg   tablet | tablet   ok
+L11  Warfarin | Warfarin                   5 mg |     5 mg   tablet | tablet   ok
+L12  Furosemide | Furosemide                40 mg |    40 mg   tablet | tablet   ok
+L13  Prednisone | Prednisone                20 mg |    20 mg   tablet | tablet   ok
+L14  Azithromycin | Azithromycin             250 mg |   250 mg   tablet | tablet   ok
+L15  Ciprofloxacin | Ciprofloxacin            500 mg |   500 mg   tablet | tablet   ok
+L16  Doxycycline | Doxycycline              100 mg |   100 mg  capsule | capsule  ok
+L17  Fluconazole | Fluconazole              150 mg |   150 mg   tablet | tablet   ok
+L18  Pantoprazole | Pantoprazole              40 mg |    40 mg   tablet | tablet   ok
+L19  Rosuvastatin | Rosuvastatin              10 mg |    10 mg   tablet | tablet   ok
+L20  Escitalopram | Escitalopram              10 mg |    10 mg   tablet | tablet   ok
+L21  Hydrochlorothiazide | Hydrochlorothiazide       25 mg |    25 mg   tablet | tablet   ok
+L22  Clopidogrel | Clopidogrel               75 mg |    75 mg   tablet | tablet   ok
+L23  Simvastatin | Simvastatin               40 mg |    40 mg   tablet | tablet   ok
+L24  Ibuprofen | Ibuprofen                200 mg |   200 mg   tablet | tablet   ok
+L25  Metformin | Metformin                500 mg |   500 mg   tablet | tablet   ok
+L26  Lisinopril | Lisinopril                10 mg |    10 mg   tablet | tablet   ok
+L27  Amlodipine | Amlodipine                 5 mg |     5 mg   tablet | tablet   ok
+L28  Atorvastatin | Atorvastatin              20 mg |    20 mg   tablet | tablet   ok
+L29  Levothyroxine | Levothyroxine           100 mcg |  100 mcg   tablet | tablet   ok
+L30  Metformin | Metformin                500 mg |   500 mg   tablet | tablet   ok
+L31  Lisinopril | Lisinopril                10 mg |    10 mg   tablet | tablet   ok
+L32  Metformin | Metformin                500 mg |   500 mg   tablet | tablet   ok
+L33  Metoprolol | Metoprolol                25 mg |    25 mg   tablet | tablet   ok
+------------------------------------------------------------------------------------------------
+name      tp= 33 fp= 0 fn= 0 precision=1.000 recall=1.000 f1=1.000
+strength  tp= 33 fp= 0 fn= 0 precision=1.000 recall=1.000 f1=1.000
+form      tp= 33 fp= 0 fn= 0 precision=1.000 recall=1.000 f1=1.000
+instructions(kind coverage): 2/2 entries satisfied

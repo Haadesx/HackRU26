@@ -1,0 +1,28 @@
+# PI-2 OCR stack (owner: Orion) — isolated from other services.
+#
+# Install inside the worktree venv:
+#   uv venv .venv --python 3.11
+#   uv pip install -r services/ocr/requirements.txt
+#
+# Runtime: RapidOCR (ONNX Runtime). No torch; PP-OCRv4 ONNX models ship inside
+# the wheel (~16 MB package, ~75 MB onnxruntime), verified offline after setup.
+# Decision and comparison: services/ocr/DECISION.md.
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.31.0
+numpy==2.4.6
+opencv-python==5.0.0.93
+pyclipper==1.4.0
+shapely==2.2.0
+six==1.17.0
+pyyaml==6.0.3
+
+# Test-only dependencies (synthetic label rendering + test runner).
+pytest==9.1.1
+pillow==12.3.0
+
+# Pinned transitives for reproducible installs on macOS (dev) and Linux (rig).
+packaging==26.3
+pluggy==1.6.0
+protobuf==7.36.2
+pygments==2.21.0
+tqdm==4.70.1
