@@ -80,6 +80,11 @@ untouched). Push only feature branches.
   endpoint, Juno multi-image VLM). Long-label synthetic samples + console 3-frame capture
   flow added. Suite before M7: **358/358**.
 
+- 2026-10-10 — **M7 done**: multi-frame label capture merged (fusion `63cec7e` clipping
+  `2634807` multi-VLM `4032711` endpoint `db94131`); suite **425/425**; live-verified via
+  console `/api/multi` on overlapping long-label crops (fused name/strength/dose,
+  capture report, rotate guidance). Console gained a 3-frame “Long label” mode.
+
 ## Dispatch log (append-only, board level)
 
 - 2026-10-10 — G1/G2 done; all four assignments dispatched via `octoberctl terminal input`
