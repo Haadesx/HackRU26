@@ -276,7 +276,7 @@ def match_drug_name(token: str, extra_names: Iterable[str] = ()) -> tuple[str, i
     candidates = list(_NAME_INDEX.items()) + [(n.casefold(), n) for n in extra_names]
     # Glued OCR token: name directly followed by strength/form/salt characters.
     for name_norm, canonical in candidates:
-        if plain.startswith(name_norm) and _glued_remainder_ok(plain[len(name_norm) :]):
+        if plain.startswith(name_norm) and glued_remainder_ok(plain[len(name_norm) :]):
             return canonical, 0
     variants = {norm}
     alt = normalize_for_match(token, CONFUSABLE_LETTERS_ALT)
@@ -310,7 +310,7 @@ def _is_suffixish(remainder: str) -> bool:
     return remainder == "" or remainder in SALT_SUFFIXES or normalize_form(remainder) is not None
 
 
-def _glued_remainder_ok(remainder: str) -> bool:
+def glued_remainder_ok(remainder: str) -> bool:
     """True when an OCR-glued token remainder can follow a drug name.
 
     Accepts ``""``, salt/release suffixes, and remainders that start with a
@@ -323,3 +323,38 @@ def _glued_remainder_ok(remainder: str) -> bool:
     if any(remainder.startswith(salt) for salt in SALT_SUFFIXES):
         return True
     return remainder[0].isdigit()
+
+
+def normalized_variants(text: str) -> tuple[str, ...]:
+    """All OCR-noise normalizations of a token (deduplicated)."""
+    return tuple({normalize_for_match(text), normalize_for_match(text, CONFUSABLE_LETTERS_ALT)})
+
+
+def name_similarity(left: str, right: str) -> float:
+    """Similarity in ``[0, 1]`` between two drug names, tolerant to OCR noise.
+
+    Handles case, spacing, digit/letter confusions (``1``<->``l``/``i``,
+    ``0``<->``o``, ``5``<->``s``), glued salt/strength suffixes, and small edit
+    distances. Used by the registered-candidate matcher; it compares names that
+    are already present in the inputs and never looks names up on its own.
+    """
+    if not left or not right:
+        return 0.0
+    best = 0.0
+    for a in normalized_variants(left):
+        if not a:
+            continue
+        for b in normalized_variants(right):
+            if not b:
+                continue
+            if a == b:
+                return 1.0
+            if a.startswith(b) and glued_remainder_ok(a[len(b) :]):
+                best = max(best, 0.97)
+                continue
+            if b.startswith(a) and glued_remainder_ok(b[len(a) :]):
+                best = max(best, 0.97)
+                continue
+            distance = _levenshtein(a, b)
+            best = max(best, 1.0 - distance / max(len(a), len(b)))
+    return max(0.0, min(1.0, best))
