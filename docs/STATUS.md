@@ -58,3 +58,7 @@ untouched). Push only feature branches.
   (+VLM behind flags, matcher pending Orion); Orion builds the registered-candidate
   matcher; Atlas adds `crop_label`/CLI demo/detector env docs; Juno extends escalation
   triggers + `client_from_env()` (no GPU).
+- 2026-10-10 — Wake delivery verified: worker nodes receive `october-bus-wake`
+  end-to-end (Orion, receipt `9b300f77-…`); Apollo's user-shell terminal is refused at
+  the hook admission layer (`{"ok":false,"stale":true}`) — root cause proven in
+  October core. Orchestrator inbound = transcripts + `bus peers`; outbound = pty input.

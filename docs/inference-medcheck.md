@@ -53,7 +53,7 @@ October Bus (agent coordination; see §H).
 | PI-3 VLM adapter + eval + benchmark | ✅ implemented, ✅ orchestrator-re-verified, ✅ measured eval, ✅ MERGED | `feat/vlm-juno` @ `9ac2305` → merge `4c5513f` |
 | Real Vision→OCR→VLM wiring inside the API | ⏳ pending (seam exists: `services/api/pipeline.py`) | — |
 | Full-system integration + acceptance | ⏳ pending | — |
-| Pushing integration branch to `origin` | ⏳ pending | — |
+| Push integration branch to `origin` | ✅ pushed `e0fe570` (branch only; `main` untouched) | `origin/feat/inference-medcheck` |
 
 ---
 
@@ -398,9 +398,18 @@ scripts/gpu_probe.sh
   (`unactivated-terminal`) — dispatch currently uses `octoberctl terminal input`
   (`--id <node> --epoch <epoch> --data "<text>\r"`), inbound uses the peer `message_peer`
   path. Full loop: pty-dispatch → worker executes → `message_peer` queued to Apollo.
-  **Inbound wake delivery into Apollo's session is still unverified** (reports were read
-  from worker transcripts while queued — see §I/§K). Relaunching the orchestration
-  terminal as an October *agent* terminal would restore native Bus tools.
+  **Inbound wake delivery is asymmetric and now verified** (2026-10-10): worker terminals
+  (October agent terminals, `harness: pi`) receive wakes end-to-end — Orion recorded an
+  `october-bus-wake` custom message with receipt `9b300f77-…` (19:45:01Z) carrying
+  Athena's matcher-interface request plus Juno's M2 summary. The **orchestrator terminal
+  cannot receive wakes**: it is a `user-shell` terminal (`manualTerminal: true`), and for
+  such bindings October runs `admitMcp` on *every* hook route; Apollo's admission is
+  refused (`foreground-not-agent`, `inputOwner: "shell"`, `harness: "unknown"`), so
+  `/hook/wake` returns `{"ok":false,"stale":true}` and `/hook/pre-prompt` returns empty —
+  by design. Relaunching the orchestration terminal as an October *agent* terminal (and
+  resuming this Pi session there) would restore native Bus tools + wake delivery.
+  Current orchestrator inbound = worker session transcripts + `bus peers` status
+  summaries; outbound = `octoberctl terminal input`.
 - **Environment variables** the other components may set/need: §D.3. Secrets never in repo;
   vLLM key lives only in `~/.medcheck/vllm.env` (mode 600).
 
@@ -425,7 +434,8 @@ every extracted field carries `{value, confidence, source}`.
 | API tests | `pytest services/api -q` | 40 passed (worker) / 40 passed on merged tree | Athena + orchestrator re-run ✅ |
 | Orchestrator integration harness (merged tree) | `.venv/bin/pytest services/api tests/integration -q` | **42 passed** (40 API + 2 integration) | Orchestrator ✅ |
 | Live API smoke on merged tree | uvicorn :8300 + `scripts/scan_demo.sh` | health/ready 200; scan `uncertain` mock, schema-valid; port freed after | Orchestrator ✅ |
-| October inbound wake to orchestrator | — | **not verified** (messages queued with unconfirmed receipts; reports were read from worker transcripts) | Orchestrator ❌ |
+| October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
+| October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
 
 Known bugs / limitations:
 - `Metformin HCI` OCR error is confidence-blind (0.87) — VLM escalation would not trigger;
@@ -477,25 +487,38 @@ sequential calls, no restarts).
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
 
-**2026-10-10** — **Orchestrator verification + integration.** Branch `feat/inference-medcheck`:
-all four worker branches scope-reviewed (no out-of-scope files) and merged: `2ba5a12`
-(api), `03eb5a7` (ocr), `2c4e3c7` (vision), `4c5513f` (vlm). Independent re-runs: vision 46
-passed, ocr 25 passed (e2e 8/8), vlm 79 passed, api 40 passed; merged tree
-`pytest services/api tests/integration` → **42 passed**; contract validation 3/3; live
-uvicorn :8300 smoke (`scan_demo.sh`) schema-valid, port cleaned up.
-
-**2026-10-10** — Milestone 2 dispatched to all workers: PI-4 real pipeline wiring
-(seam `services/api/pipeline.py`, mock default kept), PI-2 registered-candidate matcher
-(`services/ocr/matcher.py`, interface frozen by orchestrator), PI-1 `crop_label` + CLI
-+d detector env docs, PI-3 escalation-trigger config + `client_from_env()` (no GPU).
-Worker branches must merge `feat/inference-medcheck` before starting. GPU window held
-open for one final end-to-end VLM pass.
-
 **2026-10-10** — Branch `feat/inference-medcheck` created (per Varesh's documentation
 instruction: never develop on/merge into `main`); `origin` added
 (`https://github.com/Haadesx/HackRU26`). Remote verified **empty** (`isEmpty: true`,
 `ls-remote` → no heads) — safe to push a feature branch only; `main` intentionally left
 untouched. This documentation file created.
+
+**2026-10-10** — **Orchestrator verification + integration.** Branch `feat/inference-medcheck`:
+all four worker branches scope-reviewed (no out-of-scope files) and merged: `2ba5a12`
+(api), `03eb5a7` (ocr), `2c4e3c7` (vision), `4c5513f` (vlm). Independent re-runs: vision 46
+passed, ocr 25 passed (e2e 8/8), vlm 79 passed, api 40 passed; merged tree
+`pytest services/api tests/integration` → **42 passed**; contract validation 3/3; live
+uvicorn :8300 smoke (`scan_demo.sh`) schema-valid, port cleaned up. Branch pushed to
+`origin` (`e0fe570`); `main` untouched.
+
+**2026-10-10** — Milestone 2 dispatched to all workers: PI-4 real pipeline wiring
+(seam `services/api/pipeline.py`, mock default kept), PI-2 registered-candidate matcher
+(`services/ocr/matcher.py`, interface frozen by orchestrator), PI-1 `crop_label` + CLI
++detector env docs, PI-3 escalation-trigger config + `client_from_env()` (no GPU).
+Worker branches must merge `feat/inference-medcheck` before starting. GPU window held
+open for one final end-to-end VLM pass.
+
+**2026-10-10** — **Wake-delivery verification (hypothesis → proof).** Method: (1) session
+JSONL ground truth (`custom_message` with `customType=october-bus-wake` + receipt),
+(2) single `POST /hook/wake` probe with the node's own hook credentials (never retried —
+bus semantics), (3) ack/turn-trigger observation. Results: **worker wakes verified**
+(Orion receipt `9b300f77-6…` at 19:45:01Z carrying Athena's matcher-interface request and
+Juno's M2 summary); **orchestrator node probe** returned `{"ok":false,"stale":true}` and
+the root cause was located in `october-core.js`: for `manualTerminal` bindings every hook
+route runs `admitMcp`, which for a `user-shell` terminal is refused
+(`foreground-not-agent`, `inputOwner:"shell"`). Apollo session has 0 custom messages
+(0 pre-prompt, 0 wake). Outbound pty dispatch and worker wake reception remain fully
+functional.
 
 ---
 
@@ -504,17 +527,23 @@ untouched. This documentation file created.
 1. **Orchestrator Bus identity** — Apollo's terminal cannot use mutating Bus tools; pty
    dispatch works. Fix (optional, needs Varesh): relaunch the orchestration terminal as an
    October agent terminal, or accept the current channel.
-2. **Inbound wake unverified** — worker reports queue to Apollo but delivery into the
-   orchestration session has not been observed; workaround: read worker transcripts /
-   rely on pre-prompt pulls. Must be verified before claiming peer messaging is complete.
+2. **Orchestrator wake delivery is blocked by design (verified root cause)** — Apollo's
+   terminal is `user-shell`/`manualTerminal`, so every hook route runs `admitMcp` and is
+   refused (`foreground-not-agent`); `/hook/wake` → `{"ok":false,"stale":true}`. Worker
+   terminals (agent-launched) receive wakes normally. Workarounds in use: outbound
+   `octoberctl terminal input`; inbound worker transcripts + `bus peers` summaries.
+   Permanent fix (Varesh/Desktop action): run the orchestrator in an October **agent**
+   terminal and resume this Pi session (`pi --continue`). This also restores native
+   `message_peer` for the orchestrator.
 3. **Real pipeline wiring** — `services/api/pipeline.py` seam is mock-only. Next: compose
    Vision → OCR → candidate match → (optional) VLM with uncertainty reconciliation, then
    re-run contract + integration tests.
 4. **Candidate/registry matching** — not implemented yet as a service: read text is
    matched only conceptually (`candidates[]` documented). Needs a registry input (from
    backbone/backend) and a matcher with escalation trigger (see Juno's finding).
-5. **Remote push pending** — `feat/inference-medcheck` not yet pushed; only feature
-   branches will be pushed; `main` must be initialized by the team/authorized owner.
+5. **Remote state** — `feat/inference-medcheck` is pushed (`origin`, `e0fe570`+); `main`
+   remains empty/untouched intentionally. The team (or Varesh) should initialize `main`
+   or PR this branch when ready.
 6. **Dependency reconciliation** for a combined rig install (numpy/opencv pins differ;
    rig Python 3.14 vs service venv 3.11; no `uv` on rig).
 7. **Auth/TLS** — gateway has none (dev/local). Flag before any non-local exposure.
