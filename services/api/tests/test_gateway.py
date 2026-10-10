@@ -136,6 +136,8 @@ def test_scan_ok_returns_fixture_medication():
     assert payload["medication"]["strength"]["unit"] == "mg"
     assert payload["label"]["text"] is not None  # raw text preserved verbatim
     assert payload["candidates"][0]["name"] == "Metformin"
+    assert payload["label_meta"]["quantity_start"]["value"] == "30"
+    assert payload["label_meta"]["pharmacy_name"]["value"] == "Demo Pharmacy"
     assert payload["instructions"]["dose"] == {
         "quantity": 1,
         "unit": "tablet",

@@ -69,6 +69,29 @@ def test_required_nullable_keys_survive_serialization():
     assert payload["medication"]["name"]["value"] is None
 
 
+def test_nullable_label_meta_keys_survive_serialization():
+    from services.common.contract import FieldString, LabelMeta
+
+    response = build_fixture_response(FIXTURES[0], "req-conformance00", 1.0)
+    response.label_meta = LabelMeta(quantity_start=FieldString())
+    payload = to_contract_json(response)
+    assert payload["label_meta"]["quantity_start"]["value"] is None
+    assert payload["label_meta"]["quantity_start"]["source"] == "none"
+    jsonschema.validate(instance=payload, schema=SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f in FIXTURES if f.get("label_meta") is not None],
+    ids=[f["key"] for f in FIXTURES if f.get("label_meta") is not None],
+)
+def test_mock_fixtures_carry_label_meta(fixture):
+    payload = to_contract_json(build_fixture_response(fixture, "req-meta00000000", 1.0))
+    meta = payload["label_meta"]
+    assert meta["quantity_start"]["value"] is not None
+    assert meta["pharmacy_name"]["source"] in {"ocr", "none"}
+
+
 def test_nullable_dose_keys_survive_serialization():
     from services.common.contract import DoseInfo
 

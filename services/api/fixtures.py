@@ -62,6 +62,14 @@ FIXTURES: List[Dict[str, Any]] = [
                 "source": "registry",
             }
         ],
+        "label_meta": {
+            "quantity_start": {"value": "30", "confidence": 0.95, "source": "ocr"},
+            "refills_remaining": {"value": "2", "confidence": 0.9, "source": "ocr"},
+            "pharmacy_name": {"value": "Demo Pharmacy", "confidence": 0.88, "source": "ocr"},
+            "pharmacy_phone": {"value": "(555) 010-2030", "confidence": 0.85, "source": "ocr"},
+            "prescriber": {"value": "Dr. A. Demo", "confidence": 0.8, "source": "ocr"},
+            "schedule_times": {"value": "08:00, 20:00", "confidence": 0.7, "source": "ocr"},
+        },
         "interpretation": {"available": False, "summary": None, "source": None, "model": None},
         "uncertainty": {"level": "low", "reasons": [], "rescan_required": False},
     },
@@ -114,6 +122,14 @@ FIXTURES: List[Dict[str, Any]] = [
                 "source": "registry",
             }
         ],
+        "label_meta": {
+            "quantity_start": {"value": "21", "confidence": 0.9, "source": "ocr"},
+            "refills_remaining": {"value": "0", "confidence": 0.9, "source": "ocr"},
+            "pharmacy_name": {"value": "Demo Pharmacy", "confidence": 0.85, "source": "ocr"},
+            "pharmacy_phone": {"value": "(555) 010-2030", "confidence": 0.85, "source": "ocr"},
+            "prescriber": {"value": "Dr. A. Demo", "confidence": 0.8, "source": "ocr"},
+            "schedule_times": {"value": "08:00, 14:00, 20:00", "confidence": 0.7, "source": "ocr"},
+        },
         "interpretation": {"available": False, "summary": None, "source": None, "model": None},
         "uncertainty": {"level": "low", "reasons": [], "rescan_required": False},
     },
@@ -161,6 +177,14 @@ FIXTURES: List[Dict[str, Any]] = [
                 "source": "registry",
             }
         ],
+        "label_meta": {
+            "quantity_start": {"value": "60", "confidence": 0.6, "source": "ocr"},
+            "refills_remaining": {"value": None, "confidence": 0.0, "source": "none"},
+            "pharmacy_name": {"value": "Demo Pharmacy", "confidence": 0.6, "source": "ocr"},
+            "pharmacy_phone": {"value": "(555) 010-2030", "confidence": 0.6, "source": "ocr"},
+            "prescriber": {"value": None, "confidence": 0.0, "source": "none"},
+            "schedule_times": {"value": "08:00, 20:00", "confidence": 0.5, "source": "ocr"},
+        },
         "interpretation": {"available": False, "summary": None, "source": None, "model": None},
         "uncertainty": {
             "level": "medium",

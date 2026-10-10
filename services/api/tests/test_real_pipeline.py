@@ -182,6 +182,138 @@ def test_dose_bridge_never_invents_a_quantity():
     assert _dose_payload(AmbiguousText(), 0.9) is None
 
 
+class _UnreadableOcr:
+    """Stub matching PI-2's M8 ``OcrResult.readable=False`` shape."""
+
+    raw_text = "日"
+    confidence = 0.0
+    elapsed_ms = 0.0
+    readable = False
+
+
+def test_unreadable_ocr_frame_needs_rescan(monkeypatch):
+    from services.api import real_pipeline
+
+    monkeypatch.setattr(
+        real_pipeline,
+        "read_text",
+        lambda image, bbox=None, *, channel_order="bgr", engine=None: _UnreadableOcr(),
+    )
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+
+    _, payload = run_scan(DARK.read_bytes())
+    assert payload["status"] == "needs_rescan"
+    assert payload["uncertainty"]["rescan_required"] is True
+    assert "label_text_unreadable" in payload["uncertainty"]["reasons"]
+    assert payload["medication"]["name"]["value"] is None
+    _assert_safety(payload)
+
+
+def test_unreadable_ocr_can_be_rescued_by_vlm(monkeypatch):
+    from services.api import real_pipeline
+    from services.vlm.client import VlmResult
+
+    monkeypatch.setattr(
+        real_pipeline,
+        "read_text",
+        lambda image, bbox=None, *, channel_order="bgr", engine=None: _UnreadableOcr(),
+    )
+    monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
+
+    class FakeVlmClient:
+        def interpret(self, image_bytes, ocr_text, question):
+            return VlmResult(
+                available=True,
+                summary="VLM read the tiny label",
+                model="fake-vl",
+                fields={
+                    "name": {"value": "Metformin", "confidence": 0.9},
+                    "strength_value": {"value": 500, "confidence": 0.9},
+                    "strength_unit": {"value": "mg", "confidence": 0.9},
+                },
+            )
+
+    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=lambda: FakeVlmClient())
+    assert payload["interpretation"]["available"] is True
+    assert payload["medication"]["name"]["value"] == "Metformin"
+    assert payload["status"] != "needs_rescan"
+    assert "label_text_unreadable" in payload["uncertainty"]["reasons"]
+
+
+def test_real_scan_label_meta(monkeypatch):
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+    _, payload = run_scan(SHARP.read_bytes())
+    meta = payload["label_meta"]
+    assert meta["quantity_start"]["value"] == "30"
+    assert meta["refills_remaining"]["value"] == "2"
+    assert meta["pharmacy_name"]["value"] == "Demo Pharmacy"
+    assert meta["pharmacy_phone"]["value"] == "(555) 010-2030"
+    assert meta["prescriber"]["value"] == "Dr. A. Demo"
+    assert meta["schedule_times"]["value"] == "08:00, 20:00"
+    for field_entry in meta.values():
+        assert field_entry["source"] in {"ocr", "vlm", "registry", "none"}
+        assert 0.0 <= field_entry["confidence"] <= 1.0
+
+
+def test_label_meta_missing_fields_are_null_with_none_source():
+    from services.api.real_pipeline import _fallback_label_meta
+    from services.ocr.extract import extract_fields
+
+    meta = _fallback_label_meta(extract_fields("Take 1 tablet by mouth twice daily."))
+    assert meta["quantity_start"] == {"value": None, "confidence": 0.0, "source": "none"}
+    assert meta["refills_remaining"]["source"] == "none"
+    assert meta["pharmacy_name"]["value"] is None
+    assert meta["pharmacy_phone"]["value"] is None
+    assert meta["prescriber"]["value"] is None
+    # Schedule is derived from the frequency wording; absent metadata stays null.
+    assert meta["schedule_times"]["value"] == "08:00, 20:00"
+
+
+def test_label_meta_contract_is_preferred_when_present():
+    from services.api.real_pipeline import _label_meta_payload
+    from services.common.contract import LabelMeta
+
+    class WithContract:
+        def label_meta_contract(self):
+            return {
+                "quantity_start": {"value": "7", "confidence": 0.9, "source": "ocr"},
+                "refills_remaining": {"value": None, "confidence": 0.0, "source": "none"},
+                "pharmacy_name": {"value": "Rx", "confidence": 0.8, "source": "ocr"},
+                "pharmacy_phone": {"value": None, "confidence": 0.0, "source": "none"},
+                "prescriber": {"value": None, "confidence": 0.0, "source": "none"},
+                "schedule_times": {"value": "08:00, 20:00", "confidence": 0.72, "source": "ocr"},
+            }
+
+    meta = _label_meta_payload(WithContract())
+    assert isinstance(meta, LabelMeta)
+    assert meta.quantity_start.value == "7"
+    assert meta.schedule_times.confidence == 0.72  # PI-2 value passes through
+    assert meta.prescriber.source == "none"
+
+
+def test_label_meta_contract_none_shape_keeps_null_fields():
+    from services.api.real_pipeline import _label_meta_payload
+
+    class EmptyContract:
+        def label_meta_contract(self):
+            return {
+                key: {"value": None, "confidence": 0.0, "source": "none"}
+                for key in (
+                    "quantity_start",
+                    "refills_remaining",
+                    "pharmacy_name",
+                    "pharmacy_phone",
+                    "prescriber",
+                    "schedule_times",
+                )
+            }
+
+    meta = _label_meta_payload(EmptyContract())
+    assert meta is not None
+    assert meta.quantity_start.value is None
+    assert meta.quantity_start.source == "none"
+
+
 @pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)
 def test_real_scan_follows_vision_quality_verdict(sample, monkeypatch):
     """The API must obey vision's acceptable flag, whatever the calibration.
