@@ -182,6 +182,64 @@ def test_dose_bridge_never_invents_a_quantity():
     assert _dose_payload(AmbiguousText(), 0.9) is None
 
 
+class _UnreadableOcr:
+    """Stub matching PI-2's M8 ``OcrResult.readable=False`` shape."""
+
+    raw_text = "日"
+    confidence = 0.0
+    elapsed_ms = 0.0
+    readable = False
+
+
+def test_unreadable_ocr_frame_needs_rescan(monkeypatch):
+    from services.api import real_pipeline
+
+    monkeypatch.setattr(
+        real_pipeline,
+        "read_text",
+        lambda image, bbox=None, *, channel_order="bgr", engine=None: _UnreadableOcr(),
+    )
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+
+    _, payload = run_scan(DARK.read_bytes())
+    assert payload["status"] == "needs_rescan"
+    assert payload["uncertainty"]["rescan_required"] is True
+    assert "label_text_unreadable" in payload["uncertainty"]["reasons"]
+    assert payload["medication"]["name"]["value"] is None
+    _assert_safety(payload)
+
+
+def test_unreadable_ocr_can_be_rescued_by_vlm(monkeypatch):
+    from services.api import real_pipeline
+    from services.vlm.client import VlmResult
+
+    monkeypatch.setattr(
+        real_pipeline,
+        "read_text",
+        lambda image, bbox=None, *, channel_order="bgr", engine=None: _UnreadableOcr(),
+    )
+    monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
+
+    class FakeVlmClient:
+        def interpret(self, image_bytes, ocr_text, question):
+            return VlmResult(
+                available=True,
+                summary="VLM read the tiny label",
+                model="fake-vl",
+                fields={
+                    "name": {"value": "Metformin", "confidence": 0.9},
+                    "strength_value": {"value": 500, "confidence": 0.9},
+                    "strength_unit": {"value": "mg", "confidence": 0.9},
+                },
+            )
+
+    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=lambda: FakeVlmClient())
+    assert payload["interpretation"]["available"] is True
+    assert payload["medication"]["name"]["value"] == "Metformin"
+    assert payload["status"] != "needs_rescan"
+    assert "label_text_unreadable" in payload["uncertainty"]["reasons"]
+
+
 @pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)
 def test_real_scan_follows_vision_quality_verdict(sample, monkeypatch):
     """The API must obey vision's acceptable flag, whatever the calibration.

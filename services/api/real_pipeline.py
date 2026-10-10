@@ -396,6 +396,7 @@ class FrameResult:
     guidance: List[str] = field(default_factory=list)
     extraction: Optional[Extraction] = None
     raw_text: Optional[str] = None
+    readable: Optional[bool] = None
     ocr_confidence: float = 0.0
     canonical: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     candidates: List[Candidate] = field(default_factory=list)
@@ -527,14 +528,22 @@ class RealScanPipeline:
             frame.stages = stages
             return frame
         stages["ocr"] = round((time.perf_counter() - ocr_started) * 1000.0, 3)
+        frame.readable = getattr(ocr_result, "readable", None)
         frame.raw_text = ocr_result.raw_text.strip() or None
         frame.ocr_confidence = ocr_result.confidence
+        extract_hints = extract_hints_from_request(hints)
 
-        frame.extraction = extract_fields(
-            ocr_result.raw_text, hints=extract_hints_from_request(hints)
-        )
-        frame.canonical = canonical_ocr_fields(frame.extraction, ocr_result.confidence)
-        frame.uncertainty = uncertainty_from_fields(frame.canonical)
+        if frame.readable is False:
+            # PI-2 marks OCR with no real text (e.g. "日", "||"). Never trust its
+            # extraction; keep raw_text verbatim so a VLM read can still rescue it.
+            frame.extraction = extract_fields("", hints=extract_hints)
+            frame.canonical = {}
+            frame.uncertainty = uncertainty_from_fields({})
+            frame.uncertainty["reasons"].append("label_text_unreadable")
+        else:
+            frame.extraction = extract_fields(ocr_result.raw_text, hints=extract_hints)
+            frame.canonical = canonical_ocr_fields(frame.extraction, ocr_result.confidence)
+            frame.uncertainty = uncertainty_from_fields(frame.canonical)
 
         match_started = time.perf_counter()
         frame.candidates, frame.candidate_mismatch = self._match(frame.extraction, hints)
@@ -576,6 +585,16 @@ class RealScanPipeline:
             )
         else:
             frame.uncertainty["reasons"].append("vlm_unavailable")
+        if frame.readable is False:
+            reasons = frame.uncertainty.setdefault("reasons", [])
+            if "label_text_unreadable" not in reasons:
+                reasons.append("label_text_unreadable")
+
+    @staticmethod
+    def _has_identity(canonical: Dict[str, Dict[str, Any]]) -> bool:
+        name = (canonical.get("name") or {}).get("value")
+        strength = (canonical.get("strength_value") or {}).get("value")
+        return name is not None or strength is not None
 
     @staticmethod
     def _status_for(vision: Any, canonical: Dict[str, Dict[str, Any]], uncertainty: Dict[str, Any]) -> str:
@@ -598,6 +617,9 @@ class RealScanPipeline:
         if frame.vision is not None and frame.vision.quality.acceptable:
             self._maybe_escalate(frame)
             frame.status = self._status_for(frame.vision, frame.canonical, frame.uncertainty)
+            if frame.readable is False and not self._has_identity(frame.canonical):
+                # Unreadable OCR and no VLM rescue: ask for a retake.
+                frame.status = "needs_rescan"
 
         total_ms = round((time.perf_counter() - started) * 1000.0, 3)
         return self._build_single_response(ctx.request_id, frame, total_ms)
@@ -659,16 +681,14 @@ class RealScanPipeline:
             frame.index = index
             frames.append(frame)
         for frame in frames:
-            # Multi-frame capture gates on label localization: a frame where the
-            # label was not found is never fused (the single-scan full-frame OCR
-            # fallback stays single-scan behaviour).
-            if (
-                frame.error is None
-                and frame.vision is not None
-                and frame.vision.quality.acceptable
-                and not frame.vision.label.detected
-            ):
-                frame.status = "no_medication_found"
+            # Multi-frame capture gates on label localization and readability: a
+            # frame whose label was not found (or holds no real text) is never
+            # fused (the single-scan full-frame OCR fallback stays single-scan).
+            if frame.error is None and frame.vision is not None and frame.vision.quality.acceptable:
+                if not frame.vision.label.detected:
+                    frame.status = "no_medication_found"
+                elif frame.readable is False and not self._has_identity(frame.canonical):
+                    frame.status = "needs_rescan"
         accepted = [frame for frame in frames if frame.accepted]
         per_frame = [self._per_frame_result(frame) for frame in frames]
 
