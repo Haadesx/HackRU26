@@ -47,12 +47,12 @@ October Bus (agent coordination; see §H).
 | Part | Status | Branch / commit |
 |---|---|---|
 | Frozen v1 contract (schemas + pydantic mirror) | ✅ implemented, ✅ validated | `feat/inference-medcheck` |
-| PI-4 API: mock + **real OCR-first pipeline** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/api-athena` `7200f0c` → merge `b6bbbef` |
+| PI-4 API: mock + real OCR-first pipeline + **M3 escalation wiring** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/api-athena` → merges `b6bbbef`, `4d0d32c` |
 | PI-2 OCR + extraction + **candidate matcher** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/ocr-orion` `09c41d3` → merge `a49afd0` |
 | PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED + noise regression **fixed** (`ae1c3a8`) | `feat/vision-atlas` → merges `5b60648` + `ae1c3a8` |
-| PI-3 VLM adapter + eval + **escalation triggers** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` `338759d` → merge `91a5c83` |
+| PI-3 VLM adapter + eval + **escalation triggers + normalization** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` → merges `91a5c83`, `fc5ff80` |
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
-| Full-system acceptance on merged tree | ✅ **277 passed / 0 failed** after noise fix (`ae1c3a8`) | `feat/inference-medcheck` |
+| Full-system acceptance on merged tree | ✅ **293 passed / 0 failed** (fresh env, M3 merged) | `feat/inference-medcheck` |
 
 ---
 
@@ -456,6 +456,9 @@ every extracted field carries `{value, confidence, source}`.
 | **GPU/VRAM during real VLM call** | nvidia-smi before/after | 18,383 MiB used / 13,706 free — **unchanged**, shared vLLM never restarted | Orchestrator ✅ |
 | **Fresh combined env (reproducibility)** | `scripts/setup_full_env.sh` then `.venv-full/bin/python -m pytest services tests/integration -q` | **277 passed** in 12.03 s from a clean env | Orchestrator ✅ |
 | **Concurrency profile (real mode, VLM off, Mac CPU)** | 8 sequential + 8 concurrent scans | sequential p50 **745 ms**, p90 1554 ms; 8 concurrent all OK in **~2.1 s wall** (~3.8 scans/s), no errors | Orchestrator ✅ |
+| **M3 escalation efficiency (live)** | real mode + VLM enabled: clean scan | **541.6 ms, `stages.vlm=0.0`, `interpretation.available=false`** — no rig call on clean reads | Orchestrator ✅ |
+| **M3 escalation trigger (live)** | same, registered candidate mismatch | VLM fires (**1696 ms** stage, total 1946 ms), `interpretation.available=true`, candidates `[]`, conflict reason carries rationale | Orchestrator ✅ |
+| **M3 reconciliation normalization** | clean-scan uncertainty reasons | `['missing:manufacturer']` only — case-only `ocr_vlm_conflict` noise gone | Orchestrator ✅ |
 | October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
 | October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
 
@@ -508,6 +511,14 @@ sequential calls, no restarts).
 - `feat/api-athena` `a855318` — mock FastAPI gateway on :8300, 40 tests, live smoke OK.
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
+
+**2026-10-10** — **Milestone 3 merged and verified.** Juno (`9e13a4f`, `16ca2dd`) +
+Athena (`6ec5c0b`, `66d58b0`, `c9a8a4a`) → merges `fc5ff80`, `4d0d32c`. Fresh-env full
+suite: **293 passed / 0 failed**. Live escalation behaviour verified: clean scan
+**541.6 ms** with `stages.vlm=0.0` and no interpretation (no rig call); registered
+candidate mismatch escalates (VLM **1696 ms**, total 1946 ms, interpretation from
+Qwen3-VL); case-only conflicts removed, real conflicts carry rationale; VRAM unchanged
+(18,383 used / 13,706 free). `services/api/HANDOFF.md` expanded for iOS/backend.
 
 **2026-10-10** — **Reproducibility + performance.** `scripts/setup_full_env.sh` added
 (union env `.venv-full`) and verified from scratch: full suite **277 passed / 12.03 s**.
@@ -591,21 +602,14 @@ functional.
    frame-level fallback) merged; Gaussian noise (sigma 25/40/60) rejected, flat label
    unchanged (conf 0.5808, same bbox); merged suite **277/277**.
 4. **Candidate/registry matching** — matcher implemented (`services/ocr/matcher.py`,
-   `match_candidates`, threshold 0.75) and wired into the API when hints provide
-   candidates. Still missing: `should_use_vlm` is called without the M2 config, so the
-   recommended **candidate-mismatch escalation trigger is not passed by the API yet**
-   (M3 item for Athena). Registry source (backend-provided candidate list) remains an
-   integration input — no server-side registry exists in this repo.
-5. **Escalation over-triggers on optional fields** — `should_use_vlm` escalates when any
-   field (including the absent optional `manufacturer`) is below `min_field_confidence`;
-   a clean label therefore costs a ~1.7 s VLM call. Recommend restricting escalation to
-   identity-critical fields (name/strength) + candidate mismatch, with normalization
-   (M3 item for Juno).
-6. **Reconcile conflict noise** — case-only differences (`ocr='tablet'` vs
-   `vlm='TABLETS'`, `'Metformin'` vs `'METFORMIN HCl'`) are reported as
-   `ocr_vlm_conflict` even though they agree semantically; comparisons should normalize
-   case/whitespace and compare parsed instructions rather than raw text (M3 item for
-   Juno). Values are preserved correctly in the meantime (both kept).
+   `match_candidates`, threshold 0.75) and wired into the API; `candidate_mismatch` now
+   drives escalation (M3, verified live). Remaining integration input: the candidate
+   registry itself is backend-owned — the API accepts it via `hints.known_candidates`
+   until a dedicated endpoint/source is agreed with Urvi.
+5. **Auth/TLS** — gateway has none (dev/local). Must be decided before any non-local
+   exposure (iOS device testing will need it; the Mac-local tester runs on localhost).
+6. **On-device iOS validation** — blocked on the iOS app (Aparajita); contract and
+   `services/api/HANDOFF.md` are ready for integration.
 5. **Remote state** — `feat/inference-medcheck` is pushed (`origin`, `e0fe570`+); `main`
    remains empty/untouched intentionally. The team (or Varesh) should initialize `main`
    or PR this branch when ready.

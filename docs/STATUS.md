@@ -29,19 +29,27 @@ untouched). Push only feature branches.
 | G3 | Mock FastAPI scan endpoint live on :8300 | DONE + MERGED (`2ba5a12`), re-verified |
 | G4 | Real OCR integrated, structured extraction verified | DONE: real pipeline merged (`b6bbbef`); live sharp scan extracted Metformin 500 mg |
 | G5 | Bottle detection + frame guidance integrated | DONE: vision merged (`5b60648`); live blurry scan → needs_rescan + guidance in 19.5 ms |
-| G6 | Qwen3-VL benchmarked + integrated where beneficial | DONE for pipeline: live real VLM call 1745 ms, VRAM unchanged; tuning items in doc §K |
-| G7 | Full integration tests + GPU measurements | DONE (core): **277/277 merged tests**; VRAM measured (13,706 MiB free, unchanged); concurrency profile TODO |
-| G8 | Mac→home-rig inference through approved private connection | CORE VERIFIED: Mac→Tailscale→rig vLLM through the live API; final hardening TODO |
-| G9 | Stable contract delivered to iOS/backend | Contract frozen + pushed; handoff package/correctness review TODO |
+| G6 | Qwen3-VL benchmarked + integrated where beneficial | DONE: clean scans skip the VLM (541 ms); escalation only on weak/mismatched identity (VLM ~1.7 s) |
+| G7 | Full integration tests + GPU measurements | DONE: **293/293**; VRAM measured; concurrency profile done |
+| G8 | Mac→home-rig inference through approved private connection | DONE (core): Mac→Tailscale→rig vLLM through the live API, verified multiple times |
+| G9 | Stable contract delivered to iOS/backend | READY: contract frozen + `HANDOFF.md` + examples; awaiting consumers (registry input, auth decision) |
 
-## Worker milestone 1 — delivered (2026-10-10, worker-reported)
+## Worker milestones — delivered (2026-10-10)
 
-| Branch | HEAD | Tests (worker) | Notes |
+| Branch | Tip | Tests (worker) | Notes |
 |---|---|---|---|
-| `feat/vision-atlas` | `ae1c3a8` | 76 passed | noise-immunity gate added; merged into integration |
-| `feat/ocr-orion` | `09c41d3` | 52 passed | candidate matcher + Extraction-shape fix |
-| `feat/vlm-juno` | `338759d` | 91 passed | escalation triggers + client_from_env |
-| `feat/api-athena` | `7200f0c` | 56 passed | real OCR-first pipeline + EXIF regression |
+| `feat/vision-atlas` | `ae1c3a8` | 76 passed | noise gate; merged (`5b60648`+`34480c3`) |
+| `feat/ocr-orion` | `09c41d3` | 52 passed | matcher; merged (`a49afd0`) |
+| `feat/vlm-juno` | `16ca2dd` | 104 passed | M3 fields+normalization; merged (`fc5ff80`) |
+| `feat/api-athena` | `66d58b0` | 59 passed | M3 escalation wiring + HANDOFF; merged (`4d0d32c`) |
+
+## Final verification (orchestrator)
+
+- Fresh env full suite: **293 passed / 0 failed** (vision 76 · ocr 52 · vlm 104 · api 59 · integration 2).
+- Real-mode live: clean scan 541 ms (no VLM call); candidate mismatch → VLM 1696 ms;
+  blurry → needs_rescan 19.5 ms; VRAM 13,706 MiB free unchanged.
+- All four worker branches scope-clean; integration branch pushed (`origin`), `main`
+  untouched.
 
 ## Dispatch log (append-only, board level)
 
