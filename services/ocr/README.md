@@ -69,9 +69,33 @@ uv pip install -r services/ocr/requirements.txt
 .venv/bin/python -m pytest services/ocr -q
 ```
 
-Latest results: **75 passed**; synthetic-set field accuracy 33/33 for name,
+Latest results: **93 passed**; synthetic-set field accuracy 33/33 for name,
 strength and form (precision = recall = 1.000); end-to-end through rendered
 images 8/8 name, 8/8 strength, 8/8 form.
+
+### Multi-frame fusion (contract v1.2)
+
+`fuse_extractions(extractions) -> FusionResult(extraction, frames_used,
+conflicts, per_frame_confidence)` combines overlapping per-frame `Extraction`s
+from a label larger than one camera frame (`POST /v1/scan/multi`).
+
+- name/strength/form/manufacturer: highest-confidence non-null wins; distinct
+  values at confidence >= 0.5 append `<field>_conflict` to `conflicts`
+  (strength compared as normalized `(value, unit)`).
+- dose: highest-confidence non-null `quantity+unit`; distinct pairs append
+  `dose_conflict`. A missing dose in another frame is not a conflict.
+- instructions: union of parsed items deduped by lowercased/space-collapsed
+  text, first-seen order; the kept verbatim text comes from the
+  highest-confidence frame (ties keep the first).
+- `raw_text`: each frame's text verbatim, joined by `\n--- frame N ---\n` markers.
+- empty input raises `ValueError`; a single frame passes through with
+  `frames_used=1` and no markers.
+- every output value and instruction text is copied from a source frame — fusion
+  never fabricates text.
+
+Verified on `samples/long_label_{left,middle,right}.png`: fused name
+Hydrochlorothiazide (0.95), strength 25 mg, form tablet, dose 1 tablet,
+instructions containing the morning/water/warning content, no conflicts.
 
 ### Structured per-dose quantity (contract v1.1)
 
