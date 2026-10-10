@@ -38,3 +38,56 @@ Both must work on macOS CPU with no network after setup.
   ("Metform1n", "5O0mg"), and multi-line labels.
 - No fabricated drug names in fixtures beyond standard synthetic names.
 - Report SHA + test output to Apollo via Bus.
+
+---
+
+## Implementation notes (PI-2 Orion)
+
+Stack: `rapidocr-onnxruntime==1.4.4` on ONNX Runtime, CPU-only, models bundled —
+see [`DECISION.md`](DECISION.md).
+
+### Layout
+
+```
+services/ocr/
+  engine.py      read_text(image, bbox=None, *, channel_order="bgr") -> OcrResult
+  extract.py     extract_fields(raw_text, hints=None) -> Extraction
+                 parse_instructions(raw_text) -> list[InstructionItem]
+  types.py       BBox / OcrResult / FieldString / FieldStrength / Extraction (contract v1 shaped)
+  lexicon.py     standard generic names, salts, dosage forms, units, OCR-confusion matching
+  fixtures/synthetic_labels.json   33 labeled synthetic lines (clean + noisy + multi-line)
+  tests/         field extraction, instruction parsing, accuracy table, end-to-end OCR
+  artifacts/     generated accuracy tables (also echoed by pytest at session end)
+```
+
+### Run
+
+```bash
+uv venv .venv --python 3.11
+uv pip install -r services/ocr/requirements.txt
+.venv/bin/python -m pytest services/ocr -q
+```
+
+Latest results: **25 passed**; synthetic-set field accuracy 33/33 for name,
+strength and form (precision = recall = 1.000); end-to-end through rendered
+images 8/8 name, 8/8 strength, 8/8 form.
+
+### Safety behavior
+
+- Raw text is preserved verbatim; every instruction item is a substring of the source.
+- Names are canonicalized only against the lexicon (`Metform1n` -> `Metformin`,
+  `L1SINOPRIL` -> `Lisinopril`). Unknown tokens fall back to the verbatim source
+  token at confidence <= 0.5; names are never invented. `FieldString.raw` keeps
+  the original substring.
+- **Strength** (`mg`, `mcg`, `g`, `ml`, `IU`, `%`) is never taken from quantity
+  per dose (`Take 2 tablets`) or package counts (`30 tablets`); the dose count is
+  reported as a `dose` instruction item instead.
+- Missing fields are contract-valid `{value: null, confidence: 0.0, source: "none"}`.
+- `hints` only bias matching (name/lexicon/strength); they never become values.
+
+### Contract mapping
+
+- `Extraction.medication_contract()` -> `medication{name,strength,form,manufacturer}`
+- `Extraction.instructions_contract()` -> `instructions{raw_text,parsed[]}`
+
+The API service (`services/api`) owns composing these into `ScanResponse`.

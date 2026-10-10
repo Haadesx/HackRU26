@@ -1,0 +1,14 @@
+MedCheck OCR — end-to-end accuracy on rendered synthetic labels
+pipeline: PIL render -> services/ocr/engine.read_text (RapidOCR) -> services/ocr/extract.extract_fields
+labels: 8
+
+L01  ocr=METFORMIN HYDROCHLORIDE5OOmg / LTABLETS              name=Metformin strength=500.0mg form=tablet
+L02  ocr=Lisinopril 10 mg Tablets                             name=Lisinopril strength=10.0mg form=tablet
+L03  ocr=ATORVASTATINCALCIUM2OMGFILM-COATEDTABLETS            name=Atorvastatin strength=20.0mg form=tablet
+L10  ocr=Levothyroxine Sodium 100 mcg Tablets                 name=Levothyroxine strength=100.0mcg form=tablet
+L25  ocr=Metform1n 500mg Tablets                              name=Metformin strength=500.0mg form=tablet
+L29  ocr=LEVOTHYROXINE1OOMCGTABLETS                           name=Levothyroxine strength=100.0mcg form=tablet
+L30  ocr=METFORMIN HCI / 500 mg / TABLETS                     name=Metformin strength=500.0mg form=tablet
+L31  ocr=LISINOPRIL10 / mg / Take 2 tablets by mouth once dai name=Lisinopril strength=10.0mg form=tablet
+------------------------------------------------------------------------------------------------
+name 8/8  strength 8/8  form 8/8

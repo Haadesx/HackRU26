@@ -1,1 +1,40 @@
-"""MedCheck ocr service package (owner per README)."""
+"""MedCheck OCR service (owner: PI-2 Orion).
+
+Public API::
+
+    from services.ocr import read_text, extract_fields, parse_instructions
+"""
+
+from .engine import BACKEND_NAME, OcrUnavailableError, is_available, read_text
+from .extract import extract_fields, find_form, find_manufacturer, find_name, find_strengths, parse_instructions
+from .types import (
+    BBox,
+    Extraction,
+    FieldString,
+    FieldStrength,
+    InstructionItem,
+    OcrLine,
+    OcrResult,
+    OcrWord,
+)
+
+__all__ = [
+    "BACKEND_NAME",
+    "BBox",
+    "Extraction",
+    "FieldString",
+    "FieldStrength",
+    "InstructionItem",
+    "OcrLine",
+    "OcrResult",
+    "OcrUnavailableError",
+    "OcrWord",
+    "extract_fields",
+    "find_form",
+    "find_manufacturer",
+    "find_name",
+    "find_strengths",
+    "is_available",
+    "parse_instructions",
+    "read_text",
+]
