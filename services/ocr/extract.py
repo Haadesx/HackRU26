@@ -86,6 +86,7 @@ FREQ_RE = re.compile(
     r"|every\s*(?:\d+(?:\s*(?:to|-)\s*\d+)?\s*)?(?:hours?|hrs?|days?|weeks?|months?|"
     r"mornings?|evenings?|nights?|other\s*day)"
     r"|daily|weekly|monthly|nightly|at\s*bedtime|bedtime"
+    r"|in\s*the\s*(?:morning|afternoon|evening|night)|at\s*night"
     r"|q\.?\d+\s*h|qid|tid|bid|qd|qhs|qam|qpm|prn|as\s*needed|as\s*directed|per\s*day|a\s*day",
     re.IGNORECASE,
 )
