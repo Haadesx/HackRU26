@@ -11,8 +11,10 @@ import io
 import json
 from pathlib import Path
 
+import cv2
 import httpx
 import jsonschema
+import numpy as np
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
@@ -29,7 +31,7 @@ from services.api.real_pipeline import (
     extract_hints_from_request,
     known_candidates_from_request,
 )
-from services.common.contract import ScanResponse
+from services.common.contract import BBox, ScanResponse
 from services.vision.pipeline import analyze_frame
 from services.vlm.client import Qwen3VLClient, VlmConfig
 
@@ -152,6 +154,45 @@ def test_real_scan_invalid_image_is_domain_error(monkeypatch):
     assert payload["error"]["code"] == "INVALID_IMAGE"
     assert payload["mode"] == "real"
     _assert_safety(payload)
+
+
+def test_ocr_frame_decode_is_exif_safe(monkeypatch):
+    """Vision bboxes refer to the EXIF-displayed orientation.
+
+    Locks the adapter to services.vision.decode_image (EXIF-transposed) rather
+    than a raw cv2 decode, so a rotated camera photo keeps bbox alignment.
+    """
+    from services.api import real_pipeline
+    from services.ocr.types import OcrResult
+    from services.vision.preprocess import decode_image
+
+    image = Image.new("RGB", (600, 300), "white")
+    exif = image.getexif()
+    exif[274] = 6  # Orientation: rotate 90 CW for display
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    data = buffer.getvalue()
+
+    displayed = decode_image(data).shape[:2]
+    stored = cv2.imdecode(
+        np.frombuffer(data, dtype=np.uint8),
+        cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION,
+    ).shape[:2]
+    assert (stored, displayed) == ((300, 600), (600, 300)), "fixture must exercise EXIF rotation"
+
+    captured = {}
+
+    def fake_read_text(image_array, bbox=None, *, channel_order="bgr", engine=None):
+        captured["shape"] = image_array.shape[:2]
+        captured["channel_order"] = channel_order
+        return OcrResult(raw_text="", lines=[], engine="fake")
+
+    monkeypatch.setattr(real_pipeline, "read_text", fake_read_text)
+    pipeline = real_pipeline.RealScanPipeline()
+    pipeline._read_label_text(data, BBox(x=0.0, y=0.0, w=1.0, h=1.0))
+
+    assert captured["shape"] == displayed
+    assert captured["channel_order"] == "rgb"
 
 
 def test_real_mode_over_http(monkeypatch):
