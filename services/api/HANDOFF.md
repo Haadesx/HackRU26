@@ -19,8 +19,8 @@ MEDCHECK_API_MODE=real .venv/bin/python -m uvicorn services.api.main:app --host 
 Tests:
 
 ```bash
-.venv/bin/python -m pytest services/api -q          # 73 passed
-.venv/bin/python -m pytest services tests/integration -q   # 352 passed, 3 skipped (merged tree)
+.venv/bin/python -m pytest services/api -q          # 91 passed
+.venv/bin/python -m pytest services tests/integration -q   # 370 passed, 3 skipped (merged tree)
 ```
 
 OpenAPI docs: `http://localhost:8300/docs`.
@@ -32,6 +32,7 @@ OpenAPI docs: `http://localhost:8300/docs`.
 | `GET /health` | `200 {"status":"ok","service":"medcheck-inference","version","uptime_s"}` | — |
 | `GET /ready` | `200 {"ready":true,"mode":"mock|real","components":{...}}` | `503` when `MEDCHECK_API_MODE=real` and vision/OCR specs are missing |
 | `POST /v1/scan` | `200` `ScanResponse` (also for domain `status:"error"`) | `400/413/415/503/504` error envelope |
+| `POST /v1/scan/multi` | `200` `ScanResponse` with v1.2 `capture` block | `400` (frame count), `401`, `413/415/503/504` |
 
 `POST /v1/scan` is `multipart/form-data`:
 
@@ -146,14 +147,76 @@ free, no growth observed). The gateway never launches a model.
 
 **iOS/backend field ownership:** see `docs/inference-medcheck.md` §E.1
 (`ScanResponse` field table) and §H.1 (client integration notes). The gateway
-always returns `contract_version:"1.1.0"` with `{value, confidence, source}` per
-field, the mandatory `safety` block, and the v1.1 `instructions.dose` object (see
-next section).
+always returns `contract_version:"1.2.0"` with `{value, confidence, source}` per
+field, the mandatory `safety` block, and the v1.2 `capture` block on multi-frame
+responses (see the multi-frame section).
 
-## Backend bridge — contract v1.1 (Urvi's `POST /api/v1/scans`)
+## Multi-frame capture — `POST /v1/scan/multi` (contract v1.2)
 
-Contract **1.1.0** adds one additive optional field:
-`instructions.dose = {quantity (number>0|null), unit (string|null), confidence, source}`.
+Read one long label from 2–6 photos instead of one (a 3-frame left/center/right
+sweep is the intended workflow). Multipart fields:
+
+| Part | Required | Notes |
+|---|---|---|
+| `images` | yes, repeated 2–6× | JPEG/PNG, max 12 MiB each, same rules as `/v1/scan` |
+| `client` / `mode` / `hints` | no | identical semantics to `/v1/scan`; bearer auth applies |
+
+```bash
+curl -s -X POST localhost:8300/v1/scan/multi \
+  -F "images=@samples/long_label_left.png;type=image/png" \
+  -F "images=@samples/long_label_middle.png;type=image/png" \
+  -F "images=@samples/long_label_right.png;type=image/png" \
+  -F "client=ios" -F "mode=real"
+```
+
+Per-frame path & fusion:
+
+1. Every frame runs the normal real pipeline frame path (quality → OCR →
+   extraction). Frames that fail quality (`needs_rescan`), have no localized
+   label (`no_medication_found`), or error are reported in
+   `capture.per_frame` and **not fused**.
+2. Accepted frames' `Extraction`s are fused by PI-2's
+   `services/ocr/fuse.py::fuse_extractions` (highest-confidence non-null field,
+   instruction union, dose carried over; conflicts surfaced as
+   `name_conflict`/`strength_conflict`/… in `uncertainty.reasons`). A
+   conservative API-side fallback keeps the endpoint working on older branches.
+3. `medication` / `instructions` (incl. `dose`) come from the fused extraction;
+   VLM escalation (M3 policy) runs once on the fused result.
+
+Response `capture` block:
+
+```json
+{"frames_requested": 3, "frames_used": 2, "fusion": "multi_frame",
+ "per_frame": [{"index": 0, "status": "accepted", "label_detected": true,
+                "label_confidence": 0.59, "clipped": true,
+                "guidance": ["Looks good - hold steady."]}, ...]}
+```
+
+`uncertainty.reasons` gains `fused_from_<N>_frames` when N>1 plus fusion
+conflicts. No frames accepted → `needs_rescan` (or `no_medication_found` when the
+frames passed quality but no label was found), mirroring single-scan semantics.
+Mock mode is deterministic per frame and always emits `capture`
+(`fusion:"multi_frame"`).
+
+### Client rotation-capture recipe (3 frames)
+
+1. Hold the bottle so the label spans the frame; start with the **left** third
+   visible, then **center**, then **right** — each frame overlapping the previous
+   by ~20–30 % so text is never only in one frame.
+2. Wait for a good frame each time (sharp, not too dark/bright, no glare);
+   `capture.per_frame[i].guidance` tells the user what to fix per shot.
+3. Keep the whole label edge-to-edge: frames where the label region touches the
+   frame edge report `clipped:true` — that is expected for a sweep, but avoid
+   text actually cut off.
+4. `frames_used` tells the client how many shots contributed; if it is below
+   the number sent, show the per-frame guidance and let the user retake the
+   failed frame.
+
+## Backend bridge — contract v1.2 (Urvi's `POST /api/v1/scans`)
+
+Contract **1.2.0** is additive over 1.1.0: the multi-frame `capture` block and
+`POST /v1/scan/multi`. 1.1.0 added `instructions.dose`
+(`{quantity (number>0|null), unit (string|null), confidence, source}`).
 It is the per-dose quantity as written on the label ("Take 1 tablet" → `1`,
 `"tablet"`), **never** a package count, and is omitted/null when absent or
 ambiguous. A `dose` object with `source:"none"` (quantity and unit null) means
@@ -284,13 +347,13 @@ Two hardening options:
 
 ## Verification
 
-- `pytest services/api -q` → **73 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **91 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
   mock determinism, real pipeline on `samples/` (dark/sharp/blurry), EXIF-safe
   decode, no-medication and invalid-image paths, matcher seam, M3 escalation
   matrix via `httpx.MockTransport`, v1.1 dose real/mock/omission + bridge units,
-  optional bearer auth and CORS).
-- `pytest services tests/integration -q` → **352 passed, 3 skipped** in the merged
+  optional bearer auth and CORS, multi-frame capture/fusion/transport tests).
+- `pytest services tests/integration -q` → **370 passed, 3 skipped** in the merged
   worktree (skips are model-dependent ONNX tests), including Urvi's backend-fit
   mapping (`tests/integration/test_backend_fit.py`).
 - Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).

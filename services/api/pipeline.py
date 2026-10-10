@@ -10,22 +10,26 @@ must not redefine them.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional, Protocol
+from typing import Any, Dict, List, Literal, Optional, Protocol
 
 from services.api.fixtures import FIXTURES
 from services.common.contract import (
     Bottle,
+    CaptureInfo,
     ErrorInfo,
     FrameQuality,
     Instructions,
+    Interpretation,
     Label,
     Medication,
+    PerFrameResult,
     Safety,
     ScanResponse,
     Timing,
@@ -58,6 +62,9 @@ class ScanPipeline(Protocol):
     mode: ResolvedMode
 
     async def scan(self, ctx: ScanContext) -> ScanResponse:  # pragma: no cover
+        ...
+
+    async def scan_multi(self, ctxs: List[ScanContext]) -> ScanResponse:  # pragma: no cover
         ...
 
 
@@ -181,6 +188,108 @@ class MockPipeline:
         fixture = choose_fixture(request_key(ctx.image, ctx.client, ctx.hints))
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         return build_fixture_response(fixture, ctx.request_id, elapsed_ms)
+
+    async def scan_multi(self, ctxs: List[ScanContext]) -> ScanResponse:
+        return await asyncio.to_thread(self._scan_multi_sync, ctxs)
+
+    @staticmethod
+    def _fixture_clipped(fixture: Dict[str, Any]) -> Optional[bool]:
+        bbox = (fixture.get("label") or {}).get("bbox")
+        if not bbox:
+            return None
+        gap = min(bbox["x"], bbox["y"], 1.0 - (bbox["x"] + bbox["w"]), 1.0 - (bbox["y"] + bbox["h"]))
+        return bool(gap <= 0.02)
+
+    def _scan_multi_sync(self, ctxs: List[ScanContext]) -> ScanResponse:
+        started = time.perf_counter()
+        selected = [
+            (index, ctx, choose_fixture(request_key(ctx.image, ctx.client, ctx.hints)))
+            for index, ctx in enumerate(ctxs)
+        ]
+        accepted = [item for item in selected if item[2]["status"] in ("ok", "uncertain")]
+
+        per_frame = [
+            PerFrameResult(
+                index=index,
+                status="accepted" if fixture["status"] in ("ok", "uncertain") else fixture["status"],
+                label_detected=fixture["label"]["detected"],
+                label_confidence=fixture["label"]["confidence"],
+                clipped=self._fixture_clipped(fixture),
+                guidance=list(fixture["frame_quality"]["guidance"]) or None,
+            )
+            for index, _ctx, fixture in selected
+        ]
+        capture = CaptureInfo(
+            frames_requested=len(ctxs),
+            frames_used=len(accepted),
+            fusion="multi_frame",
+            per_frame=per_frame,
+        )
+
+        def _total_ms() -> float:
+            return round((time.perf_counter() - started) * 1000.0, 3)
+
+        if accepted:
+            base = accepted[0][2]
+            reasons: List[str] = []
+            if len(accepted) > 1:
+                reasons.append(f"fused_from_{len(accepted)}_frames")
+            names = {
+                fixture["medication"]["name"]["value"]
+                for _i, _c, fixture in accepted
+                if fixture["medication"]["name"]["value"]
+            }
+            if len(names) > 1:
+                reasons.append("fusion_conflict:name")
+            all_ok = all(fixture["status"] == "ok" for _i, _c, fixture in accepted)
+            elapsed = _total_ms()
+            return ScanResponse(
+                request_id=ctxs[0].request_id,
+                status="ok" if all_ok else "uncertain",
+                mode="mock",
+                frame_quality=FrameQuality(**base["frame_quality"]),
+                bottle=Bottle(**base["bottle"]),
+                label=Label(**base["label"]),
+                medication=Medication.model_validate(base["medication"]),
+                instructions=Instructions.model_validate(base["instructions"]),
+                candidates=list(base["candidates"]),
+                interpretation=Interpretation(available=False),
+                uncertainty=Uncertainty(
+                    level="low" if all_ok else "medium",
+                    reasons=list(dict.fromkeys(reasons)),
+                    rescan_required=False,
+                ),
+                timing=Timing(total_ms=elapsed, stages={"mock_multi": elapsed}),
+                safety=Safety(),
+                error=None,
+                capture=capture,
+            )
+
+        base = selected[0][2]
+        all_no_medication = all(fixture["status"] == "no_medication_found" for _i, _c, fixture in selected)
+        final_status = "no_medication_found" if all_no_medication else "needs_rescan"
+        elapsed = _total_ms()
+        return ScanResponse(
+            request_id=ctxs[0].request_id,
+            status=final_status,
+            mode="mock",
+            frame_quality=FrameQuality(**base["frame_quality"]),
+            bottle=Bottle(**base["bottle"]),
+            label=Label(**base["label"]),
+            medication=Medication(),
+            instructions=Instructions(),
+            candidates=[],
+            interpretation=Interpretation(available=False),
+            uncertainty=Uncertainty(
+                level="high",
+                reasons=["no_label_detected"] if all_no_medication else ["frame_not_acceptable"],
+                rescan_required=final_status == "needs_rescan",
+            ),
+            timing=Timing(total_ms=elapsed, stages={"mock_multi": elapsed}),
+            safety=Safety(),
+            error=None,
+            capture=capture,
+        )
 
 
 _MOCK_PIPELINE = MockPipeline()

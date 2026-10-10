@@ -47,6 +47,8 @@ SCAN_TIMEOUT_S = 15.0  # per-scan budget
 ALLOWED_IMAGE_TYPES = ("image/jpeg", "image/png")
 ALLOWED_CLIENTS = ("ios", "backend", "test", "unknown")
 ALLOWED_MODES = ("auto", "mock", "real")
+MIN_MULTI_FRAMES = 2
+MAX_MULTI_FRAMES = 6
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -119,6 +121,64 @@ def _check_api_key(authorization: Optional[str], request_id: str) -> Optional[JS
         "Missing or invalid bearer token",
         request_id,
     )
+
+
+def _validate_scan_form(
+    client: str,
+    mode: str,
+    hints: Optional[str],
+    request_id: str,
+) -> tuple:
+    """Shared /v1/scan and /v1/scan/multi form validation.
+
+    Returns ``(error_response, parsed_hints)``; exactly one is meaningful.
+    """
+    if client not in ALLOWED_CLIENTS:
+        return (
+            _transport_error(
+                400,
+                "INVALID_CLIENT",
+                f"client must be one of {list(ALLOWED_CLIENTS)}",
+                request_id,
+            ),
+            None,
+        )
+    if mode not in ALLOWED_MODES:
+        return (
+            _transport_error(
+                400,
+                "INVALID_MODE",
+                f"mode must be one of {list(ALLOWED_MODES)}",
+                request_id,
+            ),
+            None,
+        )
+    parsed_hints: Optional[Dict[str, Any]] = None
+    if hints is not None and hints.strip():
+        try:
+            parsed_hints = json.loads(hints)
+        except json.JSONDecodeError as exc:
+            return (
+                _transport_error(
+                    400,
+                    "INVALID_HINTS",
+                    "hints must be a JSON-encoded object",
+                    request_id,
+                    detail=str(exc),
+                ),
+                None,
+            )
+        if not isinstance(parsed_hints, dict):
+            return (
+                _transport_error(
+                    400,
+                    "INVALID_HINTS",
+                    "hints must decode to a JSON object",
+                    request_id,
+                ),
+                None,
+            )
+    return None, parsed_hints
 
 
 def _error_body(
@@ -250,20 +310,9 @@ async def scan_v1(
     if auth_error is not None:
         return auth_error
 
-    if client not in ALLOWED_CLIENTS:
-        return _transport_error(
-            400,
-            "INVALID_CLIENT",
-            f"client must be one of {list(ALLOWED_CLIENTS)}",
-            request_id,
-        )
-    if mode not in ALLOWED_MODES:
-        return _transport_error(
-            400,
-            "INVALID_MODE",
-            f"mode must be one of {list(ALLOWED_MODES)}",
-            request_id,
-        )
+    form_error, parsed_hints = _validate_scan_form(client, mode, hints, request_id)
+    if form_error is not None:
+        return form_error
 
     content_type = (image.content_type or "").split(";")[0].strip().lower()
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -285,31 +334,13 @@ async def scan_v1(
     if not data:
         return _transport_error(400, "EMPTY_IMAGE", "image part is empty", request_id)
 
-    parsed_hints: Optional[Dict[str, Any]] = None
-    if hints is not None and hints.strip():
-        try:
-            parsed_hints = json.loads(hints)
-        except json.JSONDecodeError as exc:
-            return _transport_error(
-                400,
-                "INVALID_HINTS",
-                "hints must be a JSON-encoded object",
-                request_id,
-                detail=str(exc),
-            )
-        if not isinstance(parsed_hints, dict):
-            return _transport_error(
-                400,
-                "INVALID_HINTS",
-                "hints must decode to a JSON object",
-                request_id,
-            )
+    resolved = _resolve_mode(mode)
 
     if not _matches_magic(content_type, data):
-        domain_error = build_error_response(request_id, "INVALID_IMAGE", "Could not decode image bytes")
+        domain_error = build_error_response(
+            request_id, "INVALID_IMAGE", "Could not decode image bytes", mode=resolved
+        )
         return _scan_json(domain_error, request_id)
-
-    resolved = _resolve_mode(mode)
     try:
         pipeline = get_pipeline(resolved)
     except PipelineUnavailable as exc:
@@ -330,6 +361,95 @@ async def scan_v1(
             504,
             "SCAN_TIMEOUT",
             f"scan exceeded {_scan_timeout_s()}s budget",
+            request_id,
+        )
+
+    return _scan_json(response, request_id)
+
+
+@app.post("/v1/scan/multi", response_model=ScanResponse)
+async def scan_multi_v1(
+    images: List[UploadFile] = File(..., description="2-6 JPEG/PNG label photos (12 MiB each)"),
+    client: str = Form("unknown"),
+    mode: str = Form("auto"),
+    hints: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
+) -> JSONResponse:
+    request_id = "req-" + uuid.uuid4().hex[:12]
+
+    auth_error = _check_api_key(authorization, request_id)
+    if auth_error is not None:
+        return auth_error
+
+    form_error, parsed_hints = _validate_scan_form(client, mode, hints, request_id)
+    if form_error is not None:
+        return form_error
+
+    if not MIN_MULTI_FRAMES <= len(images) <= MAX_MULTI_FRAMES:
+        return _transport_error(
+            400,
+            "INVALID_FRAME_COUNT",
+            f"images must contain {MIN_MULTI_FRAMES}..{MAX_MULTI_FRAMES} frames",
+            request_id,
+            detail={"received": len(images)},
+        )
+
+    resolved = _resolve_mode(mode)
+    contexts: List[ScanContext] = []
+    for index, upload in enumerate(images):
+        content_type = (upload.content_type or "").split(";")[0].strip().lower()
+        if content_type not in ALLOWED_IMAGE_TYPES:
+            return _transport_error(
+                415,
+                "UNSUPPORTED_IMAGE_TYPE",
+                f"images[{index}] must be one of {list(ALLOWED_IMAGE_TYPES)}, got {content_type or 'missing'}",
+                request_id,
+                detail={"index": index},
+            )
+        data = await upload.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            return _transport_error(
+                413,
+                "PAYLOAD_TOO_LARGE",
+                f"images[{index}] must be at most {MAX_IMAGE_BYTES} bytes (12 MiB)",
+                request_id,
+                detail={"index": index},
+            )
+        if not data:
+            return _transport_error(
+                400, "EMPTY_IMAGE", f"images[{index}] is empty", request_id, detail={"index": index}
+            )
+        if not _matches_magic(content_type, data):
+            domain_error = build_error_response(
+                request_id,
+                "INVALID_IMAGE",
+                f"Could not decode image bytes in frame {index}",
+                mode=resolved,
+            )
+            return _scan_json(domain_error, request_id)
+        contexts.append(
+            ScanContext(
+                request_id=request_id,
+                image=data,
+                content_type=content_type,
+                client=client,
+                requested_mode=mode,  # type: ignore[arg-type]
+                hints=parsed_hints,
+            )
+        )
+
+    try:
+        pipeline = get_pipeline(resolved)
+    except PipelineUnavailable as exc:
+        return _transport_error(503, "REAL_PIPELINE_UNAVAILABLE", str(exc), request_id)
+
+    try:
+        response = await asyncio.wait_for(pipeline.scan_multi(contexts), timeout=_scan_timeout_s())
+    except asyncio.TimeoutError:
+        return _transport_error(
+            504,
+            "SCAN_TIMEOUT",
+            f"multi-scan exceeded {_scan_timeout_s()}s budget",
             request_id,
         )
 
