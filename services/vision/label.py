@@ -45,6 +45,14 @@ FRAME_CONFIDENCE_CAP = 0.60
 #: Brightness / chroma gates in CIELAB (OpenCV encoding: L in [0,255], a/b centered at 128).
 LAB_BRIGHTNESS = 165
 LAB_CHROMA = 32
+#: Noise immunity for the frame-level fallback: raw dark/edge gates pass on dense
+#: sensor noise (every pixel is an edge and many are dark). After a Gaussian
+#: blur, noise flattens to a nearly constant field while text strokes survive as
+#: pixels well below the region median. `dark_evidence` is the fraction of such
+#: pixels; it is ~0 for pure noise and a few percent for text.
+EVIDENCE_BLUR_SIGMA = 3.0
+EVIDENCE_DARK_OFFSET = 30.0
+FRAME_MIN_DARK_EVIDENCE = 0.0025
 #: Dark pixel threshold for the text-evidence check.
 TEXT_DARK_LEVEL = 80
 
@@ -130,6 +138,13 @@ def locate_label_region(rgb: np.ndarray) -> Optional[Tuple[BBox, float]]:
     edges = cv2.Canny(gray, 50, 150)
     edge_density = float(np.count_nonzero(edges)) / edges.size
     if edge_density < FRAME_MIN_EDGE_DENSITY:
+        return None
+
+    # Cheap raw gates above pass on noise; require real structure at the blur scale.
+    evidence = cv2.GaussianBlur(gray, (0, 0), EVIDENCE_BLUR_SIGMA)
+    evidence_threshold = float(np.percentile(evidence, 50)) - EVIDENCE_DARK_OFFSET
+    dark_evidence = float(np.count_nonzero(evidence <= evidence_threshold)) / evidence.size
+    if dark_evidence < FRAME_MIN_DARK_EVIDENCE:
         return None
 
     frame_h, frame_w = rgb.shape[:2]

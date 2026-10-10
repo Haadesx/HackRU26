@@ -1,12 +1,13 @@
 """Label-localization tests."""
 import cv2
 import numpy as np
+import pytest
 
 from services.common.contract import BBox, Bottle
 from services.vision.detector import HeuristicBottleDetector
 from services.vision.label import FALLBACK_CONFIDENCE, locate_label
 from services.vision.preprocess import decode_image
-from services.vision.tests.helpers import bbox_inside, flat_label_frame, iou
+from services.vision.tests.helpers import bbox_inside, flat_label_frame, iou, noise_frame
 
 
 def test_label_localized_on_detected_bottle(load_bytes, labels):
@@ -64,3 +65,9 @@ def test_frame_level_label_requires_text_evidence():
 def test_frame_level_label_rejects_featureless_frame():
     blank = np.full((220, 320, 3), 190, dtype=np.uint8)
     assert not locate_label(blank, Bottle(detected=False, confidence=0.0)).detected
+
+
+@pytest.mark.parametrize("sigma", [25, 40, 60])
+def test_frame_level_label_rejects_pure_noise(sigma):
+    # Raw dark/edge gates pass on dense noise; the blur-scale structure gate must reject it.
+    assert not locate_label(noise_frame(sigma), Bottle(detected=False, confidence=0.0)).detected

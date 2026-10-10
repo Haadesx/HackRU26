@@ -36,6 +36,11 @@ def png_bytes(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
+def noise_frame(sigma: int = 40, size: tuple[int, int] = (320, 320)) -> np.ndarray:
+    """Pure Gaussian sensor noise frame (no label, no structure)."""
+    return np.array(Image.effect_noise(size, sigma).convert("RGB"))
+
+
 def flat_label_frame(width: int = 320, height: int = 220, page: int = 190) -> np.ndarray:
     """Synthetic flat label close-up (bright page, dark border and text)."""
     frame = np.full((height, width, 3), page, dtype=np.uint8)

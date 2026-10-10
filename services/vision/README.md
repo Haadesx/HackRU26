@@ -91,7 +91,9 @@ if result.label.detected and result.label.bbox is not None:
   close-ups such as `samples/label_metformin.png` still produce a crop. The
   brightness gate adapts to the frame, so dim-but-readable documents (e.g.
   `samples/label_metformin_dark.png`) are found too. That path is capped at
-  confidence `0.60` because it has no bottle anchor.
+  confidence `0.60` because it has no bottle anchor. A blur-scale structure gate
+  (fraction of pixels well below the region median after a Gaussian blur) keeps
+  pure sensor noise from being mistaken for a label.
 
 Quality semantics worth knowing for integration:
 
