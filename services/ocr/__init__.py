@@ -6,7 +6,16 @@ Public API::
 """
 
 from .engine import BACKEND_NAME, OcrUnavailableError, is_available, read_text
-from .extract import extract_fields, find_form, find_manufacturer, find_name, find_strengths, parse_instructions
+from .extract import (
+    extract_fields,
+    find_form,
+    find_manufacturer,
+    find_name,
+    find_strengths,
+    normalize_dose_unit,
+    parse_dose_quantity,
+    parse_instructions,
+)
 from .matcher import DEFAULT_THRESHOLD, match_candidates
 from .types import (
     BBox,
@@ -38,6 +47,8 @@ __all__ = [
     "find_strengths",
     "is_available",
     "match_candidates",
+    "normalize_dose_unit",
+    "parse_dose_quantity",
     "parse_instructions",
     "read_text",
 ]
