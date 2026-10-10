@@ -28,15 +28,25 @@ DEFAULT_LABEL_MIN_AREA = 0.08
 #: A detected label whose bbox comes within this normalized margin of a frame
 #: edge is reported as clipped (the label probably continues off-frame).
 LABEL_CLIP_MARGIN = 0.015
+#: Clipping is only reported for reasonably confident detections: weak fallback
+#: boxes (e.g. a guessed band that happens to touch an edge) must not tell the
+#: user to rotate the bottle. Real label boxes score >= 0.5 on both paths.
+LABEL_CLIP_MIN_CONFIDENCE = 0.5
+#: A box spanning the frame in both axes is not a plausible label region.
+LABEL_CLIP_MAX_DIM = 0.98
 _LABEL_CLIPPED_GUIDANCE = "Label is cut off — rotate the bottle or step back, then capture again"
 _ALL_GOOD_GUIDANCE = "Looks good - hold steady."
 
 
 def is_label_clipped(label: Label, margin: float = LABEL_CLIP_MARGIN) -> bool:
-    """True when a detected label bbox touches any frame edge within `margin`."""
+    """True when a confident, plausible label bbox touches any frame edge within `margin`."""
     if not label.detected or label.bbox is None:
         return False
+    if label.confidence < LABEL_CLIP_MIN_CONFIDENCE:
+        return False
     bbox = label.bbox
+    if bbox.w >= LABEL_CLIP_MAX_DIM and bbox.h >= LABEL_CLIP_MAX_DIM:
+        return False
     return bool(
         bbox.x <= margin
         or bbox.y <= margin
@@ -71,7 +81,12 @@ def derive_guidance(
     elif label_area < label_min_area:
         guidance.append("Move closer until the label fills the frame.")
 
-    if label_clipped and not any("cut off" in text.lower() for text in guidance):
+    if (
+        label_clipped
+        and label.detected
+        and label.confidence >= LABEL_CLIP_MIN_CONFIDENCE
+        and not any("cut off" in text.lower() for text in guidance)
+    ):
         guidance.append(_LABEL_CLIPPED_GUIDANCE)
 
     if not guidance:

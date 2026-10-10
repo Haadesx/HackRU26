@@ -6,7 +6,7 @@
 > verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
 > refreshed at every milestone.
 >
-> **Last updated:** 2026-10-10 ~17:55 UTC · **Repo:** https://github.com/Haadesx/HackRU26
+> **Last updated:** 2026-10-10 ~18:05 UTC · **Repo:** https://github.com/Haadesx/HackRU26
 > **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
 
 ---
@@ -36,7 +36,7 @@ and manage the medication safely:
 | Who | Component | Branch | Status |
 |---|---|---|---|
 | Varesh (owner/operator) | coordination, testing | — | present |
-| Sinchana | Web UI | `feat/ui-sinchana` | **not pushed yet** |
+| Sinchana | Web UI | `feat/frontend-ui` | **merged into `feat/inference-medcheck`** (PR #1): React 18 + Vite + Tailwind, docs + fixtures included |
 | Aparajita | iOS app | `feat/ios-aparajita` | **not pushed yet** (frontend in development) |
 | Urvi | Backend + DB | `feat/backend-urvi` | pushed `85fc33f`; **blocked: missing `app/models` package** (see §7) |
 | Inference subteam | AI inference subsystem | `feat/inference-medcheck` | complete M1–M4, M5 in flight |
@@ -180,11 +180,16 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
 
 ## 6. Web UI / iOS status
 
-- No branches pushed yet for `feat/ui-sinchana` or `feat/ios-aparajita`.
-- They should start against **contract v1.1** (`contracts/` + `services/api/HANDOFF.md`),
-  and can develop UI against `mode:mock` immediately.
-- iOS is blocked on frontend progress (per Varesh); local console covers camera testing in
-  the meantime.
+- **Web UI (Sinchana) is merged into the integration branch** (`frontend/`, React 18 + Vite +
+  Tailwind) and the Python suite stays green (**452/452**).
+- The UI expects a **hub** at `VITE_API_URL` (default `:8000`) with `GET /state`,
+  `POST /scans` (multipart `photo`), `POST /scans/{id}/photos` (extra photos merged),
+  `POST /scans/{id}/complete`, `GET /adherence`, `PUT /settings` (see
+  `frontend/docs/api-contract.md`). Its nine scan fields map to our contract v1.3 — table +
+  the open decision in `docs/client-integration.md` §3b.
+- **iOS (Aparajita)** has no branch on the remote yet (frontend in development per Varesh).
+- **Decision needed:** does the hub (backend) proxy inference server-to-server (Sinchana’s
+  model; recommended) or do clients call inference directly (Urvi’s current model)?
 
 ---
 
@@ -240,6 +245,11 @@ Environment names (values live in `~/.medcheck/vllm.env`, mode 600 — never com
 `MEDCHECK_API_MODE`, `MEDCHECK_VLM_ENABLED`, `MEDCHECK_VLM_BASE_URL`,
 `MEDCHECK_VLM_MODEL`, `MEDCHECK_VLM_API_KEY`, `MEDCHECK_YOLO_MODEL`,
 `MEDCHECK_YOLO_CONF`, `MEDCHECK_SCAN_TIMEOUT_S`, `MEDCHECK_SAVE_SCANS`.
+Project secrets live in the root `.env` (mode 600, gitignored; template in `.env.example`):
+`ELEVENLABS_API_KEY` (verified working 2026-10-10: 21 voices), `ELEVENLABS_VOICE_ID`,
+`ELEVENLABS_MODEL_ID`. Backend secrets stay in `backend/.env` (`TWILIO_*`,
+`FIREBASE_CREDENTIALS_JSON`, `JWT_SECRET_KEY`, `DATABASE_URL`, `OPENFDA_API_KEY`);
+ElevenLabs is the TTS provider for Twilio voice reminders.
 Hardware: dev = Apple-silicon Mac (CPU inference); rig = Ubuntu + RTX 5090 (32 GB, ~14 GB
 free) at `hermes-linux` (Tailscale `ai-rig.tail6d5242.ts.net`), serving the existing
 `Qwen/Qwen3-VL-8B-Instruct-FP8` (vLLM, Docker container `echo-vllm`, tailnet :8100).
@@ -270,9 +280,32 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
    (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
 9. **M6 done** (network readiness: optional bearer auth + CORS + bind/TLS docs; suite 355).
 10. **Contract v1.2 + M7 done** (multi-frame label capture): fusion `63cec7e`,
-    clipping `2634807`, multi-image VLM `4032711`, endpoint `db94131`; merged and
-    live-verified end-to-end through the console (fused fields + capture report);
-    suite **425/425**.
+    clipping `2634807`, multi-image VLM `4032711`, endpoint `db94131`; live-verified on
+    overlapping long-label crops; suite 425/425.
+11. **M8 done** (real-photo quality): OCR small-crop upscaling + degenerate-text sanity
+    (`6d2caa2`), reconcile degenerate-OCR → VLM (`b50a659`), clipped false-positive guard
+    (`1be1854`) — all verified on real photos; suite **452/452**.
+12. **Contract v1.3 + M9** (label_meta): QTY/refills/pharmacy/phone/prescriber/schedule
+    extraction so the web hub gets the UI’s nine fields. Samples regenerated via
+    `scripts/make_samples.py`. Multi-frame debug bundles now save all frames.
+13. **Sinchana’s web UI merged** into the integration branch (PR #1) → hub/UI contract
+    mapping documented; integration-model decision pending (§6).
+14. **Full-stack hookup demonstrated**: `tools/hub_adapter/` serves Sinchana’s hub contract
+    from real inference (single + multi-frame, nine fields with confidence states);
+    `scripts/run_ui_demo.sh` starts UI (:5199) ← adapter (:8500) ← inference (:8300).
+    Urvi pushed the missing `backend/app/models` package (`4a01a5b`) and opened
+    `feat/integration` (backend + UI merged). Remaining: M10 OCR spacing fix (fills
+    `schedule_times` through the crop path) and the production hub decision.
+15. **ElevenLabs configured**: root `.env` (mode 600, gitignored) with
+    `ELEVENLABS_API_KEY` (verified: 21 voices) + `ELEVENLABS_VOICE_ID`/`_MODEL_ID`;
+    committed `.env.example` templates (root + `backend/.env.example`) document the
+    names. Planned use: TTS voice reminders via Twilio’s ElevenLabs `<Say>` provider.
+16. **ElevenLabs TTS smoke-tested** (`scripts/tts_smoke.py`): real cloud synthesis
+    (no local engine) of “Rosa, it’s time for your Metformin. Take one tablet with
+    breakfast.” → `~/.medcheck/voice/reminder-*.mp3`, 71.5 KiB in **1.29 s** using
+    “Sarah – Mature, Reassuring, Confident” (`EXAVITQu4vr4xnSDxMaL`) on
+    `eleven_multilingual_v2`. Script supports `--list-voices`, `--text`, `--voice`,
+    `--play`; output stays outside git.
 
 ---
 

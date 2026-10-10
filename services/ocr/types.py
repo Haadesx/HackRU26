@@ -12,6 +12,16 @@ from typing import Any, Literal, Sequence
 FieldSource = Literal["ocr", "vlm", "registry", "none"]
 InstructionKind = Literal["dose", "frequency", "route", "duration", "warning", "other"]
 
+# Contract v1.3 ``label_meta`` keys, in schema order.
+LABEL_META_KEYS: tuple[str, ...] = (
+    "quantity_start",
+    "refills_remaining",
+    "pharmacy_name",
+    "pharmacy_phone",
+    "prescriber",
+    "schedule_times",
+)
+
 
 def _clamp01(value: float) -> float:
     if value < 0.0:
@@ -19,6 +29,27 @@ def _clamp01(value: float) -> float:
     if value > 1.0:
         return 1.0
     return float(value)
+
+
+def has_readable_content(text: str | None) -> bool:
+    """True when OCR text has enough alphabetic content to be worth parsing.
+
+    Unreadable text (lone CJK glyphs such as ``日``, ``||``, punctuation-only, or
+    fewer than three alphabetic characters total) is treated as an unread label:
+    the raw text is still preserved verbatim, but confidence collapses to 0 and
+    extraction returns empty fields instead of junk items.
+
+    Requires at least one ASCII letter AND at least three alphabetic characters
+    overall (any script).
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    ascii_letters = sum(1 for ch in stripped if ch.isascii() and ch.isalpha())
+    alphabetic = sum(1 for ch in stripped if ch.isalpha())
+    return ascii_letters > 0 and alphabetic >= 3
 
 
 @dataclass(frozen=True)
@@ -128,9 +159,16 @@ class OcrResult:
 
     @property
     def confidence(self) -> float:
+        if not has_readable_content(self.raw_text):
+            return 0.0
         if not self.lines:
             return 0.0
         return round(sum(line.confidence for line in self.lines) / len(self.lines), 4)
+
+    @property
+    def readable(self) -> bool:
+        """False for degenerate recognition results (text stays verbatim)."""
+        return has_readable_content(self.raw_text)
 
 
 @dataclass(frozen=True)
@@ -209,6 +247,8 @@ class Extraction:
     dose_unit: str | None = None
     dose_confidence: float = 0.0
     dose_source: FieldSource = "none"
+    # v1.3 additive: pharmacy-label metadata keyed by LABEL_META_KEYS.
+    label_meta: dict[str, FieldString] = field(default_factory=dict)
 
     def medication_contract(self) -> dict[str, Any]:
         """Contract fragment for ``ScanResponse.medication``."""
@@ -226,6 +266,17 @@ class Extraction:
             "unit": self.dose_unit,
             "confidence": round(float(self.dose_confidence), 4),
             "source": self.dose_source,
+        }
+
+    def label_meta_contract(self) -> dict[str, Any]:
+        """Contract fragment for ``ScanResponse.label_meta`` (v1.3).
+
+        Each key is a ``field_string``; missing values use
+        ``{value: None, confidence: 0.0, source: "none"}``.
+        """
+        return {
+            key: self.label_meta.get(key, absent_string()).to_contract()
+            for key in LABEL_META_KEYS
         }
 
     def instructions_contract(self) -> dict[str, Any]:

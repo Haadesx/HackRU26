@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "1.2.0"
+CONTRACT_VERSION = "1.3.0"
 
 SAFETY_DISCLAIMER = (
     "Informational only; not medical advice. "
@@ -190,6 +190,22 @@ class CaptureInfo(BaseModel):
     per_frame: List[PerFrameResult] = Field(default_factory=list)
 
 
+class LabelMeta(BaseModel):
+    """v1.3 additive: pharmacy-label metadata printed on real labels.
+
+    Values are strings exactly as read (or derived for ``schedule_times``); absent
+    values stay ``None`` with ``source="none"`` and are never fabricated.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    quantity_start: Optional[FieldString] = None
+    refills_remaining: Optional[FieldString] = None
+    pharmacy_name: Optional[FieldString] = None
+    pharmacy_phone: Optional[FieldString] = None
+    prescriber: Optional[FieldString] = None
+    schedule_times: Optional[FieldString] = None
+
+
 class ScanResponse(BaseModel):
     """The single integration surface between inference and iOS/backend."""
 
@@ -212,6 +228,7 @@ class ScanResponse(BaseModel):
     safety: Safety = Field(default_factory=Safety)
     error: Optional[ErrorInfo] = None
     capture: Optional[CaptureInfo] = None
+    label_meta: Optional[LabelMeta] = None
 
 
 class HealthResponse(BaseModel):

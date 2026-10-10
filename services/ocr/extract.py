@@ -33,12 +33,14 @@ from .lexicon import (
     match_drug_name,
 )
 from .types import (
+    LABEL_META_KEYS,
     Extraction,
     FieldString,
     FieldStrength,
     InstructionItem,
     absent_strength,
     absent_string,
+    has_readable_content,
 )
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +193,53 @@ WARNING_RE = re.compile(
 MANUFACTURER_RE = re.compile(
     r"(?:mfr|manufactured\s+by|distributed\s+by|dist\.?\s+by)\s*[:\-]?\s*"
     r"(?P<name>[A-Za-z0-9][A-Za-z0-9 .,&'\-]{1,60})",
+    re.IGNORECASE,
+)
+
+# --------------------------------------------------------------------------- #
+# Pharmacy-label metadata (contract v1.3 label_meta)
+# --------------------------------------------------------------------------- #
+
+QUANTITY_RE = re.compile(r"\b(?:QTY|QUANTITY)\s*[:#.]?\s*(?P<value>\d{1,4})(?![\dA-Za-z])", re.IGNORECASE)
+REFILLS_RE = re.compile(r"\bREFILLS?\s*[:#.]?\s*(?P<value>\d{1,3})(?![\dA-Za-z])", re.IGNORECASE)
+NO_REFILLS_RE = re.compile(r"\bno\s+refills?\b", re.IGNORECASE)
+PHARMACY_LABEL_RE = re.compile(r"\bPharmacy\s*[:\-]\s*(?P<value>[^\n]+)", re.IGNORECASE)
+PHARMACY_WORD_RE = re.compile(r"pharmacy", re.IGNORECASE)
+PHONE_LABEL_RE = re.compile(r"\b(?:Tel|Phone|Ph)\s*[:.]?\s*(?P<value>\+?[\d(][\d\s().\-]{6,})", re.IGNORECASE)
+PHONE_GENERIC_RE = re.compile(
+    r"(?P<value>\(\d{3}\)\s*\d{3}[-.\s]\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b)"
+)
+PRESCRIBER_RE = re.compile(r"\bPrescriber\s*[:.]?\s*(?P<value>[^\n]+)", re.IGNORECASE)
+PRESCRIBER_DR_RE = re.compile(
+    r"\b(?P<value>(?:Dr|Doctor)\.?\s+[A-Z][A-Za-z.'\-]*(?:\s+[A-Z][A-Za-z.'\-]*){0,4})"
+)
+
+# Schedule derivation: once/twice/three-times/bedtime only; anything else -> None.
+# Patterns tolerate glued OCR ("twicedaily", "oncedaily", "atbedtime") by
+# allowing zero spaces between the cadence words.
+_SCHEDULE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:three\s*times|thrice|tid|t\.i\.d\.?)", re.IGNORECASE), "08:00, 14:00, 20:00"),
+    (
+        re.compile(r"\b(?:twice(?:\s*(?:daily|a\s*day|per\s*day))?|bid|b\.i\.d\.?)", re.IGNORECASE),
+        "08:00, 20:00",
+    ),
+    (
+        re.compile(
+            r"\b(?:once(?:\s*(?:daily|a\s*day|per\s*day))?|daily|every\s*day|q\.?d\.?(?![a-z0-9])|q24h)",
+            re.IGNORECASE,
+        ),
+        "08:00",
+    ),
+    (re.compile(r"\b(?:at\s*bedtime|bedtime|nightly|q\.?h\.?s\.?)", re.IGNORECASE), "20:00"),
+)
+SCHEDULE_BASE_CONFIDENCE = 0.9
+SCHEDULE_DERIVATION_FACTOR = 0.8
+
+# Cadences the simple four-way mapping does not cover: leave schedule_times None.
+# Tolerant to glued OCR ("onceweekly", "every12hours", "asneeded").
+_SCHEDULE_UNSUPPORTED_RE = re.compile(
+    r"(?:weekly|monthly)\b|\bevery\s*(?:\d+|other)\s*(?:hours?|hrs?|days?|weeks?)\b|"
+    r"\bas\s*needed\b|\bprn\b|\bq\.?\d+\s*h",
     re.IGNORECASE,
 )
 
@@ -610,9 +659,14 @@ def parse_instructions(raw_text: str) -> list[InstructionItem]:
 
     Kinds: ``dose`` (quantity per dose), ``frequency``, ``route``, ``duration``,
     ``warning``, ``other``. Every item text is a substring of the source.
+    Degenerate/unreadable text (no ASCII letters or < 3 alphabetic characters)
+    returns ``[]`` instead of junk ``other`` items.
     """
+    raw = "" if raw_text is None else str(raw_text)
+    if not has_readable_content(raw):
+        return []
     items: list[InstructionItem] = []
-    for segment in _segments(raw_text):
+    for segment in _segments(raw):
         if WARNING_RE.search(segment):
             items.append(InstructionItem(kind=_WARNING_KIND, text=segment))
             continue
@@ -725,6 +779,140 @@ def parse_dose_quantity(raw_text: str, instructions: list[InstructionItem] | Non
     return None, None, 0.0, "none"
 
 
+def _clean_meta_value(text: str) -> str:
+    """Trim surrounding whitespace/punctuation; result stays a source substring."""
+    return text.strip().strip(" \t.,;:")
+
+
+def _normalize_meta_spacing(text: str) -> str:
+    """Display-format fix for label_meta strings: space after period before a letter.
+
+    ``"Dr.A.Demo" -> "Dr. A. Demo"``, ``"St.John" -> "St. John"``; decimal
+    points (``1.5``) are untouched and repeated whitespace is collapsed. Only
+    whitespace is inserted — no characters are added or removed. Applied to
+    ``pharmacy_name``, ``pharmacy_phone`` and ``prescriber`` only; ``raw_text``
+    and the general OCR output are never modified.
+    """
+    text = re.sub(r"\.(?=[A-Za-z])", ". ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _find_quantity_start(text: str) -> FieldString:
+    match = QUANTITY_RE.search(text)
+    if not match:
+        return absent_string()
+    return FieldString(value=match.group("value"), confidence=0.9, source="ocr", raw=match.group("value"))
+
+
+def _find_refills(text: str) -> FieldString:
+    match = REFILLS_RE.search(text)
+    if match:
+        return FieldString(value=match.group("value"), confidence=0.9, source="ocr", raw=match.group("value"))
+    no_refills = NO_REFILLS_RE.search(text)
+    if no_refills:
+        return FieldString(value="0", confidence=0.85, source="ocr", raw="0")
+    return absent_string()
+
+
+def _find_pharmacy_name(text: str) -> FieldString:
+    labeled = PHARMACY_LABEL_RE.search(text)
+    if labeled:
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
+        if value:
+            return FieldString(value=value, confidence=0.8, source="ocr", raw=value)
+    for line in text.split("\n"):
+        if not PHARMACY_WORD_RE.search(line):
+            continue
+        candidate = re.split(r"\b(?:Tel|Phone|Ph)\b", line, maxsplit=1, flags=re.IGNORECASE)[0]
+        candidate = _normalize_meta_spacing(_clean_meta_value(candidate))
+        if candidate:
+            return FieldString(value=candidate, confidence=0.75, source="ocr", raw=candidate)
+    # Positional fallback: the line immediately above a phone line is the
+    # pharmacy line on conventional pharmacy labels (e.g. "Sample Rx").
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        if index == 0 or not PHONE_LABEL_RE.search(line):
+            continue
+        candidate = _normalize_meta_spacing(_clean_meta_value(lines[index - 1]))
+        if not candidate or len(candidate) > 40 or re.search(r"\d", candidate):
+            continue
+        if re.search(r"\b(?:only|refills?|prescriber|tablets?|capsules?)\b", candidate, re.IGNORECASE):
+            continue
+        return FieldString(value=candidate, confidence=0.6, source="ocr", raw=candidate)
+    return absent_string()
+
+
+def _find_pharmacy_phone(text: str) -> FieldString:
+    labeled = PHONE_LABEL_RE.search(text)
+    if labeled:
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
+        if re.search(r"\d{3}", value):
+            return FieldString(value=value, confidence=0.85, source="ocr", raw=value)
+    generic = PHONE_GENERIC_RE.search(text)
+    if generic:
+        value = _normalize_meta_spacing(_clean_meta_value(generic.group("value")))
+        return FieldString(value=value, confidence=0.6, source="ocr", raw=value)
+    return absent_string()
+
+
+def _find_prescriber(text: str) -> FieldString:
+    labeled = PRESCRIBER_RE.search(text)
+    if labeled:
+        value = _normalize_meta_spacing(_clean_meta_value(labeled.group("value")))
+        if value:
+            return FieldString(value=value, confidence=0.85, source="ocr", raw=value)
+    doctor = PRESCRIBER_DR_RE.search(text)
+    if doctor:
+        value = _normalize_meta_spacing(_clean_meta_value(doctor.group("value")))
+        if value:
+            return FieldString(value=value, confidence=0.7, source="ocr", raw=value)
+    return absent_string()
+
+
+def _derive_schedule_times(instructions: list[InstructionItem]) -> FieldString:
+    """Convert a parsed frequency into times; derived, so confidence is base x 0.8.
+
+    Unsupported cadences (weekly, every N hours/days, every other day, PRN) are
+    skipped; if nothing left maps, the field stays absent rather than guessed.
+    """
+    for item in instructions:
+        if item.kind != "frequency":
+            continue
+        if _SCHEDULE_UNSUPPORTED_RE.search(item.text):
+            continue
+        for pattern, times in _SCHEDULE_PATTERNS:
+            if pattern.search(item.text):
+                return FieldString(
+                    value=times,
+                    confidence=round(SCHEDULE_BASE_CONFIDENCE * SCHEDULE_DERIVATION_FACTOR, 4),
+                    source="ocr",
+                    raw=item.text,
+                )
+    return absent_string()
+
+
+def parse_label_meta(raw_text: str, instructions: list[InstructionItem] | None = None) -> dict[str, FieldString]:
+    """Extract contract v1.3 ``label_meta`` fields from raw label text.
+
+    String values are substrings of the source text (schedule_times is derived
+    from the parsed frequency and documented as such). Missing fields return the
+    absent shape: value None, confidence 0.0, source "none".
+    """
+    raw = "" if raw_text is None else str(raw_text)
+    if not has_readable_content(raw):
+        return {key: absent_string() for key in LABEL_META_KEYS}
+    if instructions is None:
+        instructions = parse_instructions(raw)
+    return {
+        "quantity_start": _find_quantity_start(raw),
+        "refills_remaining": _find_refills(raw),
+        "pharmacy_name": _find_pharmacy_name(raw),
+        "pharmacy_phone": _find_pharmacy_phone(raw),
+        "prescriber": _find_prescriber(raw),
+        "schedule_times": _derive_schedule_times(instructions),
+    }
+
+
 def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extraction:
     """Extract name / strength / form / manufacturer and parsed instructions.
 
@@ -736,13 +924,16 @@ def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extrac
     """
     hints = hints or {}
     raw = "" if raw_text is None else str(raw_text)
-    if not raw.strip():
+    if not has_readable_content(raw):
+        # Unread label (e.g. a lone CJK false positive): return an empty
+        # extraction rather than junk items. raw_text is preserved verbatim.
         return Extraction(
             raw_text=raw,
             name=absent_string(),
             strength=absent_strength(),
             form=absent_string(),
             instructions=[],
+            label_meta=parse_label_meta(raw),
         )
 
     extra_names = hints.get("lexicon") or ()
@@ -766,6 +957,7 @@ def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extrac
     manufacturer = find_manufacturer(raw)
     instructions = parse_instructions(raw)
     dose_quantity, dose_unit, dose_confidence, dose_source = parse_dose_quantity(raw, instructions)
+    label_meta = parse_label_meta(raw, instructions)
     return Extraction(
         raw_text=raw,
         name=name_field,
@@ -777,6 +969,7 @@ def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extrac
         dose_unit=dose_unit,
         dose_confidence=dose_confidence,
         dose_source=dose_source,
+        label_meta=label_meta,
     )
 
 
@@ -790,4 +983,5 @@ __all__ = [
     "normalize_dose_unit",
     "parse_dose_quantity",
     "parse_instructions",
+    "parse_label_meta",
 ]

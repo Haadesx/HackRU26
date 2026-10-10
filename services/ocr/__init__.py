@@ -15,6 +15,7 @@ from .extract import (
     normalize_dose_unit,
     parse_dose_quantity,
     parse_instructions,
+    parse_label_meta,
 )
 from .fuse import FusionResult, extraction_confidence, fuse_extractions
 from .matcher import DEFAULT_THRESHOLD, match_candidates
@@ -24,9 +25,11 @@ from .types import (
     FieldString,
     FieldStrength,
     InstructionItem,
+    LABEL_META_KEYS,
     OcrLine,
     OcrResult,
     OcrWord,
+    has_readable_content,
 )
 
 __all__ = [
@@ -38,6 +41,7 @@ __all__ = [
     "FieldStrength",
     "FusionResult",
     "InstructionItem",
+    "LABEL_META_KEYS",
     "OcrLine",
     "OcrResult",
     "OcrUnavailableError",
@@ -49,10 +53,12 @@ __all__ = [
     "find_name",
     "find_strengths",
     "fuse_extractions",
+    "has_readable_content",
     "is_available",
     "match_candidates",
     "normalize_dose_unit",
     "parse_dose_quantity",
     "parse_instructions",
+    "parse_label_meta",
     "read_text",
 ]

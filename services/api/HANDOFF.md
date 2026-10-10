@@ -19,8 +19,8 @@ MEDCHECK_API_MODE=real .venv/bin/python -m uvicorn services.api.main:app --host 
 Tests:
 
 ```bash
-.venv/bin/python -m pytest services/api -q          # 91 passed
-.venv/bin/python -m pytest services tests/integration -q   # 370 passed, 3 skipped (merged tree)
+.venv/bin/python -m pytest services/api -q          # 100 passed
+.venv/bin/python -m pytest services tests/integration -q   # 458 passed, 3 skipped (merged tree)
 ```
 
 OpenAPI docs: `http://localhost:8300/docs`.
@@ -147,9 +147,9 @@ free, no growth observed). The gateway never launches a model.
 
 **iOS/backend field ownership:** see `docs/inference-medcheck.md` §E.1
 (`ScanResponse` field table) and §H.1 (client integration notes). The gateway
-always returns `contract_version:"1.2.0"` with `{value, confidence, source}` per
-field, the mandatory `safety` block, and the v1.2 `capture` block on multi-frame
-responses (see the multi-frame section).
+always returns `contract_version:"1.3.0"` with `{value, confidence, source}` per
+field, the mandatory `safety` block, the v1.2 `capture` block on multi-frame
+responses, and the v1.3 `label_meta` block (see below).
 
 ## Multi-frame capture — `POST /v1/scan/multi` (contract v1.2)
 
@@ -212,11 +212,42 @@ Mock mode is deterministic per frame and always emits `capture`
    the number sent, show the per-frame guidance and let the user retake the
    failed frame.
 
-## Backend bridge — contract v1.2 (Urvi's `POST /api/v1/scans`)
+## Label metadata + web hub mapping (contract v1.3)
 
-Contract **1.2.0** is additive over 1.1.0: the multi-frame `capture` block and
-`POST /v1/scan/multi`. 1.1.0 added `instructions.dose`
-(`{quantity (number>0|null), unit (string|null), confidence, source}`).
+`label_meta` is an additive optional block with six `field_string` entries
+(`{value: string|null, confidence, source}`): `quantity_start`,
+`refills_remaining`, `pharmacy_name`, `pharmacy_phone`, `prescriber`, and
+`schedule_times`. Values are strings exactly as read, except `schedule_times`
+which is derived from the label wording (`"twice daily"` → `"08:00, 20:00"`)
+and therefore carries lower confidence. Missing values stay `null` with
+`source:"none"` — never fabricated. The real pipeline prefers PI-2's
+`Extraction.label_meta_contract()` (temporary bridge until it lands); mock
+fixtures carry synthetic values consistent with their labels.
+
+Web hub (Sinchana's UI) mapping — missing values arrive as `null`/0 confidence
+so the hub can render its "missing" state:
+
+| Hub field | ScanResponse source | Missing |
+|---|---|---|
+| `name` | `medication.name.value` | `null` |
+| `strength` | `f"{strength.value} {strength.unit}"` | `null` |
+| `dose_amount` | `instructions.dose.quantity` | `null` (client may fall back to 1) |
+| `schedule_times` | `label_meta.schedule_times.value` | `null` |
+| `quantity_start` | `label_meta.quantity_start.value` | `null` |
+| `refills_remaining` | `label_meta.refills_remaining.value` | `null` |
+| `pharmacy_name` | `label_meta.pharmacy_name.value` | `null` |
+| `pharmacy_phone` | `label_meta.pharmacy_phone.value` | `null` |
+| `prescriber` | `label_meta.prescriber.value` | `null` |
+
+Example real scan (`samples/label_metformin.png`): quantity_start `"30"`,
+refills_remaining `"2"`, pharmacy_name `"Demo Pharmacy"`, pharmacy_phone
+`"(555) 010-2030"`, prescriber `"Dr. A. Demo"`, schedule_times `"08:00, 20:00"`.
+
+## Backend bridge — contract v1.3 (Urvi's `POST /api/v1/scans`)
+
+Contract **1.3.0** is additive over 1.2.0: the `label_meta` block (plus 1.2.0's
+multi-frame `capture` / `POST /v1/scan/multi`, and 1.1.0's `instructions.dose`
+`{quantity (number>0|null), unit (string|null), confidence, source}`).
 It is the per-dose quantity as written on the label ("Take 1 tablet" → `1`,
 `"tablet"`), **never** a package count, and is omitted/null when absent or
 ambiguous. A `dose` object with `source:"none"` (quantity and unit null) means
@@ -347,13 +378,14 @@ Two hardening options:
 
 ## Verification
 
-- `pytest services/api -q` → **91 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **100 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
   mock determinism, real pipeline on `samples/` (dark/sharp/blurry), EXIF-safe
   decode, no-medication and invalid-image paths, matcher seam, M3 escalation
   matrix via `httpx.MockTransport`, v1.1 dose real/mock/omission + bridge units,
-  optional bearer auth and CORS, multi-frame capture/fusion/transport tests).
-- `pytest services tests/integration -q` → **370 passed, 3 skipped** in the merged
+  optional bearer auth and CORS, multi-frame capture/fusion/transport tests,
+  v1.3 label_meta real/bridge/missing-state tests).
+- `pytest services tests/integration -q` → **458 passed, 3 skipped** in the merged
   worktree (skips are model-dependent ONNX tests), including Urvi's backend-fit
   mapping (`tests/integration/test_backend_fit.py`).
 - Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).

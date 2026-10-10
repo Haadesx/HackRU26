@@ -387,6 +387,102 @@ class TestReconcileNormalization:
         assert "0.40" in result.conflicts[0].reason
 
 
+class TestDegenerateReplacement:
+    """M8: unreadable OCR must not beat a clean VLM read on confidence alone."""
+
+    def test_single_glyph_instructions_replaced_by_vlm(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.90)},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.99, "vlm")},
+        )
+        assert result.fields["instructions"]["value"] == "TAKE 3 CAPSULES BY MOUTH"
+        assert result.fields["instructions"]["source"] == "vlm"
+        assert len(result.conflicts) == 1
+        conflict = result.conflicts[0]
+        assert conflict.kind == "degenerate"
+        assert conflict.ocr_value == "日"
+        assert conflict.vlm_value == "TAKE 3 CAPSULES BY MOUTH"
+        reason = result.conflict_reasons()[0]
+        assert reason.startswith("ocr_vlm_degenerate:instructions")
+        assert "日" in reason and "TAKE 3 CAPSULES BY MOUTH" in reason
+
+    def test_degenerate_wins_even_with_low_vlm_confidence(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.99)},
+            {"instructions": field("Take 3 capsules by mouth", 0.40, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "vlm"
+        assert result.conflicts[0].kind == "degenerate"
+
+    def test_degenerate_name_replaced(self):
+        result = reconcile_fields(
+            {"name": field("日", 0.95)},
+            {"name": field("Metformin HCl", 0.80, "vlm")},
+        )
+        assert result.fields["name"]["value"] == "Metformin HCl"
+        assert result.fields["name"]["source"] == "vlm"
+        assert result.conflicts[0].kind == "degenerate"
+
+    def test_normal_instructions_disagreement_keeps_margin_behaviour(self):
+        result = reconcile_fields(
+            {"instructions": field("Take 1 tablet by mouth twice daily", 0.90)},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.50, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "ocr"
+        conflict = result.conflicts[0]
+        assert conflict.kind == "confidence"
+        assert "does not clear margin" in conflict.reason
+        assert not result.conflict_reasons()[0].startswith("ocr_vlm_degenerate")
+
+    def test_both_values_short_keeps_margin_behaviour(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.90)},
+            {"instructions": field("x", 0.80, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "ocr"
+        assert result.conflicts[0].kind == "confidence"
+
+    def test_empty_ocr_value_uses_missing_field_path(self):
+        result = reconcile_fields(
+            {"instructions": None},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.80, "vlm")},
+        )
+        assert result.fields["instructions"] == {
+            "value": "TAKE 3 CAPSULES BY MOUTH",
+            "confidence": 0.80,
+            "source": "vlm",
+        }
+        assert result.conflicts == []
+
+    def test_rule_scoped_to_instructions_and_name(self):
+        result = reconcile_fields(
+            {"manufacturer": field("日", 0.90)},
+            {"manufacturer": field("Acme Pharma Ltd", 0.80, "vlm")},
+        )
+        assert result.fields["manufacturer"]["source"] == "ocr"
+        assert result.conflicts[0].kind == "confidence"
+
+    def test_degenerate_threshold_is_configurable(self):
+        ocr = {"name": field("abc", 0.90)}
+        vlm = {"name": field("Metformin", 0.80, "vlm")}
+        # 3 ASCII letters: not < 3 -> margin applies and OCR keeps it
+        assert reconcile_fields(ocr, vlm, config={"degenerate_min_alpha": 3}).fields["name"]["source"] == "ocr"
+        # 3 < 4 -> degenerate switch to the readable VLM value
+        assert reconcile_fields(ocr, vlm, config={"degenerate_min_alpha": 4}).fields["name"]["source"] == "vlm"
+
+    def test_degenerate_conflict_preserves_both_values_and_kind(self):
+        result = reconcile_fields(
+            {"name": field("日", 0.90)},
+            {"name": field("Metformin HCl", 0.70, "vlm")},
+        )
+        payload = result.conflicts[0].to_dict()
+        assert payload["kind"] == "degenerate"
+        assert payload["ocr_value"] == "日"
+        assert payload["vlm_value"] == "Metformin HCl"
+        assert payload["chosen_source"] == "vlm"
+        assert payload["reason"]
+
+
 class TestContractMapping:
     def test_full_mapping(self):
         result = reconcile_fields(

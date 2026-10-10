@@ -22,10 +22,18 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from .types import BBox, OcrLine, OcrResult
+from .types import BBox, OcrLine, OcrResult, has_readable_content
 
 BACKEND_NAME = "rapidocr-onnxruntime"
 _ENGINE: Any = None
+
+# Bbox crops whose long side is smaller than this are upscaled before
+# recognition. RapidOCR's detector already rescales internally
+# (limit_side_len=736, limit_type=min), so upscaling crops near that size is
+# redundant and can disturb word spacing; below it, Lanczos helps small/distant
+# labels without merging words.
+MIN_CROP_LONG_SIDE = 700
+MAX_CROP_UPSCALE = 4.0
 
 
 class OcrUnavailableError(RuntimeError):
@@ -109,6 +117,31 @@ def _normalize_backend_output(output: Any) -> list[tuple[Any, str, float | None]
     return items
 
 
+def _prepare_crop(crop: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Upscale a small bbox crop; returns ``(image, scale_x, scale_y)``.
+
+    Crops whose long side is already >= :data:`MIN_CROP_LONG_SIDE` are returned
+    unchanged so the full-size path keeps its previous behavior.
+
+    Lanczos upscaling alone is used: contrast enhancement (CLAHE) was measured to
+    merge word spacing on synthetic pharmacy labels ("Take1 tabletbymouth..."),
+    which breaks cadence parsing and pharmacy-name extraction. Crops at or above
+    RapidOCR's internal detector limit (limit_side_len=736) read natively and are
+    returned unchanged.
+    """
+    height, width = crop.shape[:2]
+    long_side = max(height, width)
+    if long_side <= 0 or long_side >= MIN_CROP_LONG_SIDE:
+        return crop, 1.0, 1.0
+    scale = min(MAX_CROP_UPSCALE, MIN_CROP_LONG_SIDE / long_side)
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    import cv2
+
+    resized = cv2.resize(crop, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+    return resized, new_width / width, new_height / height
+
+
 def read_text(
     image: Any,
     bbox: BBox | Sequence[float] | None = None,
@@ -134,11 +167,13 @@ def read_text(
     arr = _to_bgr_array(image, channel_order=channel_order)
     full_h, full_w = arr.shape[:2]
     offset_x = offset_y = 0
+    scale_x = scale_y = 1.0
     if crop_box is not None:
         x1, y1, x2, y2 = crop_box.to_pixels(full_w, full_h)
         if x2 - x1 < 2 or y2 - y1 < 2:
             raise ValueError("bbox crop is too small for OCR")
         arr = arr[y1:y2, x1:x2]
+        arr, scale_x, scale_y = _prepare_crop(arr)
         offset_x, offset_y = x1, y1
 
     ocr = engine if engine is not None else _load_engine()
@@ -152,7 +187,10 @@ def read_text(
             continue
         line_bbox = None
         if points is not None and len(points) >= 2:
-            line_bbox = BBox.from_points(points, full_w, full_h, offset_x, offset_y)
+            # Recognition ran on the (possibly upscaled) crop: map back to the
+            # full frame before normalizing.
+            mapped = [(float(p[0]) / scale_x, float(p[1]) / scale_y) for p in points]
+            line_bbox = BBox.from_points(mapped, full_w, full_h, offset_x, offset_y)
         lines.append(
             OcrLine(
                 text=text,

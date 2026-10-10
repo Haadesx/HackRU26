@@ -184,6 +184,16 @@ preserved in `ReconcileResult.conflicts`, and every conflict records the
 resolution reason (confidence margin or fallback rule) in `Conflict.reason`.
 The resolution is never silent.
 
+**Degenerate OCR replacement (M8).** For `instructions` (primary) and `name`
+(secondary), an OCR value with fewer than `degenerate_min_alpha` ASCII letters
+(default 8, e.g. a single glyph read at 0.90) is replaced by a readable VLM value
+(≥ 8 ASCII letters) regardless of the confidence margin. The conflict carries
+`kind="degenerate"` and surfaces as `ocr_vlm_degenerate:<field>` with both values
+preserved. Two readable values that genuinely disagree keep the margin rule; an
+empty side keeps the missing-field path. Fields and threshold are configurable
+(`degenerate_fields`, `degenerate_min_alpha`), and the rule applies unchanged to
+single-frame and multi-frame reconciliation.
+
 ### Multi-frame escalation (Milestone 7)
 
 When the app captures several frames of the same long or rotated label, OCR fuses

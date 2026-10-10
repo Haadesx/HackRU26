@@ -44,7 +44,7 @@ def test_examples_validate_against_json_schema(example_path: Path):
 def test_examples_validate_against_pydantic_mirror(example_path: Path):
     instance = json.loads(example_path.read_text())
     parsed = ScanResponse.model_validate(instance)
-    assert parsed.contract_version == "1.2.0"
+    assert parsed.contract_version == "1.3.0"
 
 
 @pytest.mark.parametrize("example_path", EXAMPLE_PATHS, ids=_ids(EXAMPLE_PATHS))
@@ -67,6 +67,29 @@ def test_required_nullable_keys_survive_serialization():
     payload = to_contract_json(build_fixture_response(blurry, "req-conformance00", 1.0))
     assert "value" in payload["medication"]["name"]
     assert payload["medication"]["name"]["value"] is None
+
+
+def test_nullable_label_meta_keys_survive_serialization():
+    from services.common.contract import FieldString, LabelMeta
+
+    response = build_fixture_response(FIXTURES[0], "req-conformance00", 1.0)
+    response.label_meta = LabelMeta(quantity_start=FieldString())
+    payload = to_contract_json(response)
+    assert payload["label_meta"]["quantity_start"]["value"] is None
+    assert payload["label_meta"]["quantity_start"]["source"] == "none"
+    jsonschema.validate(instance=payload, schema=SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f in FIXTURES if f.get("label_meta") is not None],
+    ids=[f["key"] for f in FIXTURES if f.get("label_meta") is not None],
+)
+def test_mock_fixtures_carry_label_meta(fixture):
+    payload = to_contract_json(build_fixture_response(fixture, "req-meta00000000", 1.0))
+    meta = payload["label_meta"]
+    assert meta["quantity_start"]["value"] is not None
+    assert meta["pharmacy_name"]["source"] in {"ocr", "none"}
 
 
 def test_nullable_dose_keys_survive_serialization():

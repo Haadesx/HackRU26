@@ -80,7 +80,7 @@ def test_clip_guidance_is_deduplicated():
     guidance = derive_guidance(
         quality,
         Bottle(detected=False, confidence=0.0),
-        Label(detected=False, confidence=0.0),
+        Label(detected=True, confidence=0.6, bbox=BBox(x=0.0, y=0.1, w=0.9, h=0.8)),
         label_clipped=True,
     )
     assert sum("cut off" in text.lower() for text in guidance) == 1
@@ -107,3 +107,62 @@ def test_clip_guidance_absent_when_not_clipped():
         label_clipped=False,
     )
     assert CLIP_GUIDANCE not in guidance
+
+
+# --- M8: weak fallback boxes must not trigger clipping guidance ---
+
+#: The exact false-positive shape from real bundle 20261010-175252.
+WEAK_EDGE_BOX = {"x": 0.585, "y": 0.211, "w": 0.415, "h": 0.775}
+WEAK_EDGE_CONFIDENCE = 0.4585
+
+
+def test_low_confidence_edge_box_is_not_clipped():
+    label = Label(detected=True, confidence=WEAK_EDGE_CONFIDENCE, bbox=BBox(**WEAK_EDGE_BOX))
+    assert label.bbox is not None and label.bbox.x + label.bbox.w == 1.0  # touches the right edge
+    assert is_label_clipped(label) is False
+
+
+def test_low_confidence_edge_box_adds_no_cut_off_guidance():
+    label = Label(detected=True, confidence=WEAK_EDGE_CONFIDENCE, bbox=BBox(**WEAK_EDGE_BOX))
+    guidance = derive_guidance(
+        FrameQuality(acceptable=True, score=1.0),
+        Bottle(detected=False, confidence=0.0),
+        label,
+        label_clipped=is_label_clipped(label),
+    )
+    assert CLIP_GUIDANCE not in guidance
+    # Even if a caller passes the flag directly, the guidance layer refuses weak boxes.
+    guidance_flag_only = derive_guidance(
+        FrameQuality(acceptable=True, score=1.0),
+        Bottle(detected=False, confidence=0.0),
+        label,
+        label_clipped=True,
+    )
+    assert CLIP_GUIDANCE not in guidance_flag_only
+
+
+def test_high_confidence_edge_box_is_clipped():
+    label = Label(detected=True, confidence=0.6, bbox=BBox(**WEAK_EDGE_BOX))
+    assert is_label_clipped(label) is True
+    guidance = derive_guidance(
+        FrameQuality(acceptable=True, score=1.0),
+        Bottle(detected=False, confidence=0.0),
+        label,
+        label_clipped=is_label_clipped(label),
+    )
+    assert guidance.count(CLIP_GUIDANCE) == 1
+
+
+def test_borderline_confidence_is_clipped():
+    label = Label(detected=True, confidence=0.5, bbox=BBox(**WEAK_EDGE_BOX))
+    assert is_label_clipped(label) is True
+
+
+def test_low_confidence_centered_box_is_not_clipped():
+    label = Label(detected=True, confidence=0.4, bbox=BBox(x=0.3, y=0.3, w=0.4, h=0.4))
+    assert is_label_clipped(label) is False
+
+
+def test_degenerate_full_frame_box_is_not_clipped():
+    label = Label(detected=True, confidence=0.9, bbox=BBox(x=0.0, y=0.0, w=1.0, h=1.0))
+    assert is_label_clipped(label) is False
