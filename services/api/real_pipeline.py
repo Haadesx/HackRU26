@@ -42,6 +42,7 @@ from services.common.contract import (
     Instructions,
     Interpretation,
     Label,
+    LabelMeta,
     Medication,
     PerFrameResult,
     Safety,
@@ -241,6 +242,102 @@ def _fallback_dose(extraction: Extraction, ocr_confidence: float) -> Optional[Di
             "source": "ocr",
         }
     return None
+
+
+# --------------------------------------------------------------------------
+# Label metadata (v1.3)
+# --------------------------------------------------------------------------
+#: Derived dosing-time table for the temporary bridge (lower confidence).
+_SCHEDULE_MAP = (
+    (r"four\s*times?\s*(?:a\s*day|daily)|qid|q\.i\.d", "08:00, 12:00, 16:00, 20:00"),
+    (r"three\s*times?\s*(?:a\s*day|daily)|tid|t\.i\.d", "08:00, 14:00, 20:00"),
+    (r"twice\s*(?:a\s*day|daily)|bid|b\.i\.d|every\s*12\s*hours", "08:00, 20:00"),
+    (r"once\s*(?:a\s*day|daily)|every\s*day|daily", "08:00"),
+)
+
+_LABEL_META_FIELDS = (
+    "quantity_start",
+    "refills_remaining",
+    "pharmacy_name",
+    "pharmacy_phone",
+    "prescriber",
+    "schedule_times",
+)
+
+
+def _label_meta_payload(extraction: Optional[Extraction]) -> Optional[LabelMeta]:
+    """Build the v1.3 ``label_meta`` block from PI-2's extraction.
+
+    Prefers ``Extraction.label_meta_contract()`` once PI-2 ships it; a marked
+    temporary bridge reads the common pharmacy-label lines from the verbatim
+    OCR text otherwise. Missing values stay null with source "none" — the API
+    never fabricates metadata.
+    """
+    if extraction is None:
+        return None
+    factory = getattr(extraction, "label_meta_contract", None)
+    if callable(factory):
+        try:
+            payload = factory()
+        except Exception:  # noqa: BLE001 - metadata bugs must not break a scan
+            return None
+        if payload is None:
+            return None
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json")
+        try:
+            return LabelMeta.model_validate(payload)
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        return LabelMeta.model_validate(_fallback_label_meta(extraction))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fallback_label_meta(extraction: Extraction) -> Dict[str, Dict[str, Any]]:
+    """Temporary PI-2 bridge; delete once ``services/ocr`` ships the contract."""
+    text = extraction.raw_text or ""
+    lowered = text.lower()
+
+    def entry(value: Optional[str], confidence: float) -> Dict[str, Any]:
+        if value is None:
+            return {"value": None, "confidence": 0.0, "source": "none"}
+        return {"value": value, "confidence": confidence, "source": "ocr"}
+
+    quantity = re.search(r"\bqty\s*:?\s*(\d{1,4})\b", text, re.IGNORECASE)
+    refills = re.search(r"\brefill(?:s)?\s*:?\s*(\d{1,3})\b", text, re.IGNORECASE)
+
+    pharmacy_name: Optional[str] = None
+    for line in text.splitlines():
+        if "pharmacy" in line.lower():
+            pharmacy_name = re.sub(r"(?i)([a-z])(pharmacy)", r"\1 \2", line.strip())
+            break
+
+    phone: Optional[str] = None
+    phone_match = re.search(r"\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}", text)
+    if phone_match and re.search(r"(?i)tel|phone", text):
+        phone = phone_match.group(0)
+
+    prescriber: Optional[str] = None
+    prescriber_match = re.search(r"(?im)^\s*prescriber\s*:?\s*(.+?)\s*$", text)
+    if prescriber_match:
+        prescriber = re.sub(r"(?i)^dr\.?\s*", "Dr. ", prescriber_match.group(1).strip())
+
+    schedule: Optional[str] = None
+    for pattern, times in _SCHEDULE_MAP:
+        if re.search(pattern, lowered):
+            schedule = times
+            break
+
+    return {
+        "quantity_start": entry(quantity.group(1) if quantity else None, 0.9),
+        "refills_remaining": entry(refills.group(1) if refills else None, 0.9),
+        "pharmacy_name": entry(pharmacy_name, 0.85),
+        "pharmacy_phone": entry(phone, 0.85),
+        "prescriber": entry(prescriber, 0.8),
+        "schedule_times": entry(schedule, 0.7),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -617,8 +714,14 @@ class RealScanPipeline:
         if frame.vision is not None and frame.vision.quality.acceptable:
             self._maybe_escalate(frame)
             frame.status = self._status_for(frame.vision, frame.canonical, frame.uncertainty)
-            if frame.readable is False and not self._has_identity(frame.canonical):
-                # Unreadable OCR and no VLM rescue: ask for a retake.
+            if (
+                frame.readable is False
+                and not self._has_identity(frame.canonical)
+                and (frame.vision.bottle.detected or frame.vision.label.detected)
+            ):
+                # A located label whose text is unreadable and no VLM rescue:
+                # ask for a retake. Frames with no bottle/label stay
+                # no_medication_found (that status is more specific).
                 frame.status = "needs_rescan"
 
         total_ms = round((time.perf_counter() - started) * 1000.0, 3)
@@ -656,6 +759,7 @@ class RealScanPipeline:
             ),
             safety=Safety(),
             error=None,
+            label_meta=_label_meta_payload(frame.extraction),
         )
 
     @staticmethod

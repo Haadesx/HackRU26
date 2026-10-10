@@ -111,6 +111,7 @@ def build_fixture_response(
         timing=Timing(total_ms=total_ms, stages={"mock_pipeline": total_ms}),
         safety=Safety(),
         error=None,
+        label_meta=fixture.get("label_meta"),
     )
 
 
@@ -174,6 +175,20 @@ def to_contract_json(response: ScanResponse) -> Dict[str, Any]:
         strength = medication.get("strength")
         if isinstance(strength, dict):
             strength.setdefault("unit", None)
+
+    label_meta = payload.get("label_meta")
+    if isinstance(label_meta, dict):
+        for field_name in (
+            "quantity_start",
+            "refills_remaining",
+            "pharmacy_name",
+            "pharmacy_phone",
+            "prescriber",
+            "schedule_times",
+        ):
+            field_entry = label_meta.get(field_name)
+            if isinstance(field_entry, dict):
+                field_entry.setdefault("value", None)
 
     return payload
 
@@ -263,6 +278,7 @@ class MockPipeline:
                 safety=Safety(),
                 error=None,
                 capture=capture,
+                label_meta=base.get("label_meta"),
             )
 
         base = selected[0][2]

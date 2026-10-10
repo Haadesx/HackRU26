@@ -240,6 +240,35 @@ def test_unreadable_ocr_can_be_rescued_by_vlm(monkeypatch):
     assert "label_text_unreadable" in payload["uncertainty"]["reasons"]
 
 
+def test_real_scan_label_meta(monkeypatch):
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+    _, payload = run_scan(SHARP.read_bytes())
+    meta = payload["label_meta"]
+    assert meta["quantity_start"]["value"] == "30"
+    assert meta["refills_remaining"]["value"] == "2"
+    assert meta["pharmacy_name"]["value"] == "Demo Pharmacy"
+    assert meta["pharmacy_phone"]["value"] == "(555) 010-2030"
+    assert meta["prescriber"]["value"] == "Dr. A. Demo"
+    assert meta["schedule_times"]["value"] == "08:00, 20:00"
+    for field_entry in meta.values():
+        assert field_entry["source"] in {"ocr", "vlm", "registry", "none"}
+        assert 0.0 <= field_entry["confidence"] <= 1.0
+
+
+def test_label_meta_missing_fields_are_null_with_none_source():
+    from services.api.real_pipeline import _fallback_label_meta
+    from services.ocr.extract import extract_fields
+
+    meta = _fallback_label_meta(extract_fields("Take 1 tablet by mouth twice daily."))
+    assert meta["quantity_start"] == {"value": None, "confidence": 0.0, "source": "none"}
+    assert meta["refills_remaining"]["source"] == "none"
+    assert meta["pharmacy_name"]["value"] is None
+    assert meta["pharmacy_phone"]["value"] is None
+    assert meta["prescriber"]["value"] is None
+    # Schedule is derived from the frequency wording; absent metadata stays null.
+    assert meta["schedule_times"]["value"] == "08:00, 20:00"
+
+
 @pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)
 def test_real_scan_follows_vision_quality_verdict(sample, monkeypatch):
     """The API must obey vision's acceptable flag, whatever the calibration.
