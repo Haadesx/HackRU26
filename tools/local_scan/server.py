@@ -53,32 +53,53 @@ def _analyze_frame(image_bytes: bytes):
     return _ANALYZE(image_bytes)
 
 
-def _save_bundle(image: bytes | None, image_type: str, meta: dict, response: bytes, status: int) -> None:
+def _save_bundle(images: list[tuple[bytes, str]], meta: dict, response: bytes, status: int) -> None:
+    """Save one scan bundle: zero or more frames + the response JSON.
+
+    `images` is a list of (bytes, content_type); multi-frame scans save `_f1`, `_f2`, …
+    """
     if not SAVE_SCANS:
         return
     try:
         SAVE_DIR.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{uuid.uuid4().hex[:6]}"
-        if image:
-            ext = "png" if "png" in image_type else "jpg"
-            (SAVE_DIR / f"{stamp}.{ext}").write_bytes(image)
+        for index, (data, ctype) in enumerate(images):
+            ext = "png" if "png" in (ctype or "") else "jpg"
+            suffix = "" if len(images) == 1 else f"_f{index + 1}"
+            (SAVE_DIR / f"{stamp}{suffix}.{ext}").write_bytes(data)
         try:
             payload = json.loads(response)
         except Exception:  # noqa: BLE001
             payload = {"raw": response.decode("utf-8", "replace")[:4000]}
         (SAVE_DIR / f"{stamp}.json").write_text(json.dumps({
-            "saved_at": stamp, "http_status": status, "image_type": image_type, "meta": meta,
+            "saved_at": stamp, "http_status": status, "frames": len(images), "meta": meta,
             "status": payload.get("status"), "response": payload,
         }, indent=2))
-        # rotate
+        # rotate (one bundle = json + its frames)
         bundles = sorted(SAVE_DIR.glob("*.json"))
         for old in bundles[:-KEEP_SCANS]:
             stem = old.with_suffix("")
-            old.unlink(missing_ok=True)
-            stem.with_suffix(".png").unlink(missing_ok=True)
-            stem.with_suffix(".jpg").unlink(missing_ok=True)
+            for leftover in SAVE_DIR.glob(stem.name + "*"):
+                leftover.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - debug saving must never break a scan
         pass
+
+
+def _extract_multipart_parts(body: bytes, content_type: str, field: str) -> list[tuple[bytes, str]]:
+    """Every `field` part in a multipart body as (bytes, content_type)."""
+    m = re.search(r"boundary=(?:\"([^\"]+)\"|([^;]+))", content_type or "")
+    if not m:
+        return []
+    boundary = (m.group(1) or m.group(2)).strip().encode()
+    marker = ('name="%s"' % field).encode()
+    parts: list[tuple[bytes, str]] = []
+    for part in body.split(b"--" + boundary):
+        head, _, data = part.partition(b"\r\n\r\n")
+        if marker not in head:
+            continue
+        cm = re.search(rb"Content-Type:\s*([\w/+.-]+)", head)
+        parts.append((data.rstrip(b"\r\n"), cm.group(1).decode() if cm else "image/png"))
+    return parts
 
 
 def _extract_multipart_image(body: bytes, content_type: str) -> tuple[bytes | None, str]:
@@ -219,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         code, resp, resp_type = self._forward("/v1/scan", forward_body, forward_type)
-        _save_bundle(image, image_type, meta, resp, code)
+        _save_bundle([(image, image_type)] if image else [], meta, resp, code)
         self._respond(code, resp, resp_type)
 
     def _handle_live(self) -> None:
@@ -258,7 +279,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(415, {"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": ctype}})
             return
         code, resp, resp_type = self._forward("/v1/scan/multi", body, ctype)
-        _save_bundle(None, "", {"endpoint": "multi"}, resp, code)
+        frames = _extract_multipart_parts(body, ctype, "images")
+        _save_bundle(frames, {"endpoint": "multi", "frames": len(frames)}, resp, code)
         self._respond(code, resp, resp_type)
 
     def log_message(self, fmt: str, *args) -> None:  # keep the console quiet
