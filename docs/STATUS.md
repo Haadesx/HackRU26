@@ -52,3 +52,9 @@ untouched). Push only feature branches.
 - 2026-10-10 — Documentation system adopted (standing rule in `AGENTS.md` §0):
   `docs/inference-medcheck.md` maintained by the orchestrator; workers include `DOC:`
   blocks in reports.
+- 2026-10-10 — `feat/inference-medcheck` pushed to `origin` (branch only; `main` remains
+  untouched). Milestone 1 merged + verified (42 tests green, live smoke OK).
+- 2026-10-10 — Milestone 2 dispatched: Athena wires the real Vision→OCR pipeline
+  (+VLM behind flags, matcher pending Orion); Orion builds the registered-candidate
+  matcher; Atlas adds `crop_label`/CLI demo/detector env docs; Juno extends escalation
+  triggers + `client_from_env()` (no GPU).
