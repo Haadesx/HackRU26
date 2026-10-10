@@ -154,7 +154,10 @@ Contract **1.1.0** adds one additive optional field:
 `instructions.dose = {quantity (number>0|null), unit (string|null), confidence, source}`.
 It is the per-dose quantity as written on the label ("Take 1 tablet" → `1`,
 `"tablet"`), **never** a package count, and is omitted/null when absent or
-ambiguous. The real pipeline prefers PI-2's `Extraction.dose_contract()` (with a
+ambiguous. A `dose` object with `source:"none"` (quantity and unit null) means
+"the v1.1 pipeline ran and no dose was clearly stated" — clients must treat it
+exactly like an absent dose and **never** send its null/0 as the backend
+quantity (use the fallback `1`). The real pipeline prefers PI-2's `Extraction.dose_contract()` (with a
 temporary, quantity-safe bridge until that ships); mock fixtures carry synthetic
 dose blocks so iOS can develop against v1.1.
 
