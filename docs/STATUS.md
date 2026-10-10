@@ -51,6 +51,16 @@ untouched). Push only feature branches.
 - All four worker branches scope-clean; integration branch pushed (`origin`), `main`
   untouched.
 
+## Cross-team integration
+
+- **Urvi `feat/backend-urvi` @ `85fc33f`** — verified 2026-10-10: clean merge into our
+  branch (64 files, no conflicts), scan ingest contract-aligned, TimescaleDB healthy.
+  **Blocker:** `backend/app/models/` was silently excluded from her push by our
+  unanchored `.gitignore` rule `models/`; fixed in `179c4d6`. She must merge the fix,
+  `git add backend/app/models`, and push. Tests: blocked until then (collection error).
+  Open decision: backend requires numeric `quantity` in `POST /scans`; v1 ScanResponse
+  has no structured dose quantity (only parsed text) — decide client default vs v1.1.
+
 ## Dispatch log (append-only, board level)
 
 - 2026-10-10 — G1/G2 done; all four assignments dispatched via `octoberctl terminal input`

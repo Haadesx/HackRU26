@@ -519,6 +519,38 @@ sequential calls, no restarts).
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
 
+### H.4 Backend ingest contract (Urvi, `feat/backend-urvi`, verified 2026-10-10)
+
+`POST /api/v1/scans` (JWT, `flask-smorest`): request
+`{event_id, user_id, drug_name, strength?{value,unit}, quantity, timestamp}` → response
+`{match_status, observation_event_id, observed_at, replayed, medication, dose_event,
+ timing, quantity_check, scanned_quantity, expected_quantity, next_dose, candidates, safety}`.
+
+Client mapping from our ScanResponse: `medication.name.value → drug_name`,
+`medication.strength → strength` (backend also accepts `"500 mg"` strings),
+`request timestamp → timestamp`; `event_id` is client-generated (idempotent).
+
+- The backend never records a dose from a scan (`safety.ingestion_not_inferred`); only
+  `POST /doses/{id}/confirm` changes status — aligned with our safety rule.
+- **Gap to decide:** `quantity` is required by `POST /scans` (numeric dose units), while
+  v1 ScanResponse has no structured dose quantity — only free text in
+  `instructions.parsed` (e.g. `"1 tablet"`). Options: (a) client sends `quantity=1`, or
+  (b) additive contract v1.1 fields `dose_quantity`/`dose_unit` extracted by PI-2.
+
+**2026-10-10** — **Cross-team verification: Urvi's backend (`feat/backend-urvi` @ `85fc33f`).**
+Verified: history branches from our `e0fe570`; 64 new files all under `backend/`,
+`.kiro/` and root docs — **dry-run merge into integration is clean (no conflicts)**;
+scan ingest matches the inference contract (`strength {value,unit}`, idempotent
+`event_id`, `safety.ingestion_not_inferred`, scans never record doses); TimescaleDB
+container starts healthy and migrations/17-table schema are present.
+**BLOCKER FOUND (ours, fixed):** the entire `backend/app/models/` package was missing
+from her push because our `.gitignore` rule `models/` was unanchored and silently
+matched `backend/app/models/` (fresh checkout → `ModuleNotFoundError: app.models`;
+all her tests fail at collection). Fixed on integration branch `179c4d6` (`/models/`
+anchored to repo root; root ML weights still ignored). **Urvi must merge/cherry-pick
+that fix, `git add backend/app/models`, and push.** Audit confirmed no other module is
+affected (only `app.models` / `app.models.enums` unresolved).
+
 **2026-10-10** — **Local console live mode + scan bundles.** Added `/api/live`
 (vision-only fast pass, **~20 ms** per 960 px frame after warmup; quality + bottle +
 label + guidance) and a UI live mode: continuous boxes/guidance at ~4 fps, auto-scan when
