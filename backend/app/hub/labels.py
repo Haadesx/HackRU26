@@ -2,11 +2,12 @@
 
 Mapping (frontend/docs/inference-contract.md):
   name, strength, dose_amount   <- inference medication/instructions fields (their confidence)
-  schedule_times                <- instructions frequency wording, converted (confidence capped at 0.7)
-  quantity_start, refills_remaining, pharmacy_name, pharmacy_phone, prescriber
-                                <- regex over the raw OCR label text (confidence 0.7-0.75, so the
-                                   caregiver is asked to check). Nothing is filled unless it is
-                                   literally present in the label text.
+  schedule_times, quantity_start, refills_remaining, pharmacy_name, pharmacy_phone, prescriber
+                                <- inference v1.3 `label_meta` (their confidence) when present;
+                                   otherwise fallback: schedule converted from frequency wording
+                                   (confidence capped at 0.7) and regex over the raw OCR label
+                                   text (0.7-0.75, so the caregiver is asked to check).
+                                   Nothing is filled unless it is literally present on the label.
 Confidence -> state: >= 0.85 filled, >= 0.50 unsure, otherwise missing (value cleared).
 """
 
@@ -98,7 +99,23 @@ def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
             out["schedule_times"] = (times, min(base, CONVERTED_CAP))
             break
 
+    # v1.3: inference reads label metadata itself. Prefer it; regexes below only fill gaps
+    # (older gateways, or fields label_meta left empty).
+    meta = scan.get("label_meta") or {}
+    meta_out: dict[str, tuple[str, float]] = {}
+    for key in ("schedule_times", "quantity_start", "refills_remaining", "pharmacy_name", "pharmacy_phone", "prescriber"):
+        f = meta.get(key) or {}
+        if f.get("value") not in (None, "") and f.get("source") != "none":
+            meta_out[key] = (str(f["value"]).strip(), float(f.get("confidence") or 0))
+
     text = (scan.get("label") or {}).get("text") or ""
+    out.update(_regex_fields(text, skip=meta_out.keys()))
+    out.update(meta_out)
+    return out
+
+
+def _regex_fields(text: str, skip) -> dict[str, tuple[str, float]]:
+    out: dict[str, tuple[str, float]] = {}
     if m := _QTY.search(text):
         out["quantity_start"] = (str(int(m.group(1))), TEXT_PARSED)
     if _NO_REFILLS.search(text):
@@ -114,7 +131,7 @@ def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
             break
     if m := _DOCTOR.search(text):
         out["prescriber"] = (f"Dr. {m.group(1).strip().title()}", PHONE_PARSED)
-    return out
+    return {k: v for k, v in out.items() if k not in skip}
 
 
 def merge(fields: dict, confidence: dict, readings: dict[str, tuple[str, float]]) -> int:

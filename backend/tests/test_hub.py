@@ -214,6 +214,27 @@ def test_scan_two_photos_merge_and_complete(hub, monkeypatch, ctx):
     assert next(m for m in state["medications"] if m["name"] == "Metformin")["pills_left"] == 60
 
 
+def test_label_meta_v13_preferred_over_regex(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    body = inference()
+    body["label_meta"] = {
+        "quantity_start": {"value": "90", "confidence": 0.93, "source": "ocr"},
+        "refills_remaining": {"value": "3", "confidence": 0.9, "source": "ocr"},
+        "pharmacy_name": {"value": "Walgreens #4412", "confidence": 0.88, "source": "ocr"},
+        "pharmacy_phone": {"value": None, "confidence": 0, "source": "none"},
+        "prescriber": {"value": "Dr. Okafor", "confidence": 0.6, "source": "ocr"},
+        "schedule_times": {"value": "08:00, 20:00", "confidence": 0.7, "source": "ocr"},
+    }
+    fake.queue = [body]
+    f = hub.photo("/scans").get_json()["fields"]
+    assert f["quantity_start"] == {"value": "90", "state": "filled"}
+    assert f["refills_remaining"] == {"value": "3", "state": "filled"}
+    assert f["pharmacy_name"] == {"value": "Walgreens #4412", "state": "filled"}
+    assert f["prescriber"] == {"value": "Dr. Okafor", "state": "unsure"}
+    assert f["schedule_times"] == {"value": "08:00, 20:00", "state": "unsure"}
+    assert f["pharmacy_phone"] == {"value": "(732) 555-0123", "state": "unsure"}  # regex fallback fills the gap
+
+
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
     import requests
 
