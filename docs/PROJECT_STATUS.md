@@ -285,6 +285,12 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
     `scripts/make_samples.py`. Multi-frame debug bundles now save all frames.
 13. **Sinchana’s web UI merged** into the integration branch (PR #1) → hub/UI contract
     mapping documented; integration-model decision pending (§6).
+14. **Full-stack hookup demonstrated**: `tools/hub_adapter/` serves Sinchana’s hub contract
+    from real inference (single + multi-frame, nine fields with confidence states);
+    `scripts/run_ui_demo.sh` starts UI (:5199) ← adapter (:8500) ← inference (:8300).
+    Urvi pushed the missing `backend/app/models` package (`4a01a5b`) and opened
+    `feat/integration` (backend + UI merged). Remaining: M10 OCR spacing fix (fills
+    `schedule_times` through the crop path) and the production hub decision.
 
 ---
 

@@ -129,6 +129,15 @@ Multi-photo merging (“keep the highest-confidence value per field”) is exact
 `POST /v1/scan/multi` fusion does; a hub can either call `/v1/scan/multi` once or call
 `/v1/scan` per photo and merge with the same rule.
 
+**Reference implementation (running now):** `tools/hub_adapter/` implements exactly this
+contract on top of the real inference gateway (single photo → `POST /v1/scan`, extra photos
+→ `POST /v1/scan/multi`, mapping below, confidence → `filled/unsure/missing`, completion
+creates a medication). Start the whole stack with
+`scripts/run_ui_demo.sh` → UI on **http://127.0.0.1:5199**, adapter on `:8500`,
+inference on `:8300`. The demo state is seeded from `frontend/docs/fixtures/state.json`
+and persisted in `~/.medcheck/hub_state.json`; Urvi's backend can absorb this adapter's
+role (or the adapter can proxy to it) once the production hub is decided.
+
 **Open decision for the team — who calls inference?**
 
 - *Sinchana’s model:* the **hub** (backend) calls inference server-to-server; clients only
