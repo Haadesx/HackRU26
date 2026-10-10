@@ -59,6 +59,32 @@ scanning at a low rate (1–2 fps) while the user frames the bottle and stopping
 Bottle detection uses ONNX YOLO11n (COCO bottle class) when `MEDCHECK_YOLO_MODEL` is set;
 otherwise a CPU heuristic. Both are best-effort; label OCR works on full frames too.
 
+## 2b. Long labels — rotation-assisted multi-frame capture (v1.2)
+
+When the label is larger than the frame, ask the user to capture **3 overlapping frames**
+while rotating (start → middle → end) and send them together:
+
+```bash
+curl -s -X POST \
+  -F "images=@frame1.png" -F "images=@frame2.png" -F "images=@frame3.png" \
+  -F "mode=real" -F "client=ios" \
+  ${INFERENCE:-http://127.0.0.1:8300}/v1/scan/multi
+```
+
+Rules:
+- 2–6 images, each JPEG/PNG ≤ 12 MiB; **overlap ~30 %** between neighbours.
+- Each frame must pass quality; frames that fail are reported in
+  `capture.per_frame[].status` (`needs_rescan`) and skipped, but the others are still read.
+- `capture.fusion == "multi_frame"`, `capture.frames_used` tells you how many contributed.
+- `capture.per_frame[].clipped == true` means the label ran off that frame — prompt the
+  user to rotate further for the next shot.
+- Fusion is field-level (best confidence wins; instruction lines are unioned; raw text is
+  kept verbatim per frame), so partial reads combine safely and nothing is invented.
+- If `uncertainty.level` is still high after fusion, the gateway may escalate to the VLM
+  with **all frames** (multi-image) before answering.
+- Guidance strings for capture UX come from `frame_quality.guidance` (e.g. “Label is cut
+  off — rotate the bottle or step back, then capture again”).
+
 ## 3. Map the scan to the backend ingest
 
 `POST {backend}/api/v1/scans` (JWT) body:
@@ -76,6 +102,44 @@ Proven mapping + test: `tests/integration/test_backend_fit.py`;
 runnable end-to-end: `.venv-full/bin/python scripts/e2e_scan_to_backend.py --dry-run`.
 
 **Never** send a scan when `status` is `needs_rescan`, `no_medication_found`, or `error`.
+
+## 3b. Web UI (Sinchana) hub contract — mapping & open decision
+
+The web app (`frontend/`, merged into `feat/inference-medcheck`) never calls models
+directly. It expects a **hub** at `VITE_API_URL` (default `http://localhost:8000`; mock data
+when unset) with `GET /state`, `POST /scans` (multipart `photo`), `POST /scans/{id}/photos`
+(extra photos, merged), `POST /scans/{id}/complete`, `GET /adherence`, `PUT /settings`, …
+(see `frontend/docs/api-contract.md`).
+
+Its nine scan fields map to contract v1.3 like this:
+
+| UI field | From inference | Notes |
+|---|---|---|
+| `name` | `medication.name.value` | |
+| `strength` | `medication.strength` | format `"<value> <unit>"` (e.g. `"25 mg"`) |
+| `dose_amount` | `instructions.dose.quantity` | string (`"1"`) |
+| `schedule_times` | `label_meta.schedule_times` | derived `"08:00"` / `"08:00, 20:00"`, lower confidence |
+| `quantity_start` | `label_meta.quantity_start` | QTY as printed |
+| `refills_remaining` | `label_meta.refills_remaining` | `"No refills"` → `"0"` |
+| `pharmacy_name` / `pharmacy_phone` | `label_meta.*` | |
+| `prescriber` | `label_meta.prescriber` | |
+| (any missing) | value `null`, confidence `0` | UI shows its `missing` state and asks the caregiver |
+
+Multi-photo merging (“keep the highest-confidence value per field”) is exactly what our
+`POST /v1/scan/multi` fusion does; a hub can either call `/v1/scan/multi` once or call
+`/v1/scan` per photo and merge with the same rule.
+
+**Open decision for the team — who calls inference?**
+
+- *Sinchana’s model:* the **hub** (backend) calls inference server-to-server; clients only
+talk to the hub. One client API, one auth model, model endpoints stay internal.
+- *Urvi’s current model:* **clients** call inference directly and POST the result to
+  `/api/v1/scans` (JWT).
+
+Recommendation: **hub-proxied inference** (backend calls `:8300` internally, maps to the
+table above, and keeps serving `/api/v1` to iOS/Web). That removes client CORS/auth
+concerns for the model, keeps the vLLM key server-side, and gives the UI its nine fields.
+Decision needed from Urvi + Sinchana before implementing the proxy.
 
 ## 4. Confirm (only after the user takes the dose)
 

@@ -184,6 +184,62 @@ preserved in `ReconcileResult.conflicts`, and every conflict records the
 resolution reason (confidence margin or fallback rule) in `Conflict.reason`.
 The resolution is never silent.
 
+**Degenerate OCR replacement (M8).** For `instructions` (primary) and `name`
+(secondary), an OCR value with fewer than `degenerate_min_alpha` ASCII letters
+(default 8, e.g. a single glyph read at 0.90) is replaced by a readable VLM value
+(≥ 8 ASCII letters) regardless of the confidence margin. The conflict carries
+`kind="degenerate"` and surfaces as `ocr_vlm_degenerate:<field>` with both values
+preserved. Two readable values that genuinely disagree keep the margin rule; an
+empty side keeps the missing-field path. Fields and threshold are configurable
+(`degenerate_fields`, `degenerate_min_alpha`), and the rule applies unchanged to
+single-frame and multi-frame reconciliation.
+
+### Multi-frame escalation (Milestone 7)
+
+When the app captures several frames of the same long or rotated label, OCR fuses
+them into one read. If fusion still leaves identity weak or the frames disagree,
+the VLM should see **all frames in one request** — not one call per frame.
+
+**Client** — `Qwen3VLClient.interpret_multi(images, ocr_text=None, question=None)`
+sends one OpenAI-style `image_url` part per frame plus a fusion-aware prompt, with
+the same lenient parsing, timeouts and retries-off behaviour as `interpret()`
+(which is unchanged). Requests are capped at `max_frames`
+(`MEDCHECK_VLM_MAX_FRAMES`, default 6); an empty list, an unsupported image, or
+too many frames raise `VlmImageError`, and service failures return
+`available=False`.
+
+**Gate** — `should_use_vlm_multi(uncertainty, config)`:
+
+1. `rescan_required` short-circuits first (retaking beats even a conflict);
+2. `fusion_conflicts` escalates — a truthy bool, or a non-empty list of
+   disagreeing canonical field names such as `["name"]`; the signal may also be
+   passed in `config`;
+3. otherwise identical to `should_use_vlm` — weak/missing escalation fields,
+   `candidate_mismatch`, low `min_frame_score`, level `high`.
+
+Extra `uncertainty` keys for multi-frame calls: `frames` (int, how many were
+fused) and `fusion_conflicts`.
+
+**When the API should call it:** only for multi-frame captures
+(`capture.fusion == "multi_frame"`) where the gate above fires. A multi-frame scan
+with agreeing frames and confident identity does not spend a VLM call, and
+single-frame scans keep using `should_use_vlm` + `interpret` unchanged.
+
+**Real smoke (2026-10-10, 3 sequential calls in the granted window):**
+`samples/long_label_{left,middle,right,full}.png`.
+
+| Call | Frames | Latency | Result |
+|---|---|---|---|
+| `interpret(left)` | 1 | 2036.3 ms | name/strength/manufacturer/instructions read |
+| `interpret_multi(left, middle, right)` | 3 | 1836.6 ms | same identity, fused in one request |
+| `interpret(full)` | 1 | 2235.8 ms | same identity |
+
+All three returned `available=true` with no errors. VRAM 18,773 → 18,847 MiB used
+of 32,607 (13.2 GiB free); `echo-vllm` was not touched. Caveat: on these particular
+crops one frame already carried the pharmacy fields, so the smoke proves the
+multi-image wire format end-to-end rather than a quality win; the target case is
+frames that each miss different fields, which is what the gate exists to catch.
+
 ## Reproduce
 
 ```bash

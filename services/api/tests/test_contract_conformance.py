@@ -44,7 +44,7 @@ def test_examples_validate_against_json_schema(example_path: Path):
 def test_examples_validate_against_pydantic_mirror(example_path: Path):
     instance = json.loads(example_path.read_text())
     parsed = ScanResponse.model_validate(instance)
-    assert parsed.contract_version == "1.2.0"
+    assert parsed.contract_version == "1.3.0"
 
 
 @pytest.mark.parametrize("example_path", EXAMPLE_PATHS, ids=_ids(EXAMPLE_PATHS))

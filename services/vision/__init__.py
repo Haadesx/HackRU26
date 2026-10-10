@@ -26,7 +26,7 @@ from services.vision.detector import (
 )
 from services.vision.label import locate_label, locate_label_region
 from services.vision.models import FrameInfo, VisionResult
-from services.vision.pipeline import analyze_frame, derive_guidance
+from services.vision.pipeline import LABEL_CLIP_MARGIN, analyze_frame, derive_guidance, is_label_clipped
 from services.vision.preprocess import (
     ImageDecodeError,
     crop_label,
@@ -41,6 +41,8 @@ from services.vision.quality import evaluate_quality
 __all__ = [
     "analyze_frame",
     "derive_guidance",
+    "is_label_clipped",
+    "LABEL_CLIP_MARGIN",
     "evaluate_quality",
     "preprocess",
     "decode_image",

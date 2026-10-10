@@ -6,6 +6,7 @@ from services.vlm.reconcile import (
     instructions_raw,
     reconcile_fields,
     should_use_vlm,
+    should_use_vlm_multi,
     to_contract_medication,
     uncertainty_from_fields,
 )
@@ -176,6 +177,74 @@ class TestShouldUseVlm:
         assert should_use_vlm(uncertainty, config={"critical_fields": ("form",)}) is True
 
 
+class TestShouldUseVlmMulti:
+    """Multi-frame gate: fusion conflicts escalate; otherwise single-frame rules."""
+
+    def confident(self):
+        return {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {
+                "name": {"confidence": 0.95},
+                "strength_value": {"confidence": 0.9},
+            },
+        }
+
+    def test_fusion_conflicts_bool_escalates(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = True
+        assert should_use_vlm_multi(uncertainty) is True
+        assert should_use_vlm(uncertainty) is False  # single-frame gate unchanged
+
+    def test_fusion_conflicts_list_escalates(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = ["name"]
+        assert should_use_vlm_multi(uncertainty) is True
+
+    def test_fusion_conflicts_runtime_signal_in_config(self):
+        assert should_use_vlm_multi(self.confident(), config={"fusion_conflicts": True}) is True
+
+    def test_empty_conflict_list_does_not_escalate(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = []
+        assert should_use_vlm_multi(uncertainty) is False
+
+    def test_rescan_beats_fusion_conflicts(self):
+        uncertainty = self.confident()
+        uncertainty.update({"fusion_conflicts": True, "rescan_required": True})
+        assert should_use_vlm_multi(uncertainty) is False
+        assert should_use_vlm_multi(uncertainty, config={"invoke_on_rescan": True}) is True
+
+    def test_weak_identity_still_escalates(self):
+        uncertainty = {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {"name": {"confidence": 0.3}, "strength_value": {"confidence": 0.9}},
+        }
+        assert should_use_vlm_multi(uncertainty) is True
+
+    def test_candidate_mismatch_still_escalates(self):
+        assert should_use_vlm_multi(self.confident(), config={"candidate_mismatch": True}) is True
+
+    def test_high_level_still_escalates(self):
+        assert should_use_vlm_multi({"level": "high", "rescan_required": False}) is True
+
+    def test_matches_single_gate_without_fusion(self):
+        cases = [
+            self.confident(),
+            {"level": "high", "rescan_required": False},
+            {
+                "level": "medium",
+                "rescan_required": False,
+                "fields": {"name": {"confidence": 0.9}, "strength_value": {"confidence": 0.9}},
+            },
+            {"level": "low", "rescan_required": False, "fields": {}},
+            {"level": "low", "rescan_required": True},
+        ]
+        for uncertainty in cases:
+            assert should_use_vlm_multi(uncertainty) is should_use_vlm(uncertainty)
+
+
 class TestReconcileFields:
     def test_ocr_only(self):
         result = reconcile_fields({"name": field("Metformin")}, {})
@@ -316,6 +385,102 @@ class TestReconcileNormalization:
         assert result.fields["name"]["source"] == "vlm"
         assert "vlm" in result.conflicts[0].reason
         assert "0.40" in result.conflicts[0].reason
+
+
+class TestDegenerateReplacement:
+    """M8: unreadable OCR must not beat a clean VLM read on confidence alone."""
+
+    def test_single_glyph_instructions_replaced_by_vlm(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.90)},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.99, "vlm")},
+        )
+        assert result.fields["instructions"]["value"] == "TAKE 3 CAPSULES BY MOUTH"
+        assert result.fields["instructions"]["source"] == "vlm"
+        assert len(result.conflicts) == 1
+        conflict = result.conflicts[0]
+        assert conflict.kind == "degenerate"
+        assert conflict.ocr_value == "日"
+        assert conflict.vlm_value == "TAKE 3 CAPSULES BY MOUTH"
+        reason = result.conflict_reasons()[0]
+        assert reason.startswith("ocr_vlm_degenerate:instructions")
+        assert "日" in reason and "TAKE 3 CAPSULES BY MOUTH" in reason
+
+    def test_degenerate_wins_even_with_low_vlm_confidence(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.99)},
+            {"instructions": field("Take 3 capsules by mouth", 0.40, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "vlm"
+        assert result.conflicts[0].kind == "degenerate"
+
+    def test_degenerate_name_replaced(self):
+        result = reconcile_fields(
+            {"name": field("日", 0.95)},
+            {"name": field("Metformin HCl", 0.80, "vlm")},
+        )
+        assert result.fields["name"]["value"] == "Metformin HCl"
+        assert result.fields["name"]["source"] == "vlm"
+        assert result.conflicts[0].kind == "degenerate"
+
+    def test_normal_instructions_disagreement_keeps_margin_behaviour(self):
+        result = reconcile_fields(
+            {"instructions": field("Take 1 tablet by mouth twice daily", 0.90)},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.50, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "ocr"
+        conflict = result.conflicts[0]
+        assert conflict.kind == "confidence"
+        assert "does not clear margin" in conflict.reason
+        assert not result.conflict_reasons()[0].startswith("ocr_vlm_degenerate")
+
+    def test_both_values_short_keeps_margin_behaviour(self):
+        result = reconcile_fields(
+            {"instructions": field("日", 0.90)},
+            {"instructions": field("x", 0.80, "vlm")},
+        )
+        assert result.fields["instructions"]["source"] == "ocr"
+        assert result.conflicts[0].kind == "confidence"
+
+    def test_empty_ocr_value_uses_missing_field_path(self):
+        result = reconcile_fields(
+            {"instructions": None},
+            {"instructions": field("TAKE 3 CAPSULES BY MOUTH", 0.80, "vlm")},
+        )
+        assert result.fields["instructions"] == {
+            "value": "TAKE 3 CAPSULES BY MOUTH",
+            "confidence": 0.80,
+            "source": "vlm",
+        }
+        assert result.conflicts == []
+
+    def test_rule_scoped_to_instructions_and_name(self):
+        result = reconcile_fields(
+            {"manufacturer": field("日", 0.90)},
+            {"manufacturer": field("Acme Pharma Ltd", 0.80, "vlm")},
+        )
+        assert result.fields["manufacturer"]["source"] == "ocr"
+        assert result.conflicts[0].kind == "confidence"
+
+    def test_degenerate_threshold_is_configurable(self):
+        ocr = {"name": field("abc", 0.90)}
+        vlm = {"name": field("Metformin", 0.80, "vlm")}
+        # 3 ASCII letters: not < 3 -> margin applies and OCR keeps it
+        assert reconcile_fields(ocr, vlm, config={"degenerate_min_alpha": 3}).fields["name"]["source"] == "ocr"
+        # 3 < 4 -> degenerate switch to the readable VLM value
+        assert reconcile_fields(ocr, vlm, config={"degenerate_min_alpha": 4}).fields["name"]["source"] == "vlm"
+
+    def test_degenerate_conflict_preserves_both_values_and_kind(self):
+        result = reconcile_fields(
+            {"name": field("日", 0.90)},
+            {"name": field("Metformin HCl", 0.70, "vlm")},
+        )
+        payload = result.conflicts[0].to_dict()
+        assert payload["kind"] == "degenerate"
+        assert payload["ocr_value"] == "日"
+        assert payload["vlm_value"] == "Metformin HCl"
+        assert payload["chosen_source"] == "vlm"
+        assert payload["reason"]
 
 
 class TestContractMapping:

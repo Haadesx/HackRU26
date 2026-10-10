@@ -75,6 +75,25 @@ untouched). Push only feature branches.
   added; suite **349/349**. **M6 dispatched** (network readiness: optional auth, CORS,
   device/TLS guidance).
 
+- 2026-10-10 — **M7 dispatched**: multi-frame label capture (contract v1.2 `capture`
+  block + `POST /v1/scan/multi`; Orion text fusion, Atlas clipped-label guidance, Athena
+  endpoint, Juno multi-image VLM). Long-label synthetic samples + console 3-frame capture
+  flow added. Suite before M7: **358/358**.
+
+- 2026-10-10 — **M7 done**: multi-frame label capture merged (fusion `63cec7e` clipping
+  `2634807` multi-VLM `4032711` endpoint `db94131`); suite **425/425**; live-verified via
+  console `/api/multi` on overlapping long-label crops (fused name/strength/dose,
+  capture report, rotate guidance). Console gained a 3-frame “Long label” mode.
+
+- 2026-10-10 — **M8 dispatched after Varesh's first real multi-frame scan** (bundle
+  `20261010-175252`): the flow worked (3/3 frames fused; VLM read FLUOXETINE HCL 20 MG
+  CAPSULE), but three quality bugs appeared — (1) OCR read only "日" at conf 0.90 on a
+  small distant label (needs crop upscaling + degenerate-text sanity), (2) reconcile kept
+  the degenerate OCR instructions over the VLM's "TAKE 3 CAPSULES BY MOUTH" (margin rule),
+  (3) `label_clipped` false-positive on a low-confidence edge-touching fallback box with
+  misleading "label is cut off" guidance. Dispatched: Orion (M8 OCR quality), Juno (M8
+  reconcile degenerate rule), Atlas (M8 clipped guard).
+
 ## Dispatch log (append-only, board level)
 
 - 2026-10-10 — G1/G2 done; all four assignments dispatched via `octoberctl terminal input`

@@ -1,0 +1,28 @@
+{
+  "thresholds": {
+    "first": 7,
+    "second": 5,
+    "urgent": 3
+  },
+  "alert_missed": true,
+  "alert_no_refills": true,
+  "alert_wrong_bottle": false,
+  "remind_again": "30",
+  "voice_language": "English",
+  "camera_paused": false,
+  "caregivers": [
+    {
+      "id": 1,
+      "name": "Elena",
+      "phone": "(732) 555-0187",
+      "scope": "all",
+      "you": true
+    },
+    {
+      "id": 2,
+      "name": "Marco",
+      "phone": "(908) 555-0142",
+      "scope": "refills"
+    }
+  ]
+}

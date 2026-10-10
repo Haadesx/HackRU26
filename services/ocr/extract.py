@@ -39,6 +39,7 @@ from .types import (
     InstructionItem,
     absent_strength,
     absent_string,
+    has_readable_content,
 )
 
 # --------------------------------------------------------------------------- #
@@ -86,6 +87,7 @@ FREQ_RE = re.compile(
     r"|every\s*(?:\d+(?:\s*(?:to|-)\s*\d+)?\s*)?(?:hours?|hrs?|days?|weeks?|months?|"
     r"mornings?|evenings?|nights?|other\s*day)"
     r"|daily|weekly|monthly|nightly|at\s*bedtime|bedtime"
+    r"|in\s*the\s*(?:morning|afternoon|evening|night)|at\s*night"
     r"|q\.?\d+\s*h|qid|tid|bid|qd|qhs|qam|qpm|prn|as\s*needed|as\s*directed|per\s*day|a\s*day",
     re.IGNORECASE,
 )
@@ -609,9 +611,14 @@ def parse_instructions(raw_text: str) -> list[InstructionItem]:
 
     Kinds: ``dose`` (quantity per dose), ``frequency``, ``route``, ``duration``,
     ``warning``, ``other``. Every item text is a substring of the source.
+    Degenerate/unreadable text (no ASCII letters or < 3 alphabetic characters)
+    returns ``[]`` instead of junk ``other`` items.
     """
+    raw = "" if raw_text is None else str(raw_text)
+    if not has_readable_content(raw):
+        return []
     items: list[InstructionItem] = []
-    for segment in _segments(raw_text):
+    for segment in _segments(raw):
         if WARNING_RE.search(segment):
             items.append(InstructionItem(kind=_WARNING_KIND, text=segment))
             continue
@@ -735,7 +742,9 @@ def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extrac
     """
     hints = hints or {}
     raw = "" if raw_text is None else str(raw_text)
-    if not raw.strip():
+    if not has_readable_content(raw):
+        # Unread label (e.g. a lone CJK false positive): return an empty
+        # extraction rather than junk items. raw_text is preserved verbatim.
         return Extraction(
             raw_text=raw,
             name=absent_string(),

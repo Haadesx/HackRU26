@@ -75,11 +75,16 @@
       <img id="img" style="display:none" alt="">
       <canvas id="overlay" style="display:none"></canvas>
     </div>
+    <div id="thumbs" class="row" style="margin-top:8px"></div>
     <div class="row" style="margin-top:12px">
       <button id="liveBtn" disabled>▶ Start live mode</button>
       <span id="liveState" class="muted"></span>
     </div>
     <div id="liveHint" class="muted" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="longMode"> Long label (3-frame rotation)</label>
+      <span id="longState" class="muted"></span>
+    </div>
     <div class="row" style="margin-top:10px">
       <label>Mode
         <select id="mode">
@@ -130,6 +135,7 @@ $("camBtn").onclick = async () => {
     const v=$("video"); v.srcObject=stream; v.style.display="block";
     $("img").style.display="none"; $("ph").style.display="none"; $("overlay").style.display="none";
     $("shotBtn").disabled=false; $("stopBtn").disabled=false; $("liveBtn").disabled=false;
+    updateLongUI();
     // mirror front camera only
     const s=stream.getVideoTracks()[0].getSettings();
     v.style.transform = s.facingMode==="user" ? "scaleX(-1)" : "none";
@@ -144,7 +150,10 @@ $("shotBtn").onclick = () => {
   const flip = stream && stream.getVideoTracks()[0].getSettings().facingMode==="user";
   const ctx=c.getContext("2d"); if(flip){ctx.translate(c.width,0);ctx.scale(-1,1);}
   ctx.drawImage(v,0,0);
-  c.toBlob(b=>{ currentBlob=b; showBlob(b); }, "image/png", 0.95);
+  c.toBlob(b=>{
+    if($("longMode").checked){ addLongFrame(b); }
+    else { currentBlob=b; showBlob(b); }
+  }, "image/png", 0.95);
 };
 $("file").onchange = (e) => { const f=e.target.files[0]; if(f){ currentBlob=f; showBlob(f); } };
 
@@ -152,11 +161,44 @@ function showBlob(blob){
   const url=URL.createObjectURL(blob);
   const img=$("img"); img.src=url; img.style.display="block";
   $("ph").style.display="none"; $("video").style.display="none";
-  $("scanBtn").disabled=false;
   currentBlob = blob;
   img.onload = () => paintOverlay(null, img.naturalWidth, img.naturalHeight);
   $("stopBtn").disabled=true; $("camBtn").disabled=false;
+  updateLongUI();
 }
+
+/* ---------- long label: guided 3-frame rotation capture ---------- */
+let longFrames=[];
+function longPrompt(){
+  const n=longFrames.length;
+  if(n===0) return "frame 1/3 — hold the START of the label";
+  if(n===1) return "frame 2/3 — rotate the bottle, overlap the middle";
+  if(n===2) return "frame 3/3 — rotate to the END of the label";
+  return "3 frames ready — press “Scan frames”";
+}
+function addLongFrame(b){
+  longFrames.push(b);
+  if(longFrames.length>3) longFrames=longFrames.slice(-3);
+  // Keep the live video visible for the next shot; show captured frames as thumbs.
+  longUrls.forEach(u=>URL.revokeObjectURL(u));
+  longUrls = longFrames.map(f=>URL.createObjectURL(f));
+  $("thumbs").innerHTML = longUrls.map((u,i)=>`<img src="${u}" title="frame ${i+1}" style="height:56px;border-radius:6px;border:1px solid var(--border)">`).join("");
+  updateLongUI();
+}
+let longUrls = [];
+function updateLongUI(){
+  const on=$("longMode").checked, n=longFrames.length;
+  $("longState").textContent = on ? `${n}/3 · ${longPrompt()}` : "";
+  $("scanBtn").textContent = on ? (n>=3 ? "Scan frames" : "Scan frames") : "Scan label";
+  $("scanBtn").disabled = on ? n<3 : !currentBlob;
+}
+$("longMode").onchange = () => {
+  longFrames=[];
+  longUrls.forEach(u=>URL.revokeObjectURL(u)); longUrls=[];
+  $("thumbs").innerHTML="";
+  if($("longMode").checked) stopLive();
+  updateLongUI();
+};
 
 /* ---------- overlay (works over <img> and <video>) ---------- */
 function paintOverlay(result, w, h){
@@ -204,7 +246,25 @@ async function doScan(blob){
   }catch(e){ $("result").innerHTML=`<div class="err">Scan failed: ${e.message}</div>`; }
   finally{ scanning=false; $("scanBtn").disabled=false; $("scanBtn").textContent="Scan label"; }
 }
-$("scanBtn").onclick = () => doScan(currentBlob);
+$("scanBtn").onclick = () => { $("longMode").checked ? doMultiScan() : doScan(currentBlob); };
+
+async function doMultiScan(){
+  if(scanning || longFrames.length<3) return;
+  scanning=true; $("scanBtn").disabled=true; $("scanBtn").textContent="Scanning frames…";
+  try{
+    const fd=new FormData();
+    longFrames.forEach((b,i)=>fd.append("images", b, `frame${i+1}.png`));
+    fd.append("mode", $("mode").value); fd.append("client","test");
+    const hints=$("hints").value.trim(); if(hints) fd.append("hints", hints);
+    const t0=performance.now();
+    const r=await fetch("/api/multi",{method:"POST",body:fd});
+    const ms=Math.round(performance.now()-t0);
+    const body=await r.json();
+    if(!r.ok && body?.error){ $("result").innerHTML=`<div class="err">HTTP ${r.status}: ${body.error.message||body.error.code}</div>`; return; }
+    render(body, ms);
+  }catch(e){ $("result").innerHTML=`<div class="err">Multi scan failed: ${e.message}</div>`; }
+  finally{ scanning=false; updateLongUI(); }
+}
 
 /* ---------- live mode: fast vision pass + guidance + auto-scan ---------- */
 let live=false, liveTimer=null, liveBusy=false, liveGood=0, liveLastScan=0;
@@ -293,6 +353,10 @@ function render(p, uiMs){
   const cand=(p.candidates||[]).map(c=>`<li>${esc(c.name)}${c.strength?` ${c.strength.value??""}${c.strength.unit??""}`:""} <span class="muted">score ${(c.score??0).toFixed(2)} · ${c.source}</span></li>`).join("") || `<li class="muted">none</li>`;
   const guide=(p.frame_quality?.guidance||[]).map(g=>`<li>${esc(g)}</li>`).join("");
   const unc=(p.uncertainty?.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join("") || `<li class="muted">none</li>`;
+  const cap=p.capture;
+  const capRow = cap ? `${cap.fusion} · ${cap.frames_used}/${cap.frames_requested} frames used
+      <ul style="margin:4px 0 0;padding-left:18px">${(cap.per_frame||[]).map(f=>
+        `<li>frame ${f.index+1}: ${esc(f.status)}${f.clipped?" · cut off":""}${f.label_detected!=null?` · label ${f.label_detected?"✓":"✗"}`:""}</li>`).join("")}</ul>` : `<span class="muted">single frame</span>`;
   $("result").innerHTML = `
     <div class="row" style="justify-content:space-between">
       <span class="chip ${st}">${st}</span>
@@ -309,6 +373,7 @@ function render(p, uiMs){
       <tr><td class="k">Registered candidates</td><td><ul style="margin:0;padding-left:18px">${cand}</ul></td></tr>
       <tr><td class="k">VLM interpretation</td><td>${p.interpretation?.available?`${esc(p.interpretation.summary||"")}<div class="muted">${esc(p.interpretation.model||"")}</div>`:`<span class="muted">not used (OCR was sufficient)</span>`}</td></tr>
       <tr><td class="k">Uncertainty</td><td>${p.uncertainty?.level}${p.uncertainty?.rescan_required?" · rescan" : ""}<ul style="margin:4px 0 0;padding-left:18px">${unc}</ul></td></tr>
+      <tr><td class="k">Capture</td><td>${capRow}</td></tr>
       <tr><td class="k">Timing</td><td class="muted">${stages||"—"}</td></tr>
       <tr><td class="k">Raw label text</td><td class="muted" style="white-space:pre-wrap">${esc(p.label?.text||"—")}</td></tr>
     </table>

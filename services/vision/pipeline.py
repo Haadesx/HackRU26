@@ -25,7 +25,34 @@ logger = logging.getLogger(__name__)
 
 #: Below this fraction of the frame the label is considered too small to OCR.
 DEFAULT_LABEL_MIN_AREA = 0.08
+#: A detected label whose bbox comes within this normalized margin of a frame
+#: edge is reported as clipped (the label probably continues off-frame).
+LABEL_CLIP_MARGIN = 0.015
+#: Clipping is only reported for reasonably confident detections: weak fallback
+#: boxes (e.g. a guessed band that happens to touch an edge) must not tell the
+#: user to rotate the bottle. Real label boxes score >= 0.5 on both paths.
+LABEL_CLIP_MIN_CONFIDENCE = 0.5
+#: A box spanning the frame in both axes is not a plausible label region.
+LABEL_CLIP_MAX_DIM = 0.98
+_LABEL_CLIPPED_GUIDANCE = "Label is cut off — rotate the bottle or step back, then capture again"
 _ALL_GOOD_GUIDANCE = "Looks good - hold steady."
+
+
+def is_label_clipped(label: Label, margin: float = LABEL_CLIP_MARGIN) -> bool:
+    """True when a confident, plausible label bbox touches any frame edge within `margin`."""
+    if not label.detected or label.bbox is None:
+        return False
+    if label.confidence < LABEL_CLIP_MIN_CONFIDENCE:
+        return False
+    bbox = label.bbox
+    if bbox.w >= LABEL_CLIP_MAX_DIM and bbox.h >= LABEL_CLIP_MAX_DIM:
+        return False
+    return bool(
+        bbox.x <= margin
+        or bbox.y <= margin
+        or bbox.x + bbox.w >= 1.0 - margin
+        or bbox.y + bbox.h >= 1.0 - margin
+    )
 
 
 def _ms(start: float, end: float) -> float:
@@ -37,8 +64,10 @@ def derive_guidance(
     bottle: Bottle,
     label: Label,
     label_min_area: float = DEFAULT_LABEL_MIN_AREA,
+    *,
+    label_clipped: bool = False,
 ) -> List[str]:
-    """Ordered camera guidance: quality fixes first, then framing fixes."""
+    """Ordered camera guidance: quality fixes first, then framing, then clipping."""
     guidance: List[str] = list(quality.guidance)
 
     label_area = (label.bbox.w * label.bbox.h) if (label.detected and label.bbox is not None) else 0.0
@@ -51,6 +80,14 @@ def derive_guidance(
         guidance.append("Point the camera at the label on the bottle.")
     elif label_area < label_min_area:
         guidance.append("Move closer until the label fills the frame.")
+
+    if (
+        label_clipped
+        and label.detected
+        and label.confidence >= LABEL_CLIP_MIN_CONFIDENCE
+        and not any("cut off" in text.lower() for text in guidance)
+    ):
+        guidance.append(_LABEL_CLIPPED_GUIDANCE)
 
     if not guidance:
         guidance.append(_ALL_GOOD_GUIDANCE)
@@ -115,12 +152,14 @@ def analyze_frame(image_bytes: bytes, hints: Optional[Dict] = None) -> VisionRes
     t_label = time.perf_counter()
     stage_ms["label"] = _ms(t_detect, t_label)
 
+    clipped = is_label_clipped(label)
     total_ms = _ms(t_start, t_label)
     return VisionResult(
         quality=quality,
         bottle=bottle,
         label=label,
-        guidance=derive_guidance(quality, bottle, label),
+        label_clipped=clipped,
+        guidance=derive_guidance(quality, bottle, label, label_clipped=clipped),
         timing=Timing(
             total_ms=round(total_ms, 3),
             stages={name: round(value, 3) for name, value in stage_ms.items()},

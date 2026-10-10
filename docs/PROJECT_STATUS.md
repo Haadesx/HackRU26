@@ -6,7 +6,7 @@
 > verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
 > refreshed at every milestone.
 >
-> **Last updated:** 2026-10-10 ~17:20 UTC · **Repo:** https://github.com/Haadesx/HackRU26
+> **Last updated:** 2026-10-10 ~17:55 UTC · **Repo:** https://github.com/Haadesx/HackRU26
 > **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
 
 ---
@@ -105,7 +105,7 @@ Juno `16ca2dd`, Athena `2e53239`.
   domain failures return HTTP 200 with `status:"error"` + `error{code,message}`.
 
 ### 4.2 Contract v1.1 (frozen; additive over v1.0)
-`ScanResponse` fields (all present): `contract_version:"1.1.0"`, `request_id`,
+`ScanResponse` fields (all present): `contract_version:"1.2.0"`, `request_id`,
 `status ∈ ok|needs_rescan|uncertain|no_medication_found|error`, `mode ∈ mock|real`,
 `frame_quality{acceptable,score,blur,exposure,glare,guidance[]}`,
 `bottle{detected,confidence,bbox?}`, `label{detected,confidence,bbox?,text}`,
@@ -115,14 +115,15 @@ dose{quantity>0|null,unit,confidence,source}}` (**v1.1, additive**),
 `candidates[{name,strength?,score,source}]`,
 `interpretation{available,summary?,source:"vlm"?,model?}`,
 `uncertainty{level∈low|medium|high,reasons[],rescan_required}`,
-`timing{total_ms,stages{}}`,
+`timing{total_ms,stages{}}`, `capture{frames_requested,frames_used,fusion,per_frame[]}`
+(v1.2, multi-frame label capture; optional),
 `safety{disclaimer,ingestion_not_inferred:true,backend_authoritative:true}`, `error|null`.
 BBoxes normalized `[0,1]`. JSON schemas: `contracts/v1/*.schema.json`; pydantic mirror:
 `services/common/contract.py`. Versioning: additive → minor bump; breaking → new `vN/`.
 
 ### 4.3 Measured results (all verified, not reported by others)
-- Unit/integration tests on merged tree: **349 passed / 0 failed** (vision 99 · ocr 75 ·
-  vlm 104 · api 62 · integration 2 + backend-fit).
+- Unit/integration tests on merged tree: **425 passed / 0 failed** (vision 112 · ocr 93 ·
+  vlm 125 · api 91 · integration 4 + backend-fit).
 - OCR accuracy on synthetic set: extraction 33/33 name/strength/form; end-to-end rendered
   images 8/8; macro F1 OCR-only **0.99**; 24-image eval: VLM-only 1.0, hybrid 0.99.
 - Latency (Mac CPU, real mode): clean scan **~0.54 s** (OCR dominant ~0.4 s, **zero VLM
@@ -198,9 +199,12 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
    device → Mac/rig traffic beyond local testing.
 3. **Candidate registry source**: inference matcher consumes `hints.known_candidates`;
    long-term the backend/user's medication list should feed it.
-4. **Network readiness (M6, in flight)** — optional bearer auth (`MEDCHECK_API_KEY`),
-   CORS allowlist (`MEDCHECK_CORS_ORIGINS`), device-access guidance (bind 0.0.0.0 /
-   Tailscale, TLS via uvicorn flags or reverse proxy) for iOS/web clients.
+4. **Multi-frame capture (M7) — done + live-verified** — long labels read across rotated
+   frames: contract v1.2 `capture` block + `POST /v1/scan/multi`; text-level fusion
+   (best-confidence fields, deduped instruction union, verbatim per-frame raw text),
+   clipped-label rotate guidance, multi-image VLM support, console “Long label” 3-frame
+   mode. Verified on overlapping crops: fused Hydrochlorothiazide 25 mg + full
+   instructions, 3/3 frames, no fabrication.
 5. **YOLO recall** — real-photo recall is partial (1 strong, 1 weak, 1 none in the
    sample set); heuristic/flat-label fallbacks stay. Threshold configurable.
 5. **VLM cost**: escalation triggers were tuned in M3 (identity-critical fields only);
@@ -264,8 +268,11 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
 8. **Local console** built (daemon, live mode, debug bundles); real-photo testing by
    Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integrated and enabled**
    (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
-9. **M6 dispatched** (network readiness for clients: optional auth + CORS + device/TLS
-   guidance).
+9. **M6 done** (network readiness: optional bearer auth + CORS + bind/TLS docs; suite 355).
+10. **Contract v1.2 + M7 done** (multi-frame label capture): fusion `63cec7e`,
+    clipping `2634807`, multi-image VLM `4032711`, endpoint `db94131`; merged and
+    live-verified end-to-end through the console (fused fields + capture report);
+    suite **425/425**.
 
 ---
 

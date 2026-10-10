@@ -16,6 +16,7 @@ from .extract import (
     parse_dose_quantity,
     parse_instructions,
 )
+from .fuse import FusionResult, extraction_confidence, fuse_extractions
 from .matcher import DEFAULT_THRESHOLD, match_candidates
 from .types import (
     BBox,
@@ -26,6 +27,7 @@ from .types import (
     OcrLine,
     OcrResult,
     OcrWord,
+    has_readable_content,
 )
 
 __all__ = [
@@ -35,16 +37,20 @@ __all__ = [
     "Extraction",
     "FieldString",
     "FieldStrength",
+    "FusionResult",
     "InstructionItem",
     "OcrLine",
     "OcrResult",
     "OcrUnavailableError",
     "OcrWord",
     "extract_fields",
+    "extraction_confidence",
     "find_form",
     "find_manufacturer",
     "find_name",
     "find_strengths",
+    "fuse_extractions",
+    "has_readable_content",
     "is_available",
     "match_candidates",
     "normalize_dose_unit",

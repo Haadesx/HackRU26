@@ -14,7 +14,9 @@ case/whitespace folding, unit aliases (µg/ug -> mcg), dosage-form plurals
 ("TABLETS" == "Tablet"), leading-token variants for names/manufacturers
 ("Metformin" == "Metformin HCl", salt/suffix), and parsed-instruction item
 comparison. Anything else is a real conflict: both values are preserved and the
-resolution reason is recorded.
+resolution reason is recorded. Degenerate OCR text (fewer than 8 ASCII letters,
+e.g. a single glyph) is replaced by a readable VLM value for instructions/name
+regardless of confidence; the conflict records which rule fired.
 
 Canonical field keys match ``services.vlm.client.CANONICAL_FIELDS``.
 """
@@ -38,8 +40,15 @@ DEFAULTS: Dict[str, Any] = {
     "min_vlm_confidence": 0.55,
     # runtime signal from the candidate matcher: no registry match for the read
     "candidate_mismatch": False,
+    # runtime signal from multi-frame fusion: frames still disagree after fusion
+    "fusion_conflicts": False,
     # frame score below this escalates (None = disabled by default)
     "min_frame_score": None,
+    # degenerate-text rule: an OCR value with fewer than this many ASCII letters
+    # is replaced by a readable VLM value regardless of the confidence margin
+    "degenerate_min_alpha": 8,
+    # fields where the degenerate rule applies (instructions primary, name secondary)
+    "degenerate_fields": ("instructions", "name"),
 }
 
 VALID_LEVELS = ("low", "medium", "high")
@@ -55,6 +64,7 @@ def _config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if alias is not None:
         merged["escalation_fields"] = tuple(alias)
     merged["escalation_fields"] = tuple(merged.get("escalation_fields") or DEFAULTS["escalation_fields"])
+    merged["degenerate_fields"] = tuple(merged.get("degenerate_fields") or DEFAULTS["degenerate_fields"])
     return merged
 
 
@@ -122,6 +132,31 @@ def should_use_vlm(uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]]
     return False
 
 
+def should_use_vlm_multi(
+    uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Multi-frame escalation gate: send ALL frames when fusion is inconclusive.
+
+    Single-frame behaviour is untouched; this only adds the fusion trigger. Order:
+
+    1. ``rescan_required`` short-circuits first (retaking beats even a conflict);
+    2. **fusion conflicts** escalate — ``uncertainty["fusion_conflicts"]`` is
+       truthy (a bool, or a non-empty list of disagreeing canonical field names),
+       or the runtime signal is carried in ``config``;
+    3. otherwise defer to :func:`should_use_vlm` (weak/missing escalation fields,
+       candidate mismatch, low frame score, level ``high``, ...).
+
+    Multi-frame ``uncertainty`` extras the API may pass: ``frames`` (int, how
+    many frames were fused; informational) and ``fusion_conflicts`` as above.
+    """
+    cfg = _config(config)
+    if uncertainty.get("rescan_required") and not cfg["invoke_on_rescan"]:
+        return False
+    if cfg.get("fusion_conflicts") or uncertainty.get("fusion_conflicts"):
+        return True
+    return should_use_vlm(uncertainty, config)
+
+
 def _normalize_value(value: Any) -> Any:
     """Comparison key: case/space-insensitive strings, exact numbers."""
     if isinstance(value, str):
@@ -177,6 +212,25 @@ def _numeric_equal(left: Any, right: Any) -> bool:
 
 def _is_prefix_variant(shorter: List[str], longer: List[str]) -> bool:
     return bool(shorter) and len(shorter) <= len(longer) and longer[: len(shorter)] == shorter
+
+
+def _ascii_alpha_count(value: Any) -> int:
+    return sum(1 for char in str(value) if char.isascii() and char.isalpha())
+
+
+def _degenerate_switch(key: str, ocr_value: Any, vlm_value: Any, cfg: Dict[str, Any]) -> bool:
+    """True when OCR text is unreadable-ish and the VLM supplies readable text.
+
+    Strictly a readability switch, not a semantic judgement: it keeps
+    ``instructions``/``name`` from being held onto just because OCR was
+    confidently wrong (e.g. a single glyph read at 0.90).
+    """
+    if key not in cfg["degenerate_fields"]:
+        return False
+    return (
+        _ascii_alpha_count(ocr_value) < cfg["degenerate_min_alpha"]
+        and _ascii_alpha_count(vlm_value) >= cfg["degenerate_min_alpha"]
+    )
 
 
 def _instruction_items(value: Any) -> List[str]:
@@ -239,7 +293,11 @@ def _equivalent_choice(key: str, ocr: Dict[str, Any], vlm: Dict[str, Any]) -> Di
 
 @dataclass
 class Conflict:
-    """A field where OCR and VLM disagree; the winner is still in fields."""
+    """A field where OCR and VLM disagree; the winner is still in ``fields``.
+
+    ``kind`` is ``"confidence"`` for normal margin-based resolution or
+    ``"degenerate"`` when unreadable OCR text was replaced by readable VLM text.
+    """
 
     key: str
     ocr_value: Any
@@ -248,6 +306,7 @@ class Conflict:
     vlm_confidence: float
     chosen_source: str
     reason: str = ""
+    kind: str = "confidence"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -258,6 +317,7 @@ class Conflict:
             "vlm_confidence": self.vlm_confidence,
             "chosen_source": self.chosen_source,
             "reason": self.reason,
+            "kind": self.kind,
         }
 
 
@@ -276,11 +336,19 @@ class ReconcileResult:
 
     def conflict_reasons(self) -> List[str]:
         """Human-readable reasons suitable for ``uncertainty.reasons``."""
-        return [
-            f"ocr_vlm_conflict:{c.key} (ocr={c.ocr_value!r} vlm={c.vlm_value!r}, "
-            f"kept {c.chosen_source}: {c.reason})"
-            for c in self.conflicts
-        ]
+        reasons: List[str] = []
+        for conflict in self.conflicts:
+            detail = (
+                f"ocr={conflict.ocr_value!r} vlm={conflict.vlm_value!r}, "
+                f"kept {conflict.chosen_source}"
+            )
+            if conflict.kind == "degenerate":
+                reasons.append(f"ocr_vlm_degenerate:{conflict.key} ({detail})")
+            else:
+                reasons.append(
+                    f"ocr_vlm_conflict:{conflict.key} ({detail}: {conflict.reason})"
+                )
+        return reasons
 
 
 def _entry(fields: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
@@ -312,8 +380,11 @@ def reconcile_fields(
       the module docstring for the equivalence rules;
     * real disagreement -> VLM wins when ``vlm_conf >= ocr_conf + prefer_margin``,
       or when OCR is below ``min_field_confidence`` and VLM clears
-      ``min_vlm_confidence``; otherwise OCR wins. Both values and the resolution
-      reason are recorded on the conflict.
+      ``min_vlm_confidence``; **degenerate OCR text** (fewer than
+      ``degenerate_min_alpha`` ASCII letters) is replaced by a readable VLM value
+      for ``degenerate_fields`` (instructions, name) regardless of the margin;
+      otherwise OCR wins. Both values and the resolution reason are recorded on
+      the conflict.
     """
     cfg = _config(config)
     keys: Iterable[str] = sorted(set(ocr_fields) | set(vlm_fields))
@@ -342,28 +413,36 @@ def reconcile_fields(
             result.fields[key] = _equivalent_choice(key, ocr, vlm)
             continue
 
-        vlm_wins = vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"] or (
-            ocr["confidence"] < cfg["min_field_confidence"]
-            and vlm["confidence"] >= cfg["min_vlm_confidence"]
-        )
-        if vlm_wins:
-            winner, source = vlm, "vlm"
-            if vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"]:
-                reason = (
-                    f"vlm {vlm['confidence']:.2f} beats ocr {ocr['confidence']:.2f} "
-                    f"by >= margin {cfg['prefer_margin']}"
-                )
-            else:
-                reason = (
-                    f"ocr {ocr['confidence']:.2f} below {cfg['min_field_confidence']} "
-                    f"and vlm {vlm['confidence']:.2f} >= {cfg['min_vlm_confidence']}"
-                )
-        else:
-            winner, source = ocr, "ocr"
+        if _degenerate_switch(key, ocr["value"], vlm["value"], cfg):
+            winner, source, kind = vlm, "vlm", "degenerate"
             reason = (
-                f"ocr {ocr['confidence']:.2f} kept; vlm {vlm['confidence']:.2f} does not clear "
-                f"margin {cfg['prefer_margin']}"
+                f"ocr value has < {cfg['degenerate_min_alpha']} ASCII letters "
+                f"(ocr={ocr['value']!r}); vlm value is readable (vlm={vlm['value']!r})"
             )
+        else:
+            kind = "confidence"
+            vlm_wins = vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"] or (
+                ocr["confidence"] < cfg["min_field_confidence"]
+                and vlm["confidence"] >= cfg["min_vlm_confidence"]
+            )
+            if vlm_wins:
+                winner, source = vlm, "vlm"
+                if vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"]:
+                    reason = (
+                        f"vlm {vlm['confidence']:.2f} beats ocr {ocr['confidence']:.2f} "
+                        f"by >= margin {cfg['prefer_margin']}"
+                    )
+                else:
+                    reason = (
+                        f"ocr {ocr['confidence']:.2f} below {cfg['min_field_confidence']} "
+                        f"and vlm {vlm['confidence']:.2f} >= {cfg['min_vlm_confidence']}"
+                    )
+            else:
+                winner, source = ocr, "ocr"
+                reason = (
+                    f"ocr {ocr['confidence']:.2f} kept; vlm {vlm['confidence']:.2f} does not clear "
+                    f"margin {cfg['prefer_margin']}"
+                )
         result.fields[key] = {
             "value": winner["value"],
             "confidence": winner["confidence"],
@@ -378,6 +457,7 @@ def reconcile_fields(
                 vlm_confidence=vlm["confidence"],
                 chosen_source=source,
                 reason=reason,
+                kind=kind,
             )
         )
     return result
