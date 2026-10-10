@@ -245,6 +245,18 @@ def test_matcher_injection_populates_candidates(monkeypatch):
     assert captured["candidates"] == hints["known_candidates"]
 
 
+def test_escalation_config_matches_pi3_contract():
+    """Lock the M3 keys agreed with PI-3 (services/vlm/EVAL.md)."""
+    from services.api.real_pipeline import ESCALATION_FIELDS, escalation_config
+
+    config = escalation_config(False)
+    assert config["min_field_confidence"] == 0.75
+    assert config["escalation_fields"] == ("name", "strength_value") == ESCALATION_FIELDS
+    assert config["min_frame_score"] == 0.45
+    assert config["candidate_mismatch"] is False
+    assert escalation_config(True)["candidate_mismatch"] is True
+
+
 def test_hint_extraction_helpers():
     hints = {
         "known_candidates": [{"name": "Metformin", "strength": {"value": 500, "unit": "mg"}}],

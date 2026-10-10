@@ -45,6 +45,7 @@ from services.vision.pipeline import analyze_frame
 from services.vision.preprocess import ImageDecodeError, decode_image
 from services.vlm.client import VlmResult, client_from_env
 from services.vlm.reconcile import (
+    DEFAULTS as _VLM_DEFAULTS,
     instructions_raw,
     reconcile_fields,
     should_use_vlm,
@@ -64,18 +65,26 @@ _AUTO = object()
 
 
 def escalation_config(candidate_mismatch: bool) -> Dict[str, Any]:
-    """PI-3 escalation policy for M3 clean-scan suppression.
+    """PI-3 M3 escalation policy (services/vlm/EVAL.md, Integration contract).
 
     Identity-critical fields (name, strength) drive escalation; optional fields
     such as manufacturer must never cost a ~1.7 s VLM call. ``candidate_mismatch``
     (hints supplied, identity read present, matcher found no registered match)
-    forces verification even when the OCR read was confident.
+    forces verification even when the OCR read was confident. ``min_frame_score``
+    escalates borderline frames that vision still accepted.
     """
-    return {
-        "candidate_mismatch": bool(candidate_mismatch),
+    config: Dict[str, Any] = {
+        "min_field_confidence": 0.75,
         "escalation_fields": ESCALATION_FIELDS,
-        "invoke_on_levels": (),  # level alone is not enough; escalation_fields are
+        "min_frame_score": 0.45,
+        "candidate_mismatch": bool(candidate_mismatch),
     }
+    # Compatibility with the pre-M3 reconcile (no escalation_fields support):
+    # suppress the level trigger so optional fields cannot escalate alone.
+    # Inert once PI-3's M3 lands (DEFAULTS then carries escalation_fields).
+    if "escalation_fields" not in _VLM_DEFAULTS:
+        config["invoke_on_levels"] = ()
+    return config
 
 
 # --------------------------------------------------------------------------
@@ -286,6 +295,7 @@ class RealScanPipeline:
                 candidate_mismatch = bool(has_identity and not candidates)
             stages["match"] = round((time.perf_counter() - match_started) * 1000.0, 3)
 
+            uncertainty_dict["frame_score"] = quality.score
             if vlm_enabled() and should_use_vlm(uncertainty_dict, escalation_config(candidate_mismatch)):
                 vlm_started = time.perf_counter()
                 vlm_result = self._interpret(ctx.image, raw_text)

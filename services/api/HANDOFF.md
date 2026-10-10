@@ -101,15 +101,17 @@ measurements” below.
 4. **PI-2 matcher**: `match_candidates(extraction, hints.known_candidates,
    threshold=0.75)` fills `candidates[]` (source `registry`); below-threshold
    matches are dropped. No hints / no identity read → `candidates: []`.
-5. **PI-3 VLM** (optional, M3 escalation policy): called only when
-   `MEDCHECK_VLM_ENABLED=1` AND `should_use_vlm(uncertainty, config)` says so,
-   where config = `{"candidate_mismatch": bool, "escalation_fields":
-   ("name","strength_value"), "invoke_on_levels": ()}`. `candidate_mismatch` is
+5. **PI-3 VLM** (optional, M3 escalation policy — PI-3 contract in
+   `services/vlm/EVAL.md`): called only when `MEDCHECK_VLM_ENABLED=1` AND
+   `should_use_vlm(uncertainty, config)` says so, where config =
+   `{"min_field_confidence": 0.75, "escalation_fields": ("name","strength_value"),
+   "min_frame_score": 0.45, "candidate_mismatch": bool}` and
+   `uncertainty["frame_score"] = frame_quality.score`. `candidate_mismatch` is
    True when hints supplied registered candidates, OCR read a name/strength, and
-   the matcher returned no match. Missing optional fields (e.g. manufacturer)
-   alone must NOT cost a VLM call. Results are merged via `reconcile_fields` with
-   per-field source attribution; a VLM failure degrades to the OCR read
-   (`vlm_unavailable` reason).
+   the matcher returned no match; level `high` still always escalates; missing
+   optional fields (e.g. manufacturer) alone must NOT cost a VLM call. Results are
+   merged via `reconcile_fields` with per-field source attribution; a VLM failure
+   degrades to the OCR read (`vlm_unavailable` reason).
 
 Status mapping: `ok` (level low), `uncertain` (medium/high without rescan),
 `needs_rescan` (frame unacceptable), `no_medication_found` (no bottle/label and no
