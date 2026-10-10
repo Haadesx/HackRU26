@@ -59,15 +59,25 @@ curl -s -X POST localhost:8300/v1/scan \
 # → 200 ScanResponse (status ok / needs_rescan / uncertain / no_medication_found / error)
 ```
 
-Real mode (Vision → OCR, VLM off by default):
+Real mode (Vision → OCR → matcher → optional VLM):
 
 ```bash
 MEDCHECK_API_MODE=real .venv/bin/uvicorn services.api.main:app --host 0.0.0.0 --port 8300
+
+# no hints — OCR-first; VLM only if identity is weak/mismatched
 curl -s -X POST localhost:8300/v1/scan \
-  -F "image=@samples/label_metformin_dark.png;type=image/png" \
+  -F "image=@samples/label_metformin.png;type=image/png" \
   -F "client=ios" -F "mode=real"
-# → mode:"real", medication.name {value:"Metformin", source:"ocr"}, label.text = verbatim OCR
+
+# with registered candidates — matcher fills candidates[] (score 1.0); a match suppresses the VLM
+curl -s -X POST localhost:8300/v1/scan \
+  -F "image=@samples/label_metformin.png;type=image/png" \
+  -F "client=ios" -F "mode=real" \
+  -F 'hints={"known_candidates":[{"name":"Metformin","strength":{"value":500,"unit":"mg"}}]}'
 ```
+
+Verified response shapes and measured timings: see “Verified real-mode examples and
+measurements” below.
 
 ## Env vars
 
@@ -78,7 +88,7 @@ curl -s -X POST localhost:8300/v1/scan \
 | `MEDCHECK_VLM_ENABLED` | unset (off) | opt-in for the PI-3 VLM fallback; only called when `should_use_vlm()` also says yes |
 | `MEDCHECK_VLM_BASE_URL` / `MEDCHECK_VLM_MODEL` / `MEDCHECK_VLM_API_KEY` | — | existing rig vLLM endpoint (see docs §D.3); never committed |
 
-## Real mode behavior (Milestone 2)
+## Real mode behavior (Milestone 2 + M3 escalation)
 
 `mode=real` (or `mode=auto` with `MEDCHECK_API_MODE=real`) composes, in-process:
 
@@ -88,19 +98,53 @@ curl -s -X POST localhost:8300/v1/scan \
 3. **PI-2 OCR** `read_text(...)` on the label crop, falling back to the full
    frame; raw text preserved verbatim; `extract_fields(...)` → `medication` /
    `instructions` (all sources `ocr`).
-4. **PI-2 matcher** (lazy): if `services.ocr.matcher.match_candidates(fields,
-   known_candidates, threshold=0.75)` exists it fills `candidates[]`; until it
-   lands, `candidates: []`.
-5. **PI-3 VLM** (optional): called only when `MEDCHECK_VLM_ENABLED` is set **and**
-   `should_use_vlm(uncertainty)` escalates. Results are merged via
-   `reconcile_fields` with per-field source attribution; a VLM failure degrades to
-   the OCR read (`vlm_unavailable` reason).
+4. **PI-2 matcher**: `match_candidates(extraction, hints.known_candidates,
+   threshold=0.75)` fills `candidates[]` (source `registry`); below-threshold
+   matches are dropped. No hints / no identity read → `candidates: []`.
+5. **PI-3 VLM** (optional, M3 escalation policy — PI-3 contract in
+   `services/vlm/EVAL.md`): called only when `MEDCHECK_VLM_ENABLED=1` AND
+   `should_use_vlm(uncertainty, config)` says so, where config =
+   `{"min_field_confidence": 0.75, "escalation_fields": ("name","strength_value"),
+   "min_frame_score": 0.45, "candidate_mismatch": bool}` and
+   `uncertainty["frame_score"] = frame_quality.score`. `candidate_mismatch` is
+   True when hints supplied registered candidates, OCR read a name/strength, and
+   the matcher returned no match; level `high` still always escalates; missing
+   optional fields (e.g. manufacturer) alone must NOT cost a VLM call. Results are
+   merged via `reconcile_fields` with per-field source attribution; a VLM failure
+   degrades to the OCR read (`vlm_unavailable` reason).
 
 Status mapping: `ok` (level low), `uncertain` (medium/high without rescan),
 `needs_rescan` (frame unacceptable), `no_medication_found` (no bottle/label and no
 readable name/strength), `error` (e.g. `INVALID_IMAGE`, `OCR_UNAVAILABLE`; HTTP
 200 domain envelope). Request `hints.known_candidates` bias OCR (`name`,
 `lexicon`, strength) and are passed to the matcher; they never become field values.
+
+## Verified real-mode examples and measurements
+
+`GET /ready` with `MEDCHECK_API_MODE=real` (merged branch):
+
+```json
+{"ready":true,"mode":"real","components":{"vision":"ready","ocr":"ready","pipeline":"real","vlm":"disabled"},"reasons":[]}
+```
+
+Measured on the merged branch against the shared rig vLLM
+(`Qwen/Qwen3-VL-8B-Instruct-FP8`, orchestrator live verification):
+
+| Path | Result | Timing |
+|---|---|---|
+| `samples/label_metformin.png`, VLM escalated | Metformin 500 mg (name 0.95 / strength 1.0) + VLM summary/form | total 2272 ms (OCR 411 ms, VLM 1745 ms) |
+| `samples/label_metformin_blurry.png` | `needs_rescan` + guidance, OCR skipped | 19.5 ms |
+| matched hints (`known_candidates`) | `candidates` score 1.0, VLM not called | — |
+| mismatched hints | matcher drops candidate → `candidate_mismatch` → VLM verifies | — |
+
+**VRAM:** the VLM call reuses the already-resident shared Qwen3-VL service; no
+additional VRAM is allocated (RTX 5090 32 GB stays ≈18.4 GiB used / ≈13.7 GiB
+free, no growth observed). The gateway never launches a model.
+
+**iOS/backend field ownership:** see `docs/inference-medcheck.md` §E.1
+(`ScanResponse` field table) and §H.1 (client integration notes). The gateway
+always returns `contract_version:"1.0.0"` with `{value, confidence, source}` per
+field and the mandatory `safety` block.
 
 ## Transport error envelope
 
@@ -152,7 +196,8 @@ RapidOCR backend is missing).
 
 ## iOS / backend integration notes
 
-1. Send `mode=auto`; the gateway uses mock until real components are wired.
+1. Send `mode=auto`; it maps to the service mode (`MEDCHECK_API_MODE`, default
+   `mock`; set `real` for live inference). Explicit `mode=real` per request works too.
 2. Enforce 12 MiB client-side before upload; JPEG/PNG only.
 3. Treat `status:"needs_rescan"` as a retake prompt and surface
    `frame_quality.guidance` verbatim (ordered, user-facing).
@@ -164,11 +209,12 @@ RapidOCR backend is missing).
 
 ## Verification
 
-- `pytest services/api -q` → **54 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **58 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
-  mock determinism, real pipeline on `samples/` (dark/sharp/blurry), no-medication
-  and invalid-image paths, matcher seam, VLM escalation via `httpx.MockTransport`).
-- `pytest services tests/integration -q` → **206 passed** in the merged worktree.
+  mock determinism, real pipeline on `samples/` (dark/sharp/blurry), EXIF-safe
+  decode, no-medication and invalid-image paths, matcher seam, M3 escalation
+  matrix (match / mismatch / optional-field) via `httpx.MockTransport`).
+- `pytest services tests/integration -q` → **279 passed** in the merged worktree.
 - Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).
 
 ## Known integration notes

@@ -43,8 +43,9 @@ from services.ocr.extract import extract_fields
 from services.ocr.types import Extraction
 from services.vision.pipeline import analyze_frame
 from services.vision.preprocess import ImageDecodeError, decode_image
-from services.vlm.client import VlmResult
+from services.vlm.client import VlmResult, client_from_env
 from services.vlm.reconcile import (
+    DEFAULTS as _VLM_DEFAULTS,
     instructions_raw,
     reconcile_fields,
     should_use_vlm,
@@ -55,9 +56,35 @@ from services.vlm.reconcile import (
 #: Score a registry candidate must reach for the matcher to keep it.
 DEFAULT_MATCHER_THRESHOLD = 0.75
 
+#: Identity-critical fields that may cost a VLM call (M3, agreed with PI-3).
+ESCALATION_FIELDS = ("name", "strength_value")
+
 VLM_QUESTION = "Verify the OCR read against the image and extract the label fields."
 
 _AUTO = object()
+
+
+def escalation_config(candidate_mismatch: bool) -> Dict[str, Any]:
+    """PI-3 M3 escalation policy (services/vlm/EVAL.md, Integration contract).
+
+    Identity-critical fields (name, strength) drive escalation; optional fields
+    such as manufacturer must never cost a ~1.7 s VLM call. ``candidate_mismatch``
+    (hints supplied, identity read present, matcher found no registered match)
+    forces verification even when the OCR read was confident. ``min_frame_score``
+    escalates borderline frames that vision still accepted.
+    """
+    config: Dict[str, Any] = {
+        "min_field_confidence": 0.75,
+        "escalation_fields": ESCALATION_FIELDS,
+        "min_frame_score": 0.45,
+        "candidate_mismatch": bool(candidate_mismatch),
+    }
+    # Compatibility with the pre-M3 reconcile (no escalation_fields support):
+    # suppress the level trigger so optional fields cannot escalate alone.
+    # Inert once PI-3's M3 lands (DEFAULTS then carries escalation_fields).
+    if "escalation_fields" not in _VLM_DEFAULTS:
+        config["invoke_on_levels"] = ()
+    return config
 
 
 # --------------------------------------------------------------------------
@@ -148,9 +175,7 @@ def _load_default_matcher() -> Optional[Callable[..., List[Any]]]:
 
 
 def _default_vlm_client():
-    from services.vlm.client import Qwen3VLClient, VlmConfig
-
-    return Qwen3VLClient(VlmConfig.from_env())
+    return client_from_env()
 
 
 # --------------------------------------------------------------------------
@@ -250,21 +275,28 @@ class RealScanPipeline:
 
             match_started = time.perf_counter()
             matcher = self._get_matcher()
-            if matcher is not None and extraction is not None:
+            known_candidates = known_candidates_from_request(hints)
+            candidate_mismatch = False
+            if matcher is not None and extraction is not None and known_candidates:
                 try:
                     # PI-2's matcher prefers the Extraction object (its flat-dict
                     # path expects plain values, not {value,confidence,source}).
                     matched = matcher(
                         extraction,
-                        known_candidates_from_request(hints),
+                        known_candidates,
                         threshold=DEFAULT_MATCHER_THRESHOLD,
                     )
                     candidates = [Candidate.model_validate(item) for item in matched]
                 except Exception:  # noqa: BLE001 - matching must never break a scan
                     candidates = []
+                has_identity = (
+                    extraction.name.value is not None or extraction.strength.value is not None
+                )
+                candidate_mismatch = bool(has_identity and not candidates)
             stages["match"] = round((time.perf_counter() - match_started) * 1000.0, 3)
 
-            if vlm_enabled() and should_use_vlm(uncertainty_dict):
+            uncertainty_dict["frame_score"] = quality.score
+            if vlm_enabled() and should_use_vlm(uncertainty_dict, escalation_config(candidate_mismatch)):
                 vlm_started = time.perf_counter()
                 vlm_result = self._interpret(ctx.image, raw_text)
                 stages["vlm"] = round((time.perf_counter() - vlm_started) * 1000.0, 3)
