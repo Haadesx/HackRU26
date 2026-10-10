@@ -7,6 +7,7 @@ from services.vlm.reconcile import (
     reconcile_fields,
     should_use_vlm,
     to_contract_medication,
+    uncertainty_from_fields,
 )
 
 
@@ -168,3 +169,48 @@ class TestContractMapping:
         medication = to_contract_medication({"strength_value": field(5, 0.6)})
         assert medication["strength"]["value"] == 5
         assert medication["strength"]["unit"] is None
+
+
+class TestUncertaintyFromFields:
+    def confident_fields(self):
+        return {
+            "name": field("Metformin HCl", 0.95),
+            "strength_value": field(500, 0.92),
+            "strength_unit": field("mg", 0.92),
+            "form": field("Tablet", 0.9),
+            "manufacturer": field("Acme Pharma", 0.85),
+            "instructions": field("Take 1 tablet by mouth twice daily", 0.9),
+        }
+
+    def test_all_confident_is_low(self):
+        uncertainty = uncertainty_from_fields(self.confident_fields())
+        assert uncertainty["level"] == "low"
+        assert uncertainty["reasons"] == []
+        assert uncertainty["rescan_required"] is False
+
+    def test_missing_critical_is_high(self):
+        fields = self.confident_fields()
+        del fields["name"]
+        uncertainty = uncertainty_from_fields(fields)
+        assert uncertainty["level"] == "high"
+        assert "missing:name" in uncertainty["reasons"]
+        assert should_use_vlm(uncertainty) is True
+
+    def test_weak_critical_is_high(self):
+        fields = self.confident_fields()
+        fields["strength_value"] = field(500, 0.2)
+        uncertainty = uncertainty_from_fields(fields)
+        assert uncertainty["level"] == "high"
+        assert any(reason.startswith("low_confidence:strength_value") for reason in uncertainty["reasons"])
+
+    def test_weak_noncritical_is_medium(self):
+        fields = self.confident_fields()
+        fields["manufacturer"] = field("Acme Pharma", 0.3)
+        uncertainty = uncertainty_from_fields(fields)
+        assert uncertainty["level"] == "medium"
+        assert uncertainty["fields"]["manufacturer"]["confidence"] == 0.3
+
+    def test_rescan_never_set_here(self):
+        uncertainty = uncertainty_from_fields({})
+        assert uncertainty["level"] == "high"
+        assert uncertainty["rescan_required"] is False

@@ -29,6 +29,7 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 VALID_LEVELS = ("low", "medium", "high")
+_LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def _config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -260,3 +261,59 @@ def instructions_raw(fields: Dict[str, Any]) -> Optional[str]:
     if not entry or entry.get("value") is None:
         return None
     return str(entry["value"])
+
+
+# Expected fields used when grading an OCR read into an uncertainty object.
+_EXPECTED_FIELDS = (
+    "name",
+    "strength_value",
+    "strength_unit",
+    "form",
+    "manufacturer",
+    "instructions",
+)
+
+
+def uncertainty_from_fields(
+    fields: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Derive a contract-shaped uncertainty block from extracted field confidences.
+
+    Used by OCR-first callers (and the evaluation) to decide whether to escalate:
+
+    * any critical field missing/weak -> ``high``;
+    * only non-critical fields missing/weak -> ``medium``;
+    * everything present and confident -> ``low``.
+
+    ``rescan_required`` is left False here; frame quality (vision service) owns it
+    and the API may OR it in.
+    """
+    cfg = _config(config)
+    reasons: List[str] = []
+    level = "low"
+    confidences: Dict[str, float] = {}
+
+    def bump(candidate: str) -> None:
+        nonlocal level
+        if _LEVEL_RANK[candidate] > _LEVEL_RANK[level]:
+            level = candidate
+
+    for key in _EXPECTED_FIELDS:
+        entry = fields.get(key)
+        if not isinstance(entry, dict) or entry.get("value") is None:
+            reason = f"missing:{key}"
+            reasons.append(reason)
+            bump("high" if key in cfg["critical_fields"] else "medium")
+            continue
+        confidence = _entry(fields, key)["confidence"]
+        confidences[key] = confidence
+        if confidence < cfg["min_field_confidence"]:
+            reasons.append(f"low_confidence:{key}({confidence:.2f})")
+            bump("high" if key in cfg["critical_fields"] else "medium")
+
+    return {
+        "level": level,
+        "reasons": reasons,
+        "rescan_required": False,
+        "fields": {key: {"confidence": value} for key, value in confidences.items()},
+    }
