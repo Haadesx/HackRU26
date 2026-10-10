@@ -274,6 +274,9 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
    Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integrated and enabled**
    (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
 9. **M6 done** (network readiness: optional bearer auth + CORS + bind/TLS docs; suite 355).
+10. **Contract v1.2 + M7 done** (multi-frame label capture): fusion `63cec7e`,
+    clipping `2634807`, multi-image VLM `4032711`, endpoint `db94131`; live-verified on
+    overlapping long-label crops; suite 425/425.
 11. **M8 done** (real-photo quality): OCR small-crop upscaling + degenerate-text sanity
     (`6d2caa2`), reconcile degenerate-OCR → VLM (`b50a659`), clipped false-positive guard
     (`1be1854`) — all verified on real photos; suite **452/452**.
