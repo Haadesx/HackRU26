@@ -62,8 +62,7 @@ untouched). Push only feature branches.
   end-to-end (Orion, receipt `9b300f77-…`); Apollo's user-shell terminal is refused at
   the hook admission layer (`{"ok":false,"stale":true}`) — root cause proven in
   October core. Orchestrator inbound = transcripts + `bus peers`; outbound = pty input.
-- 2026-10-10 — Milestone 2 merged (`b6bbbef`/`a49afd0`/`5b60648`/`91a5c83`); vision
-  noise regression fixed (`ae1c3a8`); merged suite **277 passed / 0 failed**. Real-mode
-  live acceptance: OCR-first + real VLM end-to-end (2272 ms total, VLM 1745 ms, VRAM
-  unchanged 13,706 MiB free); blurry gate 19.5 ms → needs_rescan; matcher verified live
-  with hints (match 1.0 / mismatch empty).
+- 2026-10-10 — M3 dispatched (Athena: escalation config wiring + HANDOFF.md; Juno:
+  identity-critical escalation fields + reconcile normalization). Reproducible combined
+  env verified (`scripts/setup_full_env.sh` → 277/277). Concurrency: sequential p50
+  745 ms; 8 concurrent scans ~2.1 s wall.

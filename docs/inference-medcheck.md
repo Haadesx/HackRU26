@@ -225,12 +225,18 @@ Superseded decisions are preserved in §J (chronological log).
   only for the optional VLM eval baseline.
 - Linux (rig): GPU optional; existing vLLM is HTTP-only from our side.
 
-### D.6 Potential conflicts with other components
-- Port **8300** is reserved for this gateway (backend/UI must not bind it).
-- `echo-vllm` is shared with other HackRU components; inference must not restart it.
-- OCR pins (`numpy==2.4.6`, `opencv-python==5.0.0.93`) differ from vision's ranges
-  (`numpy>=1.26,<3`, `opencv-python-headless`); they run in separate venvs here, but a
-  combined rig environment must reconcile these before co-installing.
+### D.6 Dependency reconciliation (verified 2026-10-10)
+- `scripts/setup_full_env.sh` installs the union of all four services into `.venv-full`
+  and the **full suite passes (277/277, 12 s)**: `numpy==2.4.6`,
+  `opencv-python==5.0.0.93` (headless variant not required at runtime),
+  `pillow==12.3.0`, `rapidocr-onnxruntime==1.4.4`, `onnxruntime==1.31.0`,
+  `pyclipper==1.4.0`, `shapely==2.2.0`, `six==1.17.0`, `pyyaml==6.0.3`,
+  `pytesseract>=0.3.10`, plus api/dev extras.
+- `pytesseract` additionally needs the **`tesseract` binary** for the VLM eval baseline
+  tests (`brew install tesseract` on macOS).
+- Port **8300** reserved for this gateway; `echo-vllm` is shared and must not be
+  restarted; rig Python is 3.14 with no `uv` (rig-side scripts must be stdlib-only or
+  create their own env).
 
 ---
 
@@ -361,10 +367,19 @@ scripts/scan_demo.sh
 scripts/gpu_probe.sh
 ```
 
-**Untested / not yet verified commands:**
-- `MEDCHECK_API_MODE=real` behavior beyond the 503 path.
-- End-to-end real pipeline (`POST /v1/scan` with `mode=real`) — wiring pending.
-- Combined installation of OCR + vision deps in one environment (§D.6).
+**Additional verified commands (2026-10-10):**
+
+```bash
+# Combined environment + full suite (fresh env, 277 passed / 12 s)
+scripts/setup_full_env.sh
+.venv-full/bin/python -m pytest services tests/integration -q
+
+# Real mode live (see §I for measured results)
+MEDCHECK_API_MODE=real MEDCHECK_VLM_ENABLED=1 .venv-full/bin/uvicorn services.api.main:app --port 8300
+```
+
+**Still unverified:** iOS multipart interoperability on a real device; sustained
+multi-user load; any Windows environment.
 
 ---
 
@@ -439,6 +454,8 @@ every extracted field carries `{value, confidence, source}`.
 | **Real-mode live: sharp scan + real VLM** | curl multipart → real pipeline, `MEDCHECK_VLM_ENABLED=1` | status `uncertain`; Metformin 500 mg OCR (0.95/1.0); VLM summary + `form` from VLM; VLM stage **1745 ms**, total 2272 ms; conflicts preserved with both values | Orchestrator ✅ |
 | **Real-mode live: blurry scan** | curl blurry sample | `needs_rescan` in **19.5 ms**, 3 guidance strings, no OCR/VLM | Orchestrator ✅ |
 | **GPU/VRAM during real VLM call** | nvidia-smi before/after | 18,383 MiB used / 13,706 free — **unchanged**, shared vLLM never restarted | Orchestrator ✅ |
+| **Fresh combined env (reproducibility)** | `scripts/setup_full_env.sh` then `.venv-full/bin/python -m pytest services tests/integration -q` | **277 passed** in 12.03 s from a clean env | Orchestrator ✅ |
+| **Concurrency profile (real mode, VLM off, Mac CPU)** | 8 sequential + 8 concurrent scans | sequential p50 **745 ms**, p90 1554 ms; 8 concurrent all OK in **~2.1 s wall** (~3.8 scans/s), no errors | Orchestrator ✅ |
 | October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
 | October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
 
@@ -491,6 +508,14 @@ sequential calls, no restarts).
 - `feat/api-athena` `a855318` — mock FastAPI gateway on :8300, 40 tests, live smoke OK.
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
+
+**2026-10-10** — **Reproducibility + performance.** `scripts/setup_full_env.sh` added
+(union env `.venv-full`) and verified from scratch: full suite **277 passed / 12.03 s**.
+Concurrency profile (real mode, VLM off, Mac CPU): sequential p50 745 ms / p90 1554 ms;
+8 concurrent scans complete in ~2.1 s wall (~3.8 scans/s), no errors. Milestone 3
+dispatched: Athena wires `candidate_mismatch` + escalation config and finalizes
+`HANDOFF.md`; Juno restricts escalation to identity-critical fields and normalizes
+reconcile comparisons (with optional re-run of the 24-image eval).
 
 **2026-10-10** — **Noise regression fixed and merged** (`ae1c3a8`, blur-scale structure
 gate). Merged full suite: **277 passed / 0 failed**. Live matcher verification with
