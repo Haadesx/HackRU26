@@ -1,4 +1,5 @@
 from app.models.dose import DoseEvent, DoseOutcome, VisionObservation
+from app.models.hub import HubAlert, HubDoseRef, HubEvent, HubMedication, HubReminder, HubScan, HubSettings
 from app.models.inventory import InventoryTransaction, MedicationInventory, RefillRequest
 from app.models.medication import Medication
 from app.models.notification import NotificationDelivery, Reminder
@@ -12,6 +13,13 @@ __all__ = [
     "DoseSchedule",
     "DoseScheduleTime",
     "DoseWindow",
+    "HubAlert",
+    "HubDoseRef",
+    "HubEvent",
+    "HubMedication",
+    "HubReminder",
+    "HubScan",
+    "HubSettings",
     "InventoryTransaction",
     "Medication",
     "MedicationInventory",

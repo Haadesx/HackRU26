@@ -72,6 +72,18 @@ def run_migrations_offline():
         context.run_migrations()
 
 
+_TIMESCALE_INDEXES = {"dose_outcomes_scheduled_at_idx", "vision_observations_observed_at_idx"}
+
+
+def _include_object(obj, name, type_, reflected, compare_to):
+    """Ignore objects TimescaleDB creates itself (hypertable time indexes) so autogenerate never drops them."""
+    if type_ == "index" and name in _TIMESCALE_INDEXES:
+        return False
+    if type_ == "table" and name in ("daily_adherence", "daily_adherence_rates"):
+        return False
+    return True
+
+
 def run_migrations_online():
     """Run migrations in 'online' mode.
 
@@ -100,6 +112,7 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
+            include_object=_include_object,
             **conf_args
         )
 

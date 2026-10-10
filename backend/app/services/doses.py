@@ -157,8 +157,11 @@ def skip(event: DoseEvent, now: datetime | None = None) -> None:
     db.session.flush()
 
 
-def mark_missed(now: datetime | None = None, batch: int = 200) -> int:
-    """Worker job: pending doses past missed_after become missed; caregivers are alerted."""
+def mark_missed(now: datetime | None = None, batch: int = 200, on_missed=None) -> int:
+    """Worker job: pending doses past missed_after become missed; caregivers are alerted.
+
+    on_missed(event) is an optional extra hook (the /hub layer texts its phone contacts).
+    """
     now = now or utcnow()
     events = db.session.scalars(
         select(DoseEvent)
@@ -193,5 +196,7 @@ def mark_missed(now: datetime | None = None, batch: int = 200) -> int:
             body=f"Your {at} dose of {label} was marked missed. If you took it, you can still confirm it.",
             dose_event_id=event.id,
         )
+        if on_missed is not None:
+            on_missed(event)
     db.session.flush()
     return len(events)
