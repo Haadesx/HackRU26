@@ -49,6 +49,12 @@ def test_frame_level_label_found_without_bottle():
     assert label.bbox.w > 0.5 and label.bbox.h > 0.5
 
 
+def test_frame_level_label_found_in_dim_but_readable_frame():
+    # Adaptive brightness: a dim page with intact black text still yields a crop.
+    label = locate_label(flat_label_frame(page=100), Bottle(detected=False, confidence=0.0))
+    assert label.detected and label.bbox is not None
+
+
 def test_frame_level_label_requires_text_evidence():
     frame = np.full((240, 360, 3), 190, dtype=np.uint8)
     cv2.rectangle(frame, (8, 8), (351, 231), (20, 20, 20), 3)  # bright page, no text

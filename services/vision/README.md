@@ -83,8 +83,22 @@ if result.label.detected and result.label.bbox is not None:
   types raise `TypeError`.
 - When no bottle is detected, `locate_label` falls back to a frame-level search
   (large bright low-chroma region with text-like dark edges), so flat label
-  close-ups such as `samples/label_metformin.png` still produce a crop. That path
-  is capped at confidence `0.60` because it has no bottle anchor.
+  close-ups such as `samples/label_metformin.png` still produce a crop. The
+  brightness gate adapts to the frame, so dim-but-readable documents (e.g.
+  `samples/label_metformin_dark.png`) are found too. That path is capped at
+  confidence `0.60` because it has no bottle anchor.
+
+Quality semantics worth knowing for integration:
+
+- **Bright-but-readable is acceptable.** A frame whose highlights clip but that
+  still contains dark content (text) and spans a wide tonal range — a well-lit
+  white label close-up — is *not* flagged `too_bright`. Clipping only counts as
+  overexposure when the content is lost (e.g. a blank blown-white frame).
+- **Dominant saturation is exposure, not glare.** When most of the frame is
+  near-saturated there is no localized specular highlight to tilt away from; the
+  exposure term reports it instead.
+- The `acceptable` flag is a camera-guidance signal. Readable flat labels pass;
+  blurry or genuinely overexposed frames fail with guidance strings.
 
 ### Detector configuration (environment)
 

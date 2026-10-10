@@ -27,9 +27,16 @@ BLUR_GOOD = 220.0
 
 # --- exposure ---
 DARK_MEAN = 60.0  # mean luma below this is "too dark"
-BRIGHT_MEAN = 200.0  # mean luma above this is "too bright"
+BRIGHT_MEAN = 200.0  # mean luma above this is suspicious (unless text is intact)
 DARK_CLIP_FRACTION = 0.45  # fraction of pixels <= 12
 BRIGHT_CLIP_FRACTION = 0.35  # fraction of pixels >= 245
+#: A bright frame that still contains dark content (text) and spans a wide tonal
+#: range is readable — e.g. a well-lit white label close-up — and must not be
+#: reported as overexposed. Clipping matters only when content is lost.
+DARK_CONTENT_LEVEL = 80
+MIN_DARK_CONTENT_FRACTION = 0.005
+READABLE_SPAN = 120  # p99 - p1 of a readable frame
+READABLE_BRIGHT_BAND = 0.7  # floor for the brightness band on that path
 
 # --- glare ---
 #: Near-saturated pixel (luma >= 250) considered specular glare.
@@ -60,8 +67,15 @@ def _blur(gray: np.ndarray) -> tuple[float, bool]:
 def _exposure(gray: np.ndarray) -> Exposure:
     total = float(gray.size)
     mean = float(gray.mean())
+    low, high = (float(value) for value in np.percentile(gray, (1, 99)))
+    span = high - low
     dark_fraction = float(np.count_nonzero(gray <= 12)) / total
     bright_fraction = float(np.count_nonzero(gray >= 245)) / total
+    deep_dark_fraction = float(np.count_nonzero(gray <= DARK_CONTENT_LEVEL)) / total
+
+    # Bright paper with intact dark text (white label close-up) is readable; it is
+    # only overexposed when the highlights erase the content.
+    bright_but_readable = deep_dark_fraction >= MIN_DARK_CONTENT_FRACTION and span >= READABLE_SPAN
 
     # Full score inside the comfortable band [80, 180], tapering to 0 at 20 / 240.
     if mean < 80.0:
@@ -70,13 +84,18 @@ def _exposure(gray: np.ndarray) -> Exposure:
         band = _clip01((240.0 - mean) / 60.0)
     else:
         band = 1.0
-    clip_penalty = min(1.0, 2.0 * dark_fraction + 2.0 * bright_fraction)
+    if bright_but_readable:
+        band = max(band, READABLE_BRIGHT_BAND)
+
+    clipped_highlights = 0.0 if bright_but_readable else bright_fraction
+    clip_penalty = min(1.0, 2.0 * dark_fraction + 2.0 * clipped_highlights)
     score = _clip01(band * (1.0 - 0.5 * clip_penalty))
 
+    too_bright = (mean > BRIGHT_MEAN or bright_fraction > BRIGHT_CLIP_FRACTION) and not bright_but_readable
     return Exposure(
         score=round(score, 4),
         too_dark=bool(mean < DARK_MEAN or dark_fraction > DARK_CLIP_FRACTION),
-        too_bright=bool(mean > BRIGHT_MEAN or bright_fraction > BRIGHT_CLIP_FRACTION),
+        too_bright=bool(too_bright),
     )
 
 

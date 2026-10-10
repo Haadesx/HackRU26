@@ -31,7 +31,12 @@ MAX_ASPECT = 2.20
 MIN_CENTER_Y = 0.15  # labels sit below the cap; reject top background strips
 
 #: Frame-level fallback (no bottle): a flat label may fill most of the frame.
+#: The brightness gate adapts to the frame (percentile-based) so dim-but-readable
+#: documents are found; a floor keeps mask fragmentation impossible.
 FRAME_MAX_REGION_FRACTION = 0.98
+FRAME_BRIGHTNESS_PERCENTILE = 60.0
+FRAME_BRIGHTNESS_MARGIN = 5.0
+FRAME_MIN_BRIGHTNESS = 60.0
 FRAME_MIN_DARK_FRACTION = 0.005  # must contain some dark text-like pixels
 FRAME_MAX_DARK_FRACTION = 0.30
 FRAME_MIN_EDGE_DENSITY = 0.003
@@ -63,6 +68,7 @@ def _search_region(
     *,
     max_region_fraction: float = MAX_REGION_FRACTION,
     min_center_y: float = MIN_CENTER_Y,
+    brightness: float = LAB_BRIGHTNESS,
 ) -> Optional[Tuple[int, int, int, int, float]]:
     """Largest plausible label region in ROI pixel coords: (x, y, w, h, area)."""
     rh, rw = roi.shape[:2]
@@ -75,7 +81,7 @@ def _search_region(
     # No morphological closing here: a close wide enough to merge text gaps also
     # bridges thin dark label borders, fusing the page with its margin into a
     # useless full-frame component. The bright paper stays connected around text.
-    mask = ((l_ch >= LAB_BRIGHTNESS) & (chroma <= LAB_CHROMA)).astype(np.uint8)
+    mask = ((l_ch >= brightness) & (chroma <= LAB_CHROMA)).astype(np.uint8)
 
     count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
     roi_area = float(rw * rh)
@@ -100,10 +106,20 @@ def _search_region(
 def locate_label_region(rgb: np.ndarray) -> Optional[Tuple[BBox, float]]:
     """Best-effort label region for frames where no bottle was detected.
 
-    Requires a large bright low-chroma region that contains dark text-like
-    pixels and real edges, so a plain bright wall or sky is rejected.
+    The brightness gate adapts to the frame so a dim but readable document is
+    still found; the dark-pixel/edge gates reject plain bright surfaces.
     """
-    found = _search_region(rgb, max_region_fraction=FRAME_MAX_REGION_FRACTION, min_center_y=0.0)
+    luminance = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)[:, :, 0]
+    brightness = max(
+        FRAME_MIN_BRIGHTNESS,
+        float(np.percentile(luminance, FRAME_BRIGHTNESS_PERCENTILE)) - FRAME_BRIGHTNESS_MARGIN,
+    )
+    found = _search_region(
+        rgb,
+        max_region_fraction=FRAME_MAX_REGION_FRACTION,
+        min_center_y=0.0,
+        brightness=brightness,
+    )
     if found is None:
         return None
     x, y, w, h, area = found
