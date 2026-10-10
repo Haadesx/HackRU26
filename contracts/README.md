@@ -46,6 +46,11 @@ minor version (`1.1.0`); breaking changes bump the major version and require a n
 
 **Changelog**
 
+- `1.3.0` (2026-10-10) — additive: `label_meta` block with pharmacy-label metadata as
+  `{value: str|null, confidence, source}`: `quantity_start` (QTY), `refills_remaining`,
+  `pharmacy_name`, `pharmacy_phone`, `prescriber`, `schedule_times` (derived "08:00" /
+  "08:00, 20:00"). Added so the web hub/UI can render the full label without parsing raw
+  text. Absent fields stay null; nothing is fabricated.
 - `1.2.0` (2026-10-10) — additive: `capture` block for **multi-frame label capture**
   (`POST /v1/scan/multi`): `{frames_requested, frames_used, fusion:"single|multi_frame",
   per_frame[{index,status,label_detected?,label_confidence?,clipped?,guidance?}]}`. Enables

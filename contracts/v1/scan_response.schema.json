@@ -11,7 +11,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "contract_version": { "type": "string", "const": "1.2.0" },
+    "contract_version": { "type": "string", "const": "1.3.0" },
     "request_id": { "type": "string", "minLength": 8 },
     "status": {
       "type": "string",
@@ -210,6 +210,23 @@
         "code": { "type": "string" },
         "message": { "type": "string" },
         "detail": {}
+      }
+    },
+
+    "label_meta": {
+      "type": ["object", "null"],
+      "description": "v1.3 additive: pharmacy-label metadata printed on real labels (string values exactly as read or derived). Absent or null fields are not fabricated.",
+      "additionalProperties": false,
+      "properties": {
+        "quantity_start": { "$ref": "#/definitions/field_string" },
+        "refills_remaining": { "$ref": "#/definitions/field_string" },
+        "pharmacy_name": { "$ref": "#/definitions/field_string" },
+        "pharmacy_phone": { "$ref": "#/definitions/field_string" },
+        "prescriber": { "$ref": "#/definitions/field_string" },
+        "schedule_times": {
+          "$ref": "#/definitions/field_string",
+          "description": "Derived dosing times as \"08:00\" or \"08:00, 20:00\" from the label wording; lower confidence because it is a conversion."
+        }
       }
     },
 

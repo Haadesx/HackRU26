@@ -69,9 +69,51 @@ uv pip install -r services/ocr/requirements.txt
 .venv/bin/python -m pytest services/ocr -q
 ```
 
-Latest results: **93 passed**; synthetic-set field accuracy 33/33 for name,
+Latest results: **133 passed**; synthetic-set field accuracy 33/33 for name,
 strength and form (precision = recall = 1.000); end-to-end through rendered
 images 8/8 name, 8/8 strength, 8/8 form.
+
+### Pharmacy-label metadata (contract v1.3)
+
+`Extraction.label_meta_contract()` returns `label_meta` with
+`quantity_start`, `refills_remaining`, `pharmacy_name`, `pharmacy_phone`,
+`prescriber`, `schedule_times`, each a `{value, confidence, source}` field.
+
+- `quantity_start`: `QTY`/`Quantity` + digits verbatim (`QTY 30` -> `"30"`);
+  digit/letter noise such as `QTY 3O` is not guessed (absent).
+- `refills_remaining`: `Refills: 2` -> `"2"`; `No refills` -> `"0"`.
+- `pharmacy_name`: labeled `Pharmacy: X`, a line containing "Pharmacy", or the
+  positional fallback of the line above a `Tel:` line (`Sample Rx`, conf 0.6).
+- `pharmacy_phone`: labeled `Tel:`/`Phone:`/`Ph:` (conf 0.85) or a generic
+  `(555) 010-2030` pattern (conf 0.6).
+- `prescriber`: `Prescriber: ...` (conf 0.85) or a `Dr. ...` line (conf 0.7).
+- `schedule_times`: **derived** from the parsed frequency at base x 0.8
+  (conf `0.72`): once daily -> `08:00`; twice -> `08:00, 20:00`; three times ->
+  `08:00, 14:00, 20:00`; bedtime -> `20:00`. Weekly, every-N-hours,
+  every-other-day and PRN stay `None` (never guessed).
+- All values except the derived `schedule_times` are verbatim substrings of the
+  recognized text; missing fields use the none shape.
+- Multi-frame fusion merges `label_meta` by highest confidence.
+
+### Real-photo quality (M8)
+
+Small/distant labels (Varesh's real scan returned a lone `日` at conf 0.90):
+
+- **Bbox-crop upscaling:** when OCR runs on a bbox crop whose long side is
+  < `engine.MIN_CROP_LONG_SIDE` (1000 px), the crop is upscaled with Lanczos
+  (capped at ×4) plus a mild CLAHE contrast lift, then recognized. Line boxes are
+  divided by the actual scale before mapping back to full-frame normalized
+  coordinates. The no-bbox full-frame path is unchanged.
+- **Degenerate-text sanity:** text with no ASCII letters or fewer than three
+  alphabetic characters total (`日`, `||`, punctuation-only) is treated as unread.
+  `OcrResult.raw_text` stays verbatim and `OcrResult.readable` is `False`, but
+  `OcrResult.confidence` returns `0.0` and `extract_fields`/`parse_instructions`
+  return empty results — no junk `other` instruction items.
+
+Verified: a 25 %-downscaled `samples/long_label_full.png` (450×300) run through
+`read_text(..., bbox=full)` still recovers `HYDROCHLOROTHIAZIDE 25 mg` with all
+boxes inside `[0, 1]`; `extract_fields("日")` and `parse_instructions("日")`
+return empty.
 
 ### Multi-frame fusion (contract v1.2)
 

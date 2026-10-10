@@ -22,10 +22,15 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from .types import BBox, OcrLine, OcrResult
+from .types import BBox, OcrLine, OcrResult, has_readable_content
 
 BACKEND_NAME = "rapidocr-onnxruntime"
 _ENGINE: Any = None
+
+# Bbox crops whose long side is smaller than this are upscaled before
+# recognition (small/distant labels otherwise collapse to noise glyphs).
+MIN_CROP_LONG_SIDE = 1000
+MAX_CROP_UPSCALE = 4.0
 
 
 class OcrUnavailableError(RuntimeError):
@@ -109,6 +114,40 @@ def _normalize_backend_output(output: Any) -> list[tuple[Any, str, float | None]
     return items
 
 
+def _enhance_contrast(image: np.ndarray) -> np.ndarray:
+    """Mild CLAHE contrast lift for upscaled small crops."""
+    try:
+        import cv2
+
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        lightness, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        merged = cv2.merge([clahe.apply(lightness), a_channel, b_channel])
+        return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+    except Exception:  # pragma: no cover - defensive; enhancement is optional
+        return image
+
+
+def _prepare_crop(crop: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Upscale a small bbox crop; returns ``(image, scale_x, scale_y)``.
+
+    Crops whose long side is already >= :data:`MIN_CROP_LONG_SIDE` are returned
+    unchanged so the full-size path keeps its previous behavior.
+    """
+    height, width = crop.shape[:2]
+    long_side = max(height, width)
+    if long_side <= 0 or long_side >= MIN_CROP_LONG_SIDE:
+        return crop, 1.0, 1.0
+    scale = min(MAX_CROP_UPSCALE, MIN_CROP_LONG_SIDE / long_side)
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    import cv2
+
+    resized = cv2.resize(crop, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+    resized = _enhance_contrast(resized)
+    return resized, new_width / width, new_height / height
+
+
 def read_text(
     image: Any,
     bbox: BBox | Sequence[float] | None = None,
@@ -134,11 +173,13 @@ def read_text(
     arr = _to_bgr_array(image, channel_order=channel_order)
     full_h, full_w = arr.shape[:2]
     offset_x = offset_y = 0
+    scale_x = scale_y = 1.0
     if crop_box is not None:
         x1, y1, x2, y2 = crop_box.to_pixels(full_w, full_h)
         if x2 - x1 < 2 or y2 - y1 < 2:
             raise ValueError("bbox crop is too small for OCR")
         arr = arr[y1:y2, x1:x2]
+        arr, scale_x, scale_y = _prepare_crop(arr)
         offset_x, offset_y = x1, y1
 
     ocr = engine if engine is not None else _load_engine()
@@ -152,7 +193,10 @@ def read_text(
             continue
         line_bbox = None
         if points is not None and len(points) >= 2:
-            line_bbox = BBox.from_points(points, full_w, full_h, offset_x, offset_y)
+            # Recognition ran on the (possibly upscaled) crop: map back to the
+            # full frame before normalizing.
+            mapped = [(float(p[0]) / scale_x, float(p[1]) / scale_y) for p in points]
+            line_bbox = BBox.from_points(mapped, full_w, full_h, offset_x, offset_y)
         lines.append(
             OcrLine(
                 text=text,

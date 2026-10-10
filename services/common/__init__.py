@@ -17,6 +17,7 @@ from services.common.contract import (  # noqa: F401
     Interpretation,
     Label,
     Medication,
+    LabelMeta,
     PerFrameResult,
     ReadyResponse,
     Safety,

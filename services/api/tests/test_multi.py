@@ -58,7 +58,7 @@ def test_mock_multi_capture_and_determinism():
     assert response.status_code == 200
     payload = response.json()
     _validate(payload)
-    assert payload["contract_version"] == "1.2.0"
+    assert payload["contract_version"] == "1.3.0"
     assert payload["mode"] == "mock"
     assert payload["status"] == "ok"
     assert payload["capture"]["fusion"] == "multi_frame"
@@ -252,6 +252,32 @@ def test_real_multi_no_frames_accepted():
     assert payload["capture"]["frames_used"] == 0
     assert all(frame["status"] == "needs_rescan" for frame in payload["capture"]["per_frame"])
     assert payload["uncertainty"]["rescan_required"] is True
+
+
+@requires_real
+def test_real_multi_unreadable_frame_not_fused(monkeypatch):
+    from services.api import real_pipeline
+
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+    middle_bytes = (SAMPLES / "long_label_middle.png").read_bytes()
+    original = real_pipeline.RealScanPipeline._read_label_text
+
+    class UnreadableOcr:
+        raw_text = "日"
+        confidence = 0.0
+        elapsed_ms = 0.0
+        readable = False
+
+    def fake_read_label_text(self, image_bytes, label_bbox):
+        if image_bytes == middle_bytes:
+            return UnreadableOcr()
+        return original(self, image_bytes, label_bbox)
+
+    monkeypatch.setattr(real_pipeline.RealScanPipeline, "_read_label_text", fake_read_label_text)
+    payload = _run_real_multi([SAMPLES / "long_label_left.png", SAMPLES / "long_label_middle.png"])
+    assert payload["capture"]["frames_used"] == 1
+    assert payload["capture"]["per_frame"][1]["status"] == "needs_rescan"
+    assert payload["medication"]["name"]["value"] == "Hydrochlorothiazide"
 
 
 @requires_real
