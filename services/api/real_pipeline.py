@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from services.api.pipeline import ScanContext, build_error_response, vlm_enabled
 from services.common.contract import (
     Candidate,
+    DoseInfo,
     FrameQuality,
     Instructions,
     Interpretation,
@@ -165,6 +167,56 @@ def quality_reasons(quality: FrameQuality) -> List[str]:
     return reasons
 
 
+#: Temporary bridge pattern: an optional "Take" + "<number> <unit-word>" dose item.
+_DOSE_ITEM_RE = re.compile(r"^\s*(?:take\s+)?(\d+(?:\.\d+)?)\s+([A-Za-z]+)\s*$", re.IGNORECASE)
+_PLURAL_FORMS = {"tablets": "tablet", "capsules": "capsule", "pills": "pill", "drops": "drop"}
+
+
+def _dose_payload(extraction: Extraction, ocr_confidence: float) -> Optional[Dict[str, Any]]:
+    """Build the v1.1 ``instructions.dose`` block from PI-2's extraction.
+
+    Prefers ``Extraction.dose_contract()`` once PI-2 ships it; when that method
+    is absent, a conservative bridge parses only a single ``<number> <unit>``
+    dose item (``1 tablet``). Ambiguous or absent doses are omitted — the API
+    never invents a quantity.
+    """
+    factory = getattr(extraction, "dose_contract", None)
+    if callable(factory):
+        try:
+            payload = factory()
+        except Exception:  # noqa: BLE001 - a dose bug must not break a scan
+            return None
+        if payload is None:
+            return None
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json")
+        try:
+            return DoseInfo.model_validate(payload).model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - malformed PI-2 output is omitted
+            return None
+    return _fallback_dose(extraction, ocr_confidence)
+
+
+def _fallback_dose(extraction: Extraction, ocr_confidence: float) -> Optional[Dict[str, Any]]:
+    """Temporary PI-2 bridge; delete once ``services/ocr`` ships dose_contract()."""
+    for item in extraction.instructions:
+        if getattr(item, "kind", None) != "dose":
+            continue
+        match = _DOSE_ITEM_RE.match(item.text or "")
+        if match is None:
+            continue
+        quantity = float(match.group(1))
+        if quantity <= 0:
+            continue
+        return {
+            "quantity": quantity,
+            "unit": _PLURAL_FORMS.get(match.group(2).lower(), match.group(2).lower()),
+            "confidence": round(min(1.0, max(0.0, float(ocr_confidence))), 4),
+            "source": "ocr",
+        }
+    return None
+
+
 def _load_default_matcher() -> Optional[Callable[..., List[Any]]]:
     """PI-2 registry matcher, activated automatically once it is pushed."""
     if importlib.util.find_spec("services.ocr.matcher") is None:
@@ -247,6 +299,7 @@ class RealScanPipeline:
 
         extraction: Optional[Extraction] = None
         raw_text: Optional[str] = None
+        ocr_confidence = 0.0
         canonical: Dict[str, Dict[str, Any]] = {}
         candidates: List[Candidate] = []
         interpretation = Interpretation(available=False)
@@ -268,6 +321,7 @@ class RealScanPipeline:
                 )
             stages["ocr"] = round((time.perf_counter() - ocr_started) * 1000.0, 3)
             raw_text = ocr_result.raw_text.strip() or None
+            ocr_confidence = ocr_result.confidence
 
             extraction = extract_fields(ocr_result.raw_text, hints=extract_hints_from_request(hints))
             canonical = canonical_ocr_fields(extraction, ocr_result.confidence)
@@ -325,12 +379,14 @@ class RealScanPipeline:
 
         if extraction is not None and canonical:
             medication = Medication.model_validate(to_contract_medication(canonical))
-            instructions = Instructions.model_validate(
-                {
-                    "raw_text": instructions_raw(canonical),
-                    "parsed": [item.to_contract() for item in extraction.instructions],
-                }
-            )
+            instructions_payload: Dict[str, Any] = {
+                "raw_text": instructions_raw(canonical),
+                "parsed": [item.to_contract() for item in extraction.instructions],
+            }
+            dose = _dose_payload(extraction, ocr_confidence)
+            if dose is not None:
+                instructions_payload["dose"] = dose
+            instructions = Instructions.model_validate(instructions_payload)
         else:
             medication = Medication()
             instructions = Instructions()

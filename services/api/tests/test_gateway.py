@@ -136,6 +136,12 @@ def test_scan_ok_returns_fixture_medication():
     assert payload["medication"]["strength"]["unit"] == "mg"
     assert payload["label"]["text"] is not None  # raw text preserved verbatim
     assert payload["candidates"][0]["name"] == "Metformin"
+    assert payload["instructions"]["dose"] == {
+        "quantity": 1,
+        "unit": "tablet",
+        "confidence": 0.9,
+        "source": "ocr",
+    }
 
 
 def test_scan_is_deterministic_for_same_request():

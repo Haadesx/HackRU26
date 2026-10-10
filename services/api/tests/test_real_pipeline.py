@@ -95,10 +95,88 @@ def test_real_scan_dark_sample_reads_metformin(monkeypatch):
     assert payload["medication"]["name"]["source"] == "ocr"
     assert payload["medication"]["strength"]["value"] == 500
     assert payload["medication"]["strength"]["unit"] == "mg"
+    assert payload["instructions"]["dose"]["quantity"] == 1
+    assert payload["instructions"]["dose"]["unit"] == "tablet"
+    assert payload["instructions"]["dose"]["source"] == "ocr"
+    assert payload["instructions"]["dose"]["confidence"] >= 0.5
     assert payload["interpretation"]["available"] is False
     assert payload["timing"]["stages"]["ocr"] >= 0
     assert all(candidate["source"] in {"registry", "ocr", "vlm"} for candidate in payload["candidates"])
     _assert_safety(payload)
+
+
+def test_real_scan_dose_matches_backend_acceptance(monkeypatch):
+    """v1.1 acceptance: label_metformin.png -> dose {1, tablet, >=0.5, ocr}."""
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+    _, payload = run_scan(SHARP.read_bytes())
+    dose = payload["instructions"]["dose"]
+    assert dose["quantity"] == 1
+    assert str(dose["unit"]).lower() == "tablet"
+    assert dose["source"] == "ocr"
+    assert dose["confidence"] >= 0.5
+
+
+def test_no_dose_is_omitted_when_not_extracted(monkeypatch):
+    monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
+    _, payload = run_scan(BLURRY.read_bytes())
+    assert payload["instructions"].get("dose") is None
+
+
+def test_dose_contract_is_preferred_when_present():
+    from services.api.real_pipeline import _dose_payload
+    from services.ocr.types import InstructionItem
+
+    class WithContract:
+        instructions = []
+
+        def dose_contract(self):
+            return {"quantity": 2, "unit": "tablet", "confidence": 0.8, "source": "ocr"}
+
+    class Ambiguous:
+        instructions = [InstructionItem(kind="dose", text="Take some as needed")]
+
+        def dose_contract(self):
+            return None
+
+    class AbsentOrAmbiguous:
+        # PI-2's real none-shape must bypass the bridge entirely.
+        instructions = [InstructionItem(kind="dose", text="Take 2 tablets")]
+
+        def dose_contract(self):
+            return {"quantity": None, "unit": None, "confidence": 0.0, "source": "none"}
+
+    assert _dose_payload(WithContract(), 0.9) == {
+        "quantity": 2.0,
+        "unit": "tablet",
+        "confidence": 0.8,
+        "source": "ocr",
+    }
+    assert _dose_payload(Ambiguous(), 0.9) is None
+    assert _dose_payload(AbsentOrAmbiguous(), 0.99) == {
+        "quantity": None,
+        "unit": None,
+        "confidence": 0.0,
+        "source": "none",
+    }
+
+
+def test_dose_bridge_never_invents_a_quantity():
+    from services.api.real_pipeline import _dose_payload
+    from services.ocr.types import InstructionItem
+
+    class Numeric:
+        instructions = [InstructionItem(kind="dose", text="Take 2 tablets")]
+
+    class AmbiguousText:
+        instructions = [InstructionItem(kind="dose", text="Take some as needed")]
+
+    assert _dose_payload(Numeric(), 0.96) == {
+        "quantity": 2.0,
+        "unit": "tablet",
+        "confidence": 0.96,
+        "source": "ocr",
+    }
+    assert _dose_payload(AmbiguousText(), 0.9) is None
 
 
 @pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)

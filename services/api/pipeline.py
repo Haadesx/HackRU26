@@ -144,14 +144,19 @@ def to_contract_json(response: ScanResponse) -> Dict[str, Any]:
 
     ``exclude_none`` drops optional object fields that the JSON schema does not
     allow as ``null`` (bbox, blur, strength, ...). Required-but-nullable keys
-    (``medication.*.value``/``unit``, ``instructions.raw_text``) are re-added
-    afterwards so the JSON Schema's ``required`` clauses stay satisfied.
+    (``medication.*.value``/``unit``, ``instructions.raw_text``,
+    ``instructions.dose.quantity``/``unit``) are re-added afterwards so the JSON
+    Schema's ``required`` clauses stay satisfied.
     """
     payload = response.model_dump(mode="json", exclude_none=True)
 
     instructions = payload.get("instructions")
     if isinstance(instructions, dict):
         instructions.setdefault("raw_text", None)
+        dose = instructions.get("dose")
+        if isinstance(dose, dict):
+            dose.setdefault("quantity", None)
+            dose.setdefault("unit", None)
 
     medication = payload.get("medication")
     if isinstance(medication, dict):

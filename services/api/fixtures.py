@@ -52,6 +52,7 @@ FIXTURES: List[Dict[str, Any]] = [
                 {"kind": "frequency", "text": "twice daily"},
                 {"kind": "other", "text": "with meals"},
             ],
+            "dose": {"quantity": 1, "unit": "tablet", "confidence": 0.9, "source": "ocr"},
         },
         "candidates": [
             {
@@ -103,6 +104,7 @@ FIXTURES: List[Dict[str, Any]] = [
                 {"kind": "frequency", "text": "three times daily"},
                 {"kind": "duration", "text": "7 days"},
             ],
+            "dose": {"quantity": 1, "unit": "capsule", "confidence": 0.88, "source": "ocr"},
         },
         "candidates": [
             {
@@ -149,6 +151,7 @@ FIXTURES: List[Dict[str, Any]] = [
                 {"kind": "dose", "text": "1 tablet"},
                 {"kind": "frequency", "text": "every 6 to 8 hours as needed"},
             ],
+            "dose": {"quantity": 1, "unit": "tablet", "confidence": 0.6, "source": "ocr"},
         },
         "candidates": [
             {
