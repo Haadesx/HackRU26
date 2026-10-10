@@ -215,19 +215,31 @@ PRESCRIBER_DR_RE = re.compile(
 )
 
 # Schedule derivation: once/twice/three-times/bedtime only; anything else -> None.
+# Patterns tolerate glued OCR ("twicedaily", "oncedaily", "atbedtime") by
+# allowing zero spaces between the cadence words.
 _SCHEDULE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b(?:three\s*times|thrice|tid|t\.i\.d\.?)\b", re.IGNORECASE), "08:00, 14:00, 20:00"),
-    (re.compile(r"\b(?:twice|bid|b\.i\.d\.?)\b", re.IGNORECASE), "08:00, 20:00"),
-    (re.compile(r"\b(?:once|every\s*day|daily|qd|q\.d\.?|q24h)\b", re.IGNORECASE), "08:00"),
-    (re.compile(r"\b(?:at\s*bedtime|bedtime|nightly|qhs|q\.h\.s\.?)\b", re.IGNORECASE), "20:00"),
+    (re.compile(r"\b(?:three\s*times|thrice|tid|t\.i\.d\.?)", re.IGNORECASE), "08:00, 14:00, 20:00"),
+    (
+        re.compile(r"\b(?:twice(?:\s*(?:daily|a\s*day|per\s*day))?|bid|b\.i\.d\.?)", re.IGNORECASE),
+        "08:00, 20:00",
+    ),
+    (
+        re.compile(
+            r"\b(?:once(?:\s*(?:daily|a\s*day|per\s*day))?|daily|every\s*day|q\.?d\.?(?![a-z0-9])|q24h)",
+            re.IGNORECASE,
+        ),
+        "08:00",
+    ),
+    (re.compile(r"\b(?:at\s*bedtime|bedtime|nightly|q\.?h\.?s\.?)", re.IGNORECASE), "20:00"),
 )
 SCHEDULE_BASE_CONFIDENCE = 0.9
 SCHEDULE_DERIVATION_FACTOR = 0.8
 
 # Cadences the simple four-way mapping does not cover: leave schedule_times None.
+# Tolerant to glued OCR ("onceweekly", "every12hours", "asneeded").
 _SCHEDULE_UNSUPPORTED_RE = re.compile(
-    r"\b(?:weekly|monthly|every\s*(?:\d+|other)\s*(?:hours?|hrs?|days?|weeks?)|every\s*other\s*day|"
-    r"as\s*needed|prn|q\.?\d+\s*h)\b",
+    r"(?:weekly|monthly)\b|\bevery\s*(?:\d+|other)\s*(?:hours?|hrs?|days?|weeks?)\b|"
+    r"\bas\s*needed\b|\bprn\b|\bq\.?\d+\s*h",
     re.IGNORECASE,
 )
 
