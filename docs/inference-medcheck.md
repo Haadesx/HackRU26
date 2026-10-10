@@ -49,10 +49,10 @@ October Bus (agent coordination; see §H).
 | Frozen v1 contract (schemas + pydantic mirror) | ✅ implemented, ✅ validated | `feat/inference-medcheck` |
 | PI-4 API: mock + real OCR-first pipeline + **M3 escalation wiring** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/api-athena` → merges `b6bbbef`, `4d0d32c` |
 | PI-2 OCR + extraction + **candidate matcher** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/ocr-orion` `09c41d3` → merge `a49afd0` |
-| PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED + noise regression **fixed** (`ae1c3a8`) | `feat/vision-atlas` → merges `5b60648` + `ae1c3a8` |
+| PI-1 Vision: quality/detect/label + **ONNX YOLO detector (M5)** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vision-atlas` `31c3634` → merges `5b60648`+`ae1c3a8`+M5 |
 | PI-3 VLM adapter + eval + **escalation triggers + normalization** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` → merges `91a5c83`, `fc5ff80` |
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
-| Full-system acceptance on merged tree | ✅ **326 passed / 0 failed** (M4 merged: contract v1.1 + dose + backend fit) | `feat/inference-medcheck` |
+| Full-system acceptance on merged tree | ✅ **349 passed / 0 failed** (M5 merged: ONNX YOLO) | `feat/inference-medcheck` |
 
 ---
 
@@ -369,6 +369,9 @@ scripts/scan_demo.sh
 
 # 4. Rig / GPU probe (read-only)
 scripts/gpu_probe.sh
+
+# 5. Model weights (gitignored) — YOLO11n ONNX for real-photo bottle detection
+scripts/download_models.sh      # → models/yolo11n.onnx (auto-enabled by local_scan.sh)
 ```
 
 **Additional verified commands (2026-10-10):**
@@ -442,6 +445,26 @@ every extracted field carries `{value, confidence, source}`.
 
 ---
 
+### H.4 Backend ingest contract (Urvi, `feat/backend-urvi`, verified 2026-10-10)
+
+`POST /api/v1/scans` (JWT, `flask-smorest`): request
+`{event_id, user_id, drug_name, strength?{value,unit}, quantity, timestamp}` → response
+`{match_status, observation_event_id, observed_at, replayed, medication, dose_event,
+ timing, quantity_check, scanned_quantity, expected_quantity, next_dose, candidates, safety}`.
+
+Client mapping from our ScanResponse: `medication.name.value → drug_name`,
+`medication.strength → strength` (backend also accepts `"500 mg"` strings),
+`request timestamp → timestamp`; `event_id` is client-generated (idempotent).
+
+- The backend never records a dose from a scan (`safety.ingestion_not_inferred`); only
+  `POST /doses/{id}/confirm` changes status — aligned with our safety rule.
+- **Gap resolved via v1.1:** `quantity` is required by `POST /scans`, and ScanResponse
+  now carries `instructions.dose.quantity`/`unit` (additive minor bump, 2026-10-10).
+  Client mapping documented in `tests/integration/test_backend_fit.py`; fallback `1`
+  only when the label does not state a per-dose amount (never from package size).
+
+---
+
 ## I. Testing and verification
 
 | Test | Command | Result | Verified by |
@@ -470,6 +493,8 @@ every extracted field carries `{value, confidence, source}`.
 | **M3 reconciliation normalization** | clean-scan uncertainty reasons | `['missing:manufacturer']` only — case-only `ocr_vlm_conflict` noise gone | Orchestrator ✅ |
 | October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
 | October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
+| **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | ✅ green after M4: real scan → `instructions.dose {1,"tablet",conf≥0.5,"ocr"}`; payload maps to Urvi's ScanSchema fields | Orchestrator ✅ |
+| **ONNX YOLO detector (M5, real photos)** | `MEDCHECK_YOLO_MODEL=models/yolo11n.onnx` + console `/api/live` | Real bottle photo: heuristic 0/3 → **YOLO bottle 0.51** through the full pipeline; warm live path **145–160 ms** CPU; suite **349 passed**; fallbacks intact | Orchestrator ✅ |
 
 Known bugs / limitations:
 - `Metformin HCI` OCR error is confidence-blind (0.87) — VLM escalation would not trigger;
@@ -521,25 +546,13 @@ sequential calls, no restarts).
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
 
-### H.4 Backend ingest contract (Urvi, `feat/backend-urvi`, verified 2026-10-10)
-
-`POST /api/v1/scans` (JWT, `flask-smorest`): request
-`{event_id, user_id, drug_name, strength?{value,unit}, quantity, timestamp}` → response
-`{match_status, observation_event_id, observed_at, replayed, medication, dose_event,
- timing, quantity_check, scanned_quantity, expected_quantity, next_dose, candidates, safety}`.
-
-Client mapping from our ScanResponse: `medication.name.value → drug_name`,
-`medication.strength → strength` (backend also accepts `"500 mg"` strings),
-`request timestamp → timestamp`; `event_id` is client-generated (idempotent).
-
-- The backend never records a dose from a scan (`safety.ingestion_not_inferred`); only
-  `POST /doses/{id}/confirm` changes status — aligned with our safety rule.
-- **Gap resolved via v1.1:** `quantity` is required by `POST /scans`, and ScanResponse
-  now carries `instructions.dose.quantity`/`unit` (additive minor bump, 2026-10-10).
-  Client mapping documented in `tests/integration/test_backend_fit.py`; fallback `1`
-  only when the label does not state a per-dose amount (never from package size).
-
-| **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | ✅ green after M4: real scan → `instructions.dose {1,"tablet",conf≥0.5,"ocr"}`; payload maps to Urvi's ScanSchema fields | Orchestrator ✅ |
+**2026-10-10** — **M5 merged: ONNX YOLO11n bottle detector.** Atlas `31c3634` (lazy cached
+ONNX session, `MEDCHECK_YOLO_MODEL`/`MEDCHECK_YOLO_CONF`, letterbox/NMS, COCO bottle class,
+graceful heuristic fallback; 23 new tests). Verified on Varesh's real photos: the photo
+where the heuristic saw nothing now yields `bottle.detected=true, conf 0.51` with a
+sensible box, through `/api/live` and the full `/v1/scan`; warm live pass 145–160 ms CPU.
+Console auto-enables the model when `models/yolo11n.onnx` exists (`scripts/download_models.sh`,
+sha256 `634279b4…`); suite now **349/349**.
 
 **2026-10-10** — **M4 merged; backend fit complete.** Orion `cb31f7e` (structured per-dose
 quantity extraction, 75 OCR tests) + Athena `2e53239` (real+mock `instructions.dose`,

@@ -55,6 +55,11 @@ if [ "$MODE" = "real" ] && [ -f "$HOME/.medcheck/vllm.env" ]; then
   set -a; . "$HOME/.medcheck/vllm.env"; set +a
 fi
 
+# Use the ONNX YOLO detector when its weights are present (scripts/download_models.sh).
+if [ -z "${MEDCHECK_YOLO_MODEL:-}" ] && [ -f "models/yolo11n.onnx" ]; then
+  export MEDCHECK_YOLO_MODEL="models/yolo11n.onnx"
+fi
+
 start_api() {
   MEDCHECK_API_MODE="$MODE" MEDCHECK_VLM_ENABLED="$VLM" \
     .venv-full/bin/uvicorn services.api.main:app --host 127.0.0.1 --port 8300 --log-level warning "$@"
@@ -64,7 +69,7 @@ start_ui() {
 }
 
 if [ "$DAEMON" = 1 ]; then
-  export MODE VLM   # daemon children are separate shells — they need these exported
+  export MODE VLM MEDCHECK_YOLO_MODEL   # daemon children are separate shells — export these
   mkdir -p "$RUN_DIR"
   nohup bash -c "$(declare -f start_api); start_api" >"$LOG_API" 2>&1 &
   echo $! > "$PID_API"

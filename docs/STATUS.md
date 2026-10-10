@@ -28,7 +28,7 @@ untouched). Push only feature branches.
 | G2 | Worktrees + dispatch all four workers | DONE |
 | G3 | Mock FastAPI scan endpoint live on :8300 | DONE + MERGED (`2ba5a12`), re-verified |
 | G4 | Real OCR integrated, structured extraction verified | DONE: real pipeline merged (`b6bbbef`); live sharp scan extracted Metformin 500 mg |
-| G5 | Bottle detection + frame guidance integrated | DONE: vision merged (`5b60648`); live blurry scan → needs_rescan + guidance in 19.5 ms |
+| G5 | Bottle detection + frame guidance integrated | DONE + M5: ONNX YOLO detector (real bottle 0.51), heuristic/flat fallbacks, live guidance |
 | G6 | Qwen3-VL benchmarked + integrated where beneficial | DONE: clean scans skip the VLM (541 ms); escalation only on weak/mismatched identity (VLM ~1.7 s) |
 | G7 | Full integration tests + GPU measurements | DONE: **293/293**; VRAM measured; concurrency profile done |
 | G8 | Mac→home-rig inference through approved private connection | DONE (core): Mac→Tailscale→rig vLLM through the live API, verified multiple times |
@@ -38,7 +38,7 @@ untouched). Push only feature branches.
 
 | Branch | Tip | Tests (worker) | Notes |
 |---|---|---|---|
-| `feat/vision-atlas` | `ae1c3a8` | 76 passed | noise gate; merged (`5b60648`+`34480c3`) |
+| `feat/vision-atlas` | `31c3634` | 99 passed | ONNX YOLO11n detector (M5); merged into integration |
 | `feat/ocr-orion` | `cb31f7e` | 75 passed | matcher + v1.1 dose extraction; merged (`f284f3b`) |
 | `feat/vlm-juno` | `16ca2dd` | 104 passed | M3 fields+normalization; merged (`fc5ff80`) |
 | `feat/api-athena` | `2e53239` | 62 passed | v1.1 dose + backend bridge + HANDOFF; merged (`aa3ccd3`) |
@@ -70,6 +70,10 @@ untouched). Push only feature branches.
 - 2026-10-10 — **M4 merged**: contract v1.1 `instructions.dose` end-to-end (Orion
   extraction `cb31f7e`, Athena bridge `2e53239`); full suite **326/326** including the
   backend-fit test. Atlas M5 (ONNX YOLO11n bottle detector) in flight.
+- 2026-10-10 — **M5 merged**: ONNX YOLO11n bottle detector (`31c3634`) verified on real
+  photos (0.00 → 0.51 bottle), enabled in the console, `scripts/download_models.sh`
+  added; suite **349/349**. **M6 dispatched** (network readiness: optional auth, CORS,
+  device/TLS guidance).
 
 ## Dispatch log (append-only, board level)
 

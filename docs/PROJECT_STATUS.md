@@ -6,7 +6,7 @@
 > verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
 > refreshed at every milestone.
 >
-> **Last updated:** 2026-10-10 ~17:10 UTC · **Repo:** https://github.com/Haadesx/HackRU26
+> **Last updated:** 2026-10-10 ~17:20 UTC · **Repo:** https://github.com/Haadesx/HackRU26
 > **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
 
 ---
@@ -121,7 +121,7 @@ BBoxes normalized `[0,1]`. JSON schemas: `contracts/v1/*.schema.json`; pydantic 
 `services/common/contract.py`. Versioning: additive → minor bump; breaking → new `vN/`.
 
 ### 4.3 Measured results (all verified, not reported by others)
-- Unit/integration tests on merged tree: **326 passed / 0 failed** (vision 76 · ocr 75 ·
+- Unit/integration tests on merged tree: **349 passed / 0 failed** (vision 99 · ocr 75 ·
   vlm 104 · api 62 · integration 2 + backend-fit).
 - OCR accuracy on synthetic set: extraction 33/33 name/strength/form; end-to-end rendered
   images 8/8; macro F1 OCR-only **0.99**; 24-image eval: VLM-only 1.0, hybrid 0.99.
@@ -149,9 +149,11 @@ Testing with real medication photos (kept local, not committed) showed:
 - the CPU color/edge bottle heuristic **fails on real photos** (0/3 detections);
 - OCR/label detection still works (full-frame), VLM rescues weak fields;
 - **YOLO11n ONNX (COCO class `bottle`)** detected a real bottle at conf 0.485 where the
-  heuristic found nothing, at ~60 ms CPU — **M5 is integrating this** as the default
-  detector backend (`MEDCHECK_YOLO_MODEL=models/yolo11n.onnx`, onnxruntime, no torch,
-  heuristic fallback). Model is downloaded, not committed (`models/` is gitignored).
+  heuristic found nothing, at ~60 ms CPU — **M5 integrated it** as the default detector
+  backend (`MEDCHECK_YOLO_MODEL=models/yolo11n.onnx`, onnxruntime, no torch, heuristic
+  fallback; `MEDCHECK_YOLO_CONF` threshold). The local console auto-enables it when
+  `models/yolo11n.onnx` exists (`scripts/download_models.sh`, sha256 `634279b4…`);
+  verified through `/api/live` and full scans (bottle 0.51, warm live pass 145–160 ms).
 
 ---
 
@@ -196,9 +198,11 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
    device → Mac/rig traffic beyond local testing.
 3. **Candidate registry source**: inference matcher consumes `hints.known_candidates`;
    long-term the backend/user's medication list should feed it.
-4. **YOLO integration (M5)** in flight (Atlas) — includes threshold tuning; real-photo
-   recall is partial (1 clean hit, 1 weak 0.125, 1 none in the sample set), so the
-   heuristic/flat-label fallbacks stay.
+4. **Network readiness (M6, in flight)** — optional bearer auth (`MEDCHECK_API_KEY`),
+   CORS allowlist (`MEDCHECK_CORS_ORIGINS`), device-access guidance (bind 0.0.0.0 /
+   Tailscale, TLS via uvicorn flags or reverse proxy) for iOS/web clients.
+5. **YOLO recall** — real-photo recall is partial (1 strong, 1 weak, 1 none in the
+   sample set); heuristic/flat-label fallbacks stay. Threshold configurable.
 5. **VLM cost**: escalation triggers were tuned in M3 (identity-critical fields only);
    registry-mismatch still escalates by design (~1.7 s).
 
@@ -209,7 +213,9 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
 ```bash
 # 1. Full environment + test suite
 scripts/setup_full_env.sh                       # creates .venv-full (Python 3.11)
-.venv-full/bin/python -m pytest services tests/integration -q     # → 326 passed
+.venv-full/bin/python -m pytest services tests/integration -q     # → 349 passed
+scripts/download_models.sh                      # YOLO11n ONNX (gitignored weights)
+scripts/local_scan.sh --daemon                  # console auto-enables YOLO when present
 
 # 2. Local camera/label test console (no iOS needed)
 scripts/local_scan.sh --daemon                  # → http://127.0.0.1:8400
@@ -256,7 +262,10 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
 7. **Cross-team**: verified Urvi's backend (clean merge, contract-aligned, TimescaleDB
    healthy) and caught the `.gitignore` models-package blocker; fixed on our side.
 8. **Local console** built (daemon, live mode, debug bundles); real-photo testing by
-   Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integration in flight**.
+   Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integrated and enabled**
+   (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
+9. **M6 dispatched** (network readiness for clients: optional auth + CORS + device/TLS
+   guidance).
 
 ---
 
