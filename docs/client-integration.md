@@ -1,0 +1,126 @@
+# Client Integration Guide — iOS, Web UI, Backend
+
+Who this is for: **Aparajita (iOS)**, **Sinchana (Web UI)**, **Urvi (backend)**, and anyone
+wiring the MedCheck pieces together. It describes the *flow across components*; API details
+live in `contracts/README.md` + `services/api/HANDOFF.md` + `docs/backend-urvi.md`.
+
+## Topology
+
+| Service | Where | Base URL (dev) |
+|---|---|---|
+| Inference gateway (FastAPI) | Mac, port **8300** | `http://127.0.0.1:8300` · devices: `http://<mac-tailscale-ip>:8300` |
+| Backend API (Flask) | Mac, port **8000** | `http://127.0.0.1:8000/api/v1` |
+| Home rig vLLM (only the gateway talks to it) | `hermes-linux` via Tailscale | `:8100` — never called by clients |
+
+```
+iOS / Web ──image──▶ :8300/v1/scan ──▶ ScanResponse (contract v1.1)
+   │                                        │
+   └──────────── map fields ────────────────┘
+        POST :8000/api/v1/scans  {event_id,user_id,drug_name,strength,quantity,timestamp}
+                │
+                └─▶ match_status, dose_event, timing, quantity_check, candidates
+        POST /api/v1/doses/{dose_id}/confirm   ← the ONLY call that records a dose
+```
+
+## 1. Scan
+
+`POST {inference}/v1/scan` — `multipart/form-data`:
+`image` (JPEG/PNG ≤ 12 MiB), optional `client` (`ios|backend|test`), `mode`
+(`auto|mock|real`), `hints` (JSON string).
+
+```bash
+curl -s -F "image=@bottle.jpg" -F "mode=real" -F "client=ios" http://127.0.0.1:8300/v1/scan
+```
+
+**Use `mode:"mock"` while building UI** — deterministic, no models, same shape.
+
+The response is `ScanResponse` (v1.1). Show at least: `status`, `medication.name/strength`
+with confidence, `frame_quality.guidance` when `needs_rescan`, and the mandatory
+`safety.disclaimer`.
+
+| `status` | UI behaviour |
+|---|---|
+| `ok` | Show fields; proceed to backend |
+| `uncertain` | Show fields with uncertainty cues; proceed (backend match may clarify) |
+| `needs_rescan` | Show `frame_quality.guidance`, offer retake; do not call backend |
+| `no_medication_found` | Ask user to reframe; do not call backend |
+| `error` | Show `error.message`; allow retry |
+
+Safety rules for every UI: never imply ingestion from a scan; never present dosing advice;
+`confirm` is always an explicit user action.
+
+## 2. Capture tips (from the real-time path)
+
+The gateway’s fast path is `POST /v1/scan` only — for *live guidance* the local test console
+uses a vision-only pass (~20 ms + YOLO ≈ 145 ms on CPU). iOS can approximate this by
+scanning at a low rate (1–2 fps) while the user frames the bottle and stopping on the first
+`ok`/`uncertain`, or wait for a dedicated `/v1/frame-quality` endpoint (not built yet).
+
+Bottle detection uses ONNX YOLO11n (COCO bottle class) when `MEDCHECK_YOLO_MODEL` is set;
+otherwise a CPU heuristic. Both are best-effort; label OCR works on full frames too.
+
+## 3. Map the scan to the backend ingest
+
+`POST {backend}/api/v1/scans` (JWT) body:
+
+| Backend field | From inference | Notes |
+|---|---|---|
+| `event_id` | client-generated **UUIDv4** | idempotent — reuse the same UUID on retry |
+| `user_id` | from backend `GET /me` | patient’s UUID |
+| `drug_name` | `medication.name.value` | **skip the call if null** (no name = nothing to match) |
+| `strength` | `medication.strength` → `{value, unit}` | `null` allowed |
+| `quantity` | `instructions.dose.quantity` (v1.1) | fallback `1` only when the label states none |
+| `timestamp` | client `now` in UTC `…Z` | future timestamps are rejected |
+
+Proven mapping + test: `tests/integration/test_backend_fit.py`;
+runnable end-to-end: `.venv-full/bin/python scripts/e2e_scan_to_backend.py --dry-run`.
+
+**Never** send a scan when `status` is `needs_rescan`, `no_medication_found`, or `error`.
+
+## 4. Confirm (only after the user takes the dose)
+
+`POST {backend}/api/v1/doses/{dose_id}/confirm` with `{observation_event_id, quantity_taken?}`.
+A scan alone never changes dose status; `match_status` values are
+`matched | ambiguous | no_match | not_due` (see `docs/backend-urvi.md`).
+
+## 5. Registered candidates (hints)
+
+To help inference choose between the patient’s medications, pass the backend’s medication
+list as `hints`:
+
+```json
+{"known_candidates":[{"name":"Metformin","strength":{"value":500,"unit":"mg"}},
+                     {"name":"Lisinopril","strength":{"value":10,"unit":"mg"}}]}
+```
+
+Behaviour: a candidate matched at ≥ 0.75 is returned in `candidates[]` with
+`source:"registry"`; a confident label that matches **no** candidate escalates to the VLM
+(by design) and is surfaced in `uncertainty.reasons`.
+
+## 6. Auth
+
+- **Backend:** JWT — `POST /auth/login {email,password}` → `access_token`; send
+  `Authorization: Bearer …`; refresh via `/auth/refresh`.
+- **Inference gateway:** none by default. When `MEDCHECK_API_KEY` is set (M6), `/v1/scan`
+  requires `Authorization: Bearer <key>`; `/health` and `/ready` stay open.
+- **CORS (web UI):** set `MEDCHECK_CORS_ORIGINS` on the gateway (M6). `*` is local-dev only.
+- Device testing: bind the gateway to `0.0.0.0` and reach the Mac over Tailscale
+  (`http://<mac-tailscale-ip>:8300`). For anything non-local, put TLS in front (uvicorn
+  `--ssl-keyfile/--ssl-certfile` or a reverse proxy).
+
+## 7. Error handling
+
+| Layer | Signal | Handling |
+|---|---|---|
+| Gateway | `4xx` | bad/oversized/unsupported image — show a retake message |
+| Gateway | `200` + `status:"error"` | domain failure; show `error.message`, offer retry |
+| Gateway | `504` | scan timeout — retry once, then ask for a closer/steadier shot |
+| Backend | `401` | refresh token, else re-login |
+| Backend | `403` / `404` | wrong patient / unknown dose — do not retry |
+| Backend | `400` | validation (future timestamp, unknown fields) — fix payload, do not retry blindly |
+
+## 8. Reporting a scan bug
+
+Send `request_id` from the response, plus (if you scanned through the local console) the
+saved debug bundle in `~/.medcheck/scans/` (image + response JSON, last 40). That lets the
+inference team reproduce the exact frame and pipeline result.
