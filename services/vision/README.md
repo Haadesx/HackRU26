@@ -78,6 +78,11 @@ if result.label.detected and result.label.bbox is not None:
 - `crop_label_array(image_bytes, bbox, *, channel_order="rgb"|"bgr", pad=0.01) -> np.ndarray`
   is the same crop for direct in-process OCR calls (`bgr` matches
   `services.ocr.engine.read_text`'s default).
+- Prefer decoding once and calling `ocr.read_text(frame, bbox)` directly? Decode
+  with `services.vision.decode_image(image_bytes)` so EXIF orientation matches the
+  frame `analyze_frame` measured; a bbox is normalized against the **displayed**
+  orientation, so decoding with a non-EXIF-aware decoder shifts the crop on
+  rotated photos. `crop_label`/`crop_label_array` already handle this for you.
 - `bbox` accepts a contract `BBox`, a `{"x","y","w","h"}` dict, a 4-tuple/list or
   an ndarray. Empty, non-finite or off-frame boxes raise `ValueError`; unsupported
   types raise `TypeError`.
