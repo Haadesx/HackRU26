@@ -30,6 +30,7 @@ from services.api.real_pipeline import (
     known_candidates_from_request,
 )
 from services.common.contract import ScanResponse
+from services.vision.pipeline import analyze_frame
 from services.vlm.client import Qwen3VLClient, VlmConfig
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -98,31 +99,40 @@ def test_real_scan_dark_sample_reads_metformin(monkeypatch):
     _assert_safety(payload)
 
 
-def test_real_scan_sharp_sample_flags_frame_quality(monkeypatch):
-    """The flat white sample trips vision exposure/glare; the API obeys it.
+@pytest.mark.parametrize("sample", [SHARP, DARK, BLURRY], ids=lambda p: p.name)
+def test_real_scan_follows_vision_quality_verdict(sample, monkeypatch):
+    """The API must obey vision's acceptable flag, whatever the calibration.
 
-    This documents current vision calibration (see report): unacceptable frames
-    return needs_rescan with guidance and never run OCR.
+    Calibration-agnostic: it reads the verdict from analyze_frame itself, so it
+    stays green when vision thresholds/samples change (e.g. Atlas's M2
+    readable-bright refinement makes the flat samples acceptable).
     """
     monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
-    response, payload = run_scan(SHARP.read_bytes())
+    data = sample.read_bytes()
+    acceptable = analyze_frame(data).quality.acceptable
 
-    assert payload["status"] == "needs_rescan"
-    assert payload["frame_quality"]["acceptable"] is False
-    assert payload["uncertainty"]["rescan_required"] is True
+    _, payload = run_scan(data)
+    assert payload["frame_quality"]["acceptable"] is acceptable
     assert payload["frame_quality"]["guidance"]
-    assert payload["label"].get("text") is None
-    assert payload["medication"]["name"]["value"] is None
-    assert "ocr" not in payload["timing"]["stages"]
+    if not acceptable:
+        assert payload["status"] == "needs_rescan"
+        assert payload["uncertainty"]["rescan_required"] is True
+        assert "ocr" not in payload["timing"]["stages"]
+        assert payload["label"].get("text") is None
+        assert payload["medication"]["name"]["value"] is None
+    else:
+        assert payload["status"] != "needs_rescan"
+        assert payload["uncertainty"]["rescan_required"] is False
+        assert "ocr" in payload["timing"]["stages"]
     _assert_safety(payload)
 
 
-@pytest.mark.parametrize("sample", [BLURRY, SHARP], ids=lambda p: p.name)
-def test_unacceptable_frames_skip_ocr(sample, monkeypatch):
+def test_blurry_frame_skips_ocr(monkeypatch):
     monkeypatch.delenv("MEDCHECK_VLM_ENABLED", raising=False)
-    _, payload = run_scan(sample.read_bytes())
+    _, payload = run_scan(BLURRY.read_bytes())
     assert payload["status"] == "needs_rescan"
     assert "ocr" not in payload["timing"]["stages"]
+    assert payload["label"].get("text") is None
     assert payload["candidates"] == []
 
 
@@ -188,7 +198,9 @@ def test_matcher_injection_populates_candidates(monkeypatch):
     assert payload["candidates"][0]["name"] == "Metformin"
     assert payload["candidates"][0]["source"] == "registry"
     assert captured["threshold"] == 0.75
-    assert captured["fields"]["name"]["value"] == "Metformin"
+    # Extraction is PI-2's preferred matcher input shape.
+    assert captured["fields"].name.value == "Metformin"
+    assert captured["fields"].strength.value == 500
     assert captured["candidates"] == hints["known_candidates"]
 
 

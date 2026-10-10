@@ -250,10 +250,12 @@ class RealScanPipeline:
 
             match_started = time.perf_counter()
             matcher = self._get_matcher()
-            if matcher is not None and canonical:
+            if matcher is not None and extraction is not None:
                 try:
+                    # PI-2's matcher prefers the Extraction object (its flat-dict
+                    # path expects plain values, not {value,confidence,source}).
                     matched = matcher(
-                        canonical,
+                        extraction,
                         known_candidates_from_request(hints),
                         threshold=DEFAULT_MATCHER_THRESHOLD,
                     )

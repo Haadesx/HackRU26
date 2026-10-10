@@ -173,9 +173,14 @@ RapidOCR backend is missing).
 
 ## Known integration notes
 
-- `samples/label_metformin.png` is a flat white label; vision classifies it
-  `too_bright` + `has_glare` → real mode returns `needs_rescan` by design. The
-  `samples/label_metformin_dark.png` variant passes quality and OCRs cleanly.
-  (Reported to Atlas; either the sample set or vision thresholds may be recalibrated.)
+- Flat synthetic labels: initial vision calibration flagged
+  `samples/label_metformin.png` as `too_bright`/glare. Atlas fixed this on
+  `feat/vision-atlas` (d048749, fda2a75): readable-bright frames and adaptive
+  label search make all three good samples acceptable and label-detected. After
+  that merge, real mode reads them end-to-end; the API gate on
+  `quality.acceptable` is unchanged and covered by a calibration-agnostic test.
 - `label.detected=false` with `label.text` populated is valid: OCR falls back to
   the full frame when no label region is localized.
+- Matcher input: `RealScanPipeline` passes the PI-2 `Extraction` object (not the
+  wrapped canonical dict) to `match_candidates`, so strength participates in
+  scoring (name-only 0.9× vs name+strength 1.0).
