@@ -26,22 +26,22 @@ untouched). Push only feature branches.
 |---|---|---|
 | G1 | Harness/Oct-Bus identification, repo init, frozen contracts | DONE (`51569fd`) |
 | G2 | Worktrees + dispatch all four workers | DONE |
-| G3 | Mock FastAPI scan endpoint live on :8300 | DELIVERED by Athena (`a855318`); orchestrator re-verify + merge WIP |
-| G4 | Real OCR integrated, structured extraction verified | OCR module delivered (`987dd88`); API wiring TODO |
-| G5 | Bottle detection + frame guidance integrated | Vision module delivered (`f55025c`); API wiring TODO |
-| G6 | Qwen3-VL benchmarked + integrated where beneficial | Benchmarked (hybrid F1 0.993, p50 1.58 s); API wiring TODO |
-| G7 | Full integration tests + GPU measurements | TODO |
-| G8 | Mac→home-rig inference through approved private connection | vLLM `/v1/models` from Mac verified; end-to-end scan TODO |
-| G9 | Stable contract delivered to iOS/backend | Contract frozen; handoff package TODO |
+| G3 | Mock FastAPI scan endpoint live on :8300 | DONE + MERGED (`2ba5a12`), re-verified |
+| G4 | Real OCR integrated, structured extraction verified | DONE: real pipeline merged (`b6bbbef`); live sharp scan extracted Metformin 500 mg |
+| G5 | Bottle detection + frame guidance integrated | DONE: vision merged (`5b60648`); live blurry scan → needs_rescan + guidance in 19.5 ms |
+| G6 | Qwen3-VL benchmarked + integrated where beneficial | DONE for pipeline: live real VLM call 1745 ms, VRAM unchanged; tuning items in doc §K |
+| G7 | Full integration tests + GPU measurements | WIP: 270/271 merged tests (1 regression fix in flight); VRAM measured; concurrency profile TODO |
+| G8 | Mac→home-rig inference through approved private connection | CORE VERIFIED: Mac→Tailscale→rig vLLM through the live API; final hardening TODO |
+| G9 | Stable contract delivered to iOS/backend | Contract frozen + pushed; handoff package/correctness review TODO |
 
 ## Worker milestone 1 — delivered (2026-10-10, worker-reported)
 
 | Branch | HEAD | Tests (worker) | Notes |
 |---|---|---|---|
-| `feat/vision-atlas` | `f55025c` | 46 passed | quality/detect/label, CPU fallback |
-| `feat/ocr-orion` | `987dd88` | 25 passed | RapidOCR; 33/33 extraction, 8/8 e2e |
-| `feat/vlm-juno` | `9ac2305` | 79 passed | 24-img eval; hybrid F1 0.993; escalation 8.3 % |
-| `feat/api-athena` | `a855318` | 40 passed | mock gateway :8300; live smoke OK |
+| `feat/vision-atlas` | `27d0b21` | 70 passed | crop_label handoff, calibration, demo CLI; noise fix pending |
+| `feat/ocr-orion` | `09c41d3` | 52 passed | candidate matcher + Extraction-shape fix |
+| `feat/vlm-juno` | `338759d` | 91 passed | escalation triggers + client_from_env |
+| `feat/api-athena` | `7200f0c` | 56 passed | real OCR-first pipeline + EXIF regression |
 
 ## Dispatch log (append-only, board level)
 
@@ -62,3 +62,7 @@ untouched). Push only feature branches.
   end-to-end (Orion, receipt `9b300f77-…`); Apollo's user-shell terminal is refused at
   the hook admission layer (`{"ok":false,"stale":true}`) — root cause proven in
   October core. Orchestrator inbound = transcripts + `bus peers`; outbound = pty input.
+- 2026-10-10 — Milestone 2 merged (`b6bbbef`/`a49afd0`/`5b60648`/`91a5c83`); merged
+  suite 270 passed / 1 failed (vision noise false-positive; fix dispatched to Atlas).
+  Real-mode live acceptance: OCR-first + real VLM end-to-end (2272 ms total, VLM
+  1745 ms, VRAM unchanged 13,706 MiB free); blurry gate 19.5 ms → needs_rescan.

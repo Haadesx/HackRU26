@@ -47,13 +47,12 @@ October Bus (agent coordination; see §H).
 | Part | Status | Branch / commit |
 |---|---|---|
 | Frozen v1 contract (schemas + pydantic mirror) | ✅ implemented, ✅ validated | `feat/inference-medcheck` |
-| PI-4 mock FastAPI gateway on :8300 | ✅ implemented, ✅ orchestrator-re-verified, ✅ MERGED | `feat/api-athena` @ `a855318` → merge `2ba5a12` |
-| PI-2 OCR + extraction | ✅ implemented, ✅ orchestrator-re-verified, ✅ MERGED | `feat/ocr-orion` @ `987dd88` → merge `03eb5a7` |
-| PI-1 Vision (quality/detect/label) | ✅ implemented, ✅ orchestrator-re-verified, ✅ MERGED | `feat/vision-atlas` @ `f55025c` → merge `2c4e3c7` |
-| PI-3 VLM adapter + eval + benchmark | ✅ implemented, ✅ orchestrator-re-verified, ✅ measured eval, ✅ MERGED | `feat/vlm-juno` @ `9ac2305` → merge `4c5513f` |
-| Real Vision→OCR→VLM wiring inside the API | ⏳ pending (seam exists: `services/api/pipeline.py`) | — |
-| Full-system integration + acceptance | ⏳ pending | — |
-| Push integration branch to `origin` | ✅ pushed `e0fe570` (branch only; `main` untouched) | `origin/feat/inference-medcheck` |
+| PI-4 API: mock + **real OCR-first pipeline** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/api-athena` `7200f0c` → merge `b6bbbef` |
+| PI-2 OCR + extraction + **candidate matcher** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/ocr-orion` `09c41d3` → merge `a49afd0` |
+| PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED (1 regression fix pending) | `feat/vision-atlas` `27d0b21` → merge `5b60648` |
+| PI-3 VLM adapter + eval + **escalation triggers** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` `338759d` → merge `91a5c83` |
+| Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
+| Full-system acceptance on merged tree | ⏳ 270 passed / 1 failed (vision noise false-positive `label.detected`); fix dispatched to Atlas | — |
 
 ---
 
@@ -433,7 +432,12 @@ every extracted field carries `{value, confidence, source}`.
 | VLM measured eval | `services/vlm/eval/run_eval.py` on 24 images | OCR 0.99 / VLM 1.0 / hybrid 0.993 macro F1; escalation 8.3 %; p50 1584.8 ms | Juno ✅ (measured) |
 | API tests | `pytest services/api -q` | 40 passed (worker) / 40 passed on merged tree | Athena + orchestrator re-run ✅ |
 | Orchestrator integration harness (merged tree) | `.venv/bin/pytest services/api tests/integration -q` | **42 passed** (40 API + 2 integration) | Orchestrator ✅ |
-| Live API smoke on merged tree | uvicorn :8300 + `scripts/scan_demo.sh` | health/ready 200; scan `uncertain` mock, schema-valid; port freed after | Orchestrator ✅ |
+| Live API smoke on merged tree (mock) | uvicorn :8300 + `scripts/scan_demo.sh` | health/ready 200; scan `uncertain` mock, schema-valid; port freed after | Orchestrator ✅ |
+| **Merged full suite (M2)** | `.worktrees/pi-4-api/.venv/bin/python -m pytest services tests/integration` | 270 passed, **1 failed** (`test_real_scan_no_medication_found`: noise → vision label false-positive 0.505); fix dispatched | Orchestrator ✅ |
+| **Real-mode live: /ready** | `MEDCHECK_API_MODE=real` uvicorn :8300 | `{"ready":true,"mode":"real","components":{"vision":"ready","ocr":"ready","pipeline":"real"}}` | Orchestrator ✅ |
+| **Real-mode live: sharp scan + real VLM** | curl multipart → real pipeline, `MEDCHECK_VLM_ENABLED=1` | status `uncertain`; Metformin 500 mg OCR (0.95/1.0); VLM summary + `form` from VLM; VLM stage **1745 ms**, total 2272 ms; conflicts preserved with both values | Orchestrator ✅ |
+| **Real-mode live: blurry scan** | curl blurry sample | `needs_rescan` in **19.5 ms**, 3 guidance strings, no OCR/VLM | Orchestrator ✅ |
+| **GPU/VRAM during real VLM call** | nvidia-smi before/after | 18,383 MiB used / 13,706 free — **unchanged**, shared vLLM never restarted | Orchestrator ✅ |
 | October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
 | October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
 
@@ -487,6 +491,22 @@ sequential calls, no restarts).
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
 
+**2026-10-10** — **Milestone 2 delivered, merged, and real-mode acceptance run.** Worker tips
+verified independently (vision 70, ocr 52, vlm 91, api 56 tests) then merged: `b6bbbef`
+(api real pipeline + EXIF regression), `a49afd0` (ocr matcher + Extraction-shape fix),
+`5b60648` (vision crop_label handoff + calibration), `91a5c83` (vlm escalation triggers +
+`client_from_env`). Merged full suite: **270 passed, 1 failed** — pure-noise image now
+passes vision's frame-level label fallback (`label.detected=True`, conf 0.5053), so the
+API's real pipeline returns `uncertain` instead of `no_medication_found`; regression fix
+dispatched to Atlas (noise-immunity gate).
+**Real-mode end-to-end acceptance (orchestrator):** live API :8300 in `mode=real` with
+`MEDCHECK_VLM_ENABLED=1` and the existing rig vLLM — sharp synthetic label → Metformin
+500 mg from OCR (0.95/1.0), VLM summary + `form` from `Qwen/Qwen3-VL-8B-Instruct-FP8`,
+stages preprocess 7.8 / quality 8.6 / detect 87.9 / ocr 411.2 / vlm **1745.3 ms**,
+total 2272 ms; conflicts preserved with both values; blurry sample → `needs_rescan` in
+19.5 ms; VRAM 18,383 used / 13,706 free unchanged across the call; server stopped, port
+freed. Mac→Tailscale→rig path verified through the actual API (Gate 8 core).
+
 **2026-10-10** — Branch `feat/inference-medcheck` created (per Varesh's documentation
 instruction: never develop on/merge into `main`); `origin` added
 (`https://github.com/Haadesx/HackRU26`). Remote verified **empty** (`isEmpty: true`,
@@ -535,17 +555,33 @@ functional.
    Permanent fix (Varesh/Desktop action): run the orchestrator in an October **agent**
    terminal and resume this Pi session (`pi --continue`). This also restores native
    `message_peer` for the orchestrator.
-3. **Real pipeline wiring** — `services/api/pipeline.py` seam is mock-only. Next: compose
-   Vision → OCR → candidate match → (optional) VLM with uncertainty reconciliation, then
-   re-run contract + integration tests.
-4. **Candidate/registry matching** — not implemented yet as a service: read text is
-   matched only conceptually (`candidates[]` documented). Needs a registry input (from
-   backbone/backend) and a matcher with escalation trigger (see Juno's finding).
+3. **Noise false-positive label (regression, fix in flight)** — vision's frame-level
+   flat-label fallback fires on pure Gaussian noise (`label.detected=True`, conf 0.5053),
+   which flips the API's `no_medication_found` rule; the merged suite is 270 passed /
+   1 failed until Atlas lands a noise-immunity gate (blur-then-structure discriminator
+   suggested; repro `Image.effect_noise((320,320),40)`).
+4. **Candidate/registry matching** — matcher implemented (`services/ocr/matcher.py`,
+   `match_candidates`, threshold 0.75) and wired into the API when hints provide
+   candidates. Still missing: `should_use_vlm` is called without the M2 config, so the
+   recommended **candidate-mismatch escalation trigger is not passed by the API yet**
+   (M3 item for Athena). Registry source (backend-provided candidate list) remains an
+   integration input — no server-side registry exists in this repo.
+5. **Escalation over-triggers on optional fields** — `should_use_vlm` escalates when any
+   field (including the absent optional `manufacturer`) is below `min_field_confidence`;
+   a clean label therefore costs a ~1.7 s VLM call. Recommend restricting escalation to
+   identity-critical fields (name/strength) + candidate mismatch, with normalization
+   (M3 item for Juno).
+6. **Reconcile conflict noise** — case-only differences (`ocr='tablet'` vs
+   `vlm='TABLETS'`, `'Metformin'` vs `'METFORMIN HCl'`) are reported as
+   `ocr_vlm_conflict` even though they agree semantically; comparisons should normalize
+   case/whitespace and compare parsed instructions rather than raw text (M3 item for
+   Juno). Values are preserved correctly in the meantime (both kept).
 5. **Remote state** — `feat/inference-medcheck` is pushed (`origin`, `e0fe570`+); `main`
    remains empty/untouched intentionally. The team (or Varesh) should initialize `main`
    or PR this branch when ready.
 6. **Dependency reconciliation** for a combined rig install (numpy/opencv pins differ;
    rig Python 3.14 vs service venv 3.11; no `uv` on rig).
 7. **Auth/TLS** — gateway has none (dev/local). Flag before any non-local exposure.
-8. **Unrun acceptance paths** — `mode=real`, 12 MiB boundary on a real device, iOS
-   multipart interoperability, and Mac→rig end-to-end scan timing (Gate 7/8).
+8. **Unrun acceptance paths** — 12 MiB boundary on a real device, iOS multipart
+   interoperability, and a full concurrency/latency profile under multiple simultaneous
+   scans.
