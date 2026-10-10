@@ -1,6 +1,12 @@
 """Small test helpers."""
 from __future__ import annotations
 
+import io
+
+import cv2
+import numpy as np
+from PIL import Image
+
 from services.common.contract import BBox
 
 
@@ -22,3 +28,19 @@ def bbox_inside(inner: BBox, outer: BBox, tolerance: float = 1e-6) -> bool:
         and inner.x + inner.w <= outer.x + outer.w + tolerance
         and inner.y + inner.h <= outer.y + outer.h + tolerance
     )
+
+
+def png_bytes(array: np.ndarray) -> bytes:
+    buffer = io.BytesIO()
+    Image.fromarray(array).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def flat_label_frame(width: int = 320, height: int = 220, page: int = 190) -> np.ndarray:
+    """Synthetic flat label close-up (bright page, dark border and text)."""
+    frame = np.full((height, width, 3), page, dtype=np.uint8)
+    cv2.rectangle(frame, (5, 5), (width - 6, height - 6), (20, 20, 20), 3)
+    cv2.putText(frame, "EXAMPLEX 500 mg", (32, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (25, 25, 25), 2, cv2.LINE_AA)
+    cv2.putText(frame, "Take 1 tablet by mouth daily", (32, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (25, 25, 25), 1, cv2.LINE_AA)
+    cv2.putText(frame, "LOT E-0001", (32, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (25, 25, 25), 1, cv2.LINE_AA)
+    return frame

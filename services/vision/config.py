@@ -4,15 +4,24 @@
 gateway) stay decoupled from this model. Hints that match a `VisionConfig`
 field override the defaults; unknown hint keys are ignored on purpose so the
 API can pass forward-compatible metadata.
+
+Environment:
+    MEDCHECK_YOLO_MODEL — path to YOLO-class weights. Used as the default
+    `model_path` when hints do not provide one. Unset => deterministic CPU
+    heuristic fallback (no torch import).
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 DetectorKind = Literal["auto", "heuristic", "yolo", "none"]
 DeviceKind = Literal["auto", "cpu", "cuda"]
+
+#: Environment variable holding YOLO weights path.
+YOLO_MODEL_ENV = "MEDCHECK_YOLO_MODEL"
 
 
 class VisionConfig(BaseModel):
@@ -30,7 +39,8 @@ class VisionConfig(BaseModel):
     #: optional ultralytics dependency imports, else the CPU heuristic.
     detector: DetectorKind = "auto"
     #: Path to YOLO-class weights. Never bundled in git; ignored by the heuristic.
-    model_path: Optional[str] = None
+    #: Defaults to $MEDCHECK_YOLO_MODEL when that environment variable is set.
+    model_path: Optional[str] = Field(default_factory=lambda: os.environ.get(YOLO_MODEL_ENV) or None)
     #: "cuda" is honored only when torch reports a GPU; everything else runs CPU.
     device: DeviceKind = "auto"
 

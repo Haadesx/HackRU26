@@ -41,11 +41,15 @@ def derive_guidance(
     """Ordered camera guidance: quality fixes first, then framing fixes."""
     guidance: List[str] = list(quality.guidance)
 
+    label_area = (label.bbox.w * label.bbox.h) if (label.detected and label.bbox is not None) else 0.0
     if not bottle.detected:
-        guidance.append("Center the bottle in the frame.")
+        # A frame-level label region counts even without a bottle (flat label
+        # close-up); only ask to center the bottle when nothing was located.
+        if label_area < label_min_area:
+            guidance.append("Center the bottle in the frame.")
     elif not label.detected or label.bbox is None:
         guidance.append("Point the camera at the label on the bottle.")
-    elif label.bbox.w * label.bbox.h < label_min_area:
+    elif label_area < label_min_area:
         guidance.append("Move closer until the label fills the frame.")
 
     if not guidance:

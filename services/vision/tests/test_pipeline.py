@@ -1,12 +1,14 @@
 """End-to-end `analyze_frame` acceptance tests."""
 import io
 
+import cv2
 import pytest
 from PIL import Image
 
 from services.common.contract import BBox, Bottle, FrameQuality, Label
 from services.vision.pipeline import analyze_frame, derive_guidance
 from services.vision.preprocess import ImageDecodeError
+from services.vision.tests.helpers import flat_label_frame, png_bytes
 
 
 def test_sharp_frame_passes_end_to_end(load_bytes):
@@ -57,6 +59,21 @@ def test_scene_without_bottle_gives_framing_guidance(load_bytes):
     assert not result.bottle.detected
     assert result.bottle.bbox is None
     assert any("center the bottle" in text.lower() for text in result.guidance)
+
+
+def test_flat_label_close_up_still_yields_a_label_region():
+    result = analyze_frame(png_bytes(flat_label_frame()))
+    assert not result.bottle.detected
+    assert result.label.detected and result.label.bbox is not None
+    # The label is already found; do not tell the user to center a bottle.
+    assert all("center the bottle" not in text.lower() for text in result.guidance)
+
+
+def test_blurry_flat_label_close_up_fails_quality():
+    blurred = cv2.GaussianBlur(flat_label_frame(), (0, 0), 4.0)
+    result = analyze_frame(png_bytes(blurred))
+    assert not result.quality.acceptable
+    assert any("steady" in text.lower() for text in result.guidance)
 
 
 def test_invalid_bytes_raise(load_bytes):

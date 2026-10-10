@@ -1,8 +1,10 @@
 """Frame-quality tests on the synthetic fixtures."""
+import numpy as np
 import pytest
 
 from services.vision.preprocess import decode_image
 from services.vision.quality import evaluate_quality
+from services.vision.tests.helpers import flat_label_frame
 
 
 def _quality(load_bytes, name: str):
@@ -51,6 +53,22 @@ def test_glare_frame_fails_with_glare_guidance(load_bytes):
     assert quality.glare is not None and quality.glare.has_glare
     assert quality.glare.score < 1.0
     assert any("glare" in text.lower() for text in quality.guidance)
+
+
+def test_dominant_white_surface_is_not_reported_as_glare():
+    # A mostly-saturated frame is overexposure, not a specular highlight.
+    frame = np.full((120, 120, 3), 255, dtype=np.uint8)
+    quality = evaluate_quality(frame)
+    assert quality.glare is not None and not quality.glare.has_glare
+    assert quality.exposure is not None and quality.exposure.too_bright
+
+
+def test_bright_label_with_intact_text_is_readable_not_overexposed():
+    # White paper + black text spans the full range: bright, but nothing is lost.
+    quality = evaluate_quality(flat_label_frame(page=252))
+    assert quality.exposure is not None and not quality.exposure.too_bright
+    assert quality.acceptable
+    assert not any("light" in text.lower() for text in quality.guidance)
 
 
 @pytest.mark.parametrize(

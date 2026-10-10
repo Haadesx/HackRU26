@@ -14,7 +14,7 @@ Public surface used by the API gateway:
 CPU-only: no GPU or model file is required; YOLO is used only when weights are
 configured and the optional `ultralytics` dependency is installed.
 """
-from services.vision.config import VisionConfig
+from services.vision.config import VisionConfig, YOLO_MODEL_ENV
 from services.vision.detector import (
     BottleDetector,
     Detection,
@@ -23,10 +23,18 @@ from services.vision.detector import (
     YoloBottleDetector,
     get_detector,
 )
-from services.vision.label import locate_label
+from services.vision.label import locate_label, locate_label_region
 from services.vision.models import FrameInfo, VisionResult
 from services.vision.pipeline import analyze_frame, derive_guidance
-from services.vision.preprocess import ImageDecodeError, crop_normalized, decode_image, enhance_for_ocr, preprocess
+from services.vision.preprocess import (
+    ImageDecodeError,
+    crop_label,
+    crop_label_array,
+    crop_normalized,
+    decode_image,
+    enhance_for_ocr,
+    preprocess,
+)
 from services.vision.quality import evaluate_quality
 
 __all__ = [
@@ -36,9 +44,12 @@ __all__ = [
     "preprocess",
     "decode_image",
     "crop_normalized",
+    "crop_label",
+    "crop_label_array",
     "enhance_for_ocr",
     "ImageDecodeError",
     "VisionConfig",
+    "YOLO_MODEL_ENV",
     "VisionResult",
     "FrameInfo",
     "Detection",
@@ -48,4 +59,5 @@ __all__ = [
     "DetectorUnavailable",
     "get_detector",
     "locate_label",
+    "locate_label_region",
 ]
