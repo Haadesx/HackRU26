@@ -245,6 +245,11 @@ Environment names (values live in `~/.medcheck/vllm.env`, mode 600 — never com
 `MEDCHECK_API_MODE`, `MEDCHECK_VLM_ENABLED`, `MEDCHECK_VLM_BASE_URL`,
 `MEDCHECK_VLM_MODEL`, `MEDCHECK_VLM_API_KEY`, `MEDCHECK_YOLO_MODEL`,
 `MEDCHECK_YOLO_CONF`, `MEDCHECK_SCAN_TIMEOUT_S`, `MEDCHECK_SAVE_SCANS`.
+Project secrets live in the root `.env` (mode 600, gitignored; template in `.env.example`):
+`ELEVENLABS_API_KEY` (verified working 2026-10-10: 21 voices), `ELEVENLABS_VOICE_ID`,
+`ELEVENLABS_MODEL_ID`. Backend secrets stay in `backend/.env` (`TWILIO_*`,
+`FIREBASE_CREDENTIALS_JSON`, `JWT_SECRET_KEY`, `DATABASE_URL`, `OPENFDA_API_KEY`);
+ElevenLabs is the TTS provider for Twilio voice reminders.
 Hardware: dev = Apple-silicon Mac (CPU inference); rig = Ubuntu + RTX 5090 (32 GB, ~14 GB
 free) at `hermes-linux` (Tailscale `ai-rig.tail6d5242.ts.net`), serving the existing
 `Qwen/Qwen3-VL-8B-Instruct-FP8` (vLLM, Docker container `echo-vllm`, tailnet :8100).
@@ -291,6 +296,10 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
     Urvi pushed the missing `backend/app/models` package (`4a01a5b`) and opened
     `feat/integration` (backend + UI merged). Remaining: M10 OCR spacing fix (fills
     `schedule_times` through the crop path) and the production hub decision.
+15. **ElevenLabs configured**: root `.env` (mode 600, gitignored) with
+    `ELEVENLABS_API_KEY` (verified: 21 voices) + `ELEVENLABS_VOICE_ID`/`_MODEL_ID`;
+    committed `.env.example` templates (root + `backend/.env.example`) document the
+    names. Planned use: TTS voice reminders via Twilio’s ElevenLabs `<Say>` provider.
 
 ---
 
