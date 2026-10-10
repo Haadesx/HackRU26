@@ -38,6 +38,8 @@ DEFAULTS: Dict[str, Any] = {
     "min_vlm_confidence": 0.55,
     # runtime signal from the candidate matcher: no registry match for the read
     "candidate_mismatch": False,
+    # runtime signal from multi-frame fusion: frames still disagree after fusion
+    "fusion_conflicts": False,
     # frame score below this escalates (None = disabled by default)
     "min_frame_score": None,
 }
@@ -120,6 +122,31 @@ def should_use_vlm(uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]]
         if confidence is None or float(confidence) < cfg["min_field_confidence"]:
             return True
     return False
+
+
+def should_use_vlm_multi(
+    uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Multi-frame escalation gate: send ALL frames when fusion is inconclusive.
+
+    Single-frame behaviour is untouched; this only adds the fusion trigger. Order:
+
+    1. ``rescan_required`` short-circuits first (retaking beats even a conflict);
+    2. **fusion conflicts** escalate — ``uncertainty["fusion_conflicts"]`` is
+       truthy (a bool, or a non-empty list of disagreeing canonical field names),
+       or the runtime signal is carried in ``config``;
+    3. otherwise defer to :func:`should_use_vlm` (weak/missing escalation fields,
+       candidate mismatch, low frame score, level ``high``, ...).
+
+    Multi-frame ``uncertainty`` extras the API may pass: ``frames`` (int, how
+    many frames were fused; informational) and ``fusion_conflicts`` as above.
+    """
+    cfg = _config(config)
+    if uncertainty.get("rescan_required") and not cfg["invoke_on_rescan"]:
+        return False
+    if cfg.get("fusion_conflicts") or uncertainty.get("fusion_conflicts"):
+        return True
+    return should_use_vlm(uncertainty, config)
 
 
 def _normalize_value(value: Any) -> Any:
