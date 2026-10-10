@@ -1,21 +1,25 @@
 # MedCheck API Gateway — Handoff (PI-4 Athena)
 
-Status: **Gate 3 complete — mock mode working on port 8300.**
-Branch: `feat/api-athena` · Worktree: `.worktrees/pi-4-api` · Owner: PI-4 Athena
+Status: **Gate 3 (mock) accepted; Milestone 2 done — real OCR-first pipeline wired
+behind the same seam.** Branch: `feat/api-athena` · Worktree: `.worktrees/pi-4-api`
 
 ## Run
 
 ```bash
 cd .worktrees/pi-4-api
 uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python -r services/api/requirements.txt   # or: fastapi uvicorn python-multipart pydantic pytest httpx jsonschema
+uv pip install --python .venv/bin/python -r services/api/requirements.txt   # includes OCR stack for real mode
 .venv/bin/python -m uvicorn services.api.main:app --host 0.0.0.0 --port 8300
+
+# real mode (Vision + OCR compose in-process; VLM still off by default)
+MEDCHECK_API_MODE=real .venv/bin/python -m uvicorn services.api.main:app --host 0.0.0.0 --port 8300
 ```
 
 Tests:
 
 ```bash
-.venv/bin/python -m pytest services/api -q
+.venv/bin/python -m pytest services/api -q          # 54 passed
+.venv/bin/python -m pytest services tests/integration -q   # 206 passed (merged tree)
 ```
 
 OpenAPI docs: `http://localhost:8300/docs`.
@@ -25,7 +29,7 @@ OpenAPI docs: `http://localhost:8300/docs`.
 | Endpoint | Success | Transport errors |
 |---|---|---|
 | `GET /health` | `200 {"status":"ok","service":"medcheck-inference","version","uptime_s"}` | — |
-| `GET /ready` | `200 {"ready":true,"mode":"mock","components":{...}}` | `503` when `MEDCHECK_API_MODE=real` and no real pipeline is wired |
+| `GET /ready` | `200 {"ready":true,"mode":"mock|real","components":{...}}` | `503` when `MEDCHECK_API_MODE=real` and vision/OCR specs are missing |
 | `POST /v1/scan` | `200` `ScanResponse` (also for domain `status:"error"`) | `400/413/415/503/504` error envelope |
 
 `POST /v1/scan` is `multipart/form-data`:
@@ -55,12 +59,48 @@ curl -s -X POST localhost:8300/v1/scan \
 # → 200 ScanResponse (status ok / needs_rescan / uncertain / no_medication_found / error)
 ```
 
+Real mode (Vision → OCR, VLM off by default):
+
+```bash
+MEDCHECK_API_MODE=real .venv/bin/uvicorn services.api.main:app --host 0.0.0.0 --port 8300
+curl -s -X POST localhost:8300/v1/scan \
+  -F "image=@samples/label_metformin_dark.png;type=image/png" \
+  -F "client=ios" -F "mode=real"
+# → mode:"real", medication.name {value:"Metformin", source:"ocr"}, label.text = verbatim OCR
+```
+
 ## Env vars
 
 | Var | Default | Meaning |
 |---|---|---|
-| `MEDCHECK_API_MODE` | `mock` | default for `mode=auto`; `real` makes `/ready` return 503 until Vision/OCR/VLM are wired |
+| `MEDCHECK_API_MODE` | `mock` | default for `mode=auto`; `real` requires vision/OCR installed |
 | `MEDCHECK_SCAN_TIMEOUT_S` | `15` | per-scan budget; exceeding returns `504 SCAN_TIMEOUT` |
+| `MEDCHECK_VLM_ENABLED` | unset (off) | opt-in for the PI-3 VLM fallback; only called when `should_use_vlm()` also says yes |
+| `MEDCHECK_VLM_BASE_URL` / `MEDCHECK_VLM_MODEL` / `MEDCHECK_VLM_API_KEY` | — | existing rig vLLM endpoint (see docs §D.3); never committed |
+
+## Real mode behavior (Milestone 2)
+
+`mode=real` (or `mode=auto` with `MEDCHECK_API_MODE=real`) composes, in-process:
+
+1. **PI-1 Vision** `analyze_frame(image)` → frame quality + bottle/label bboxes.
+2. If `frame_quality.acceptable=false` → **`needs_rescan`**, guidance returned,
+   OCR is skipped (no label text, no medication fields).
+3. **PI-2 OCR** `read_text(...)` on the label crop, falling back to the full
+   frame; raw text preserved verbatim; `extract_fields(...)` → `medication` /
+   `instructions` (all sources `ocr`).
+4. **PI-2 matcher** (lazy): if `services.ocr.matcher.match_candidates(fields,
+   known_candidates, threshold=0.75)` exists it fills `candidates[]`; until it
+   lands, `candidates: []`.
+5. **PI-3 VLM** (optional): called only when `MEDCHECK_VLM_ENABLED` is set **and**
+   `should_use_vlm(uncertainty)` escalates. Results are merged via
+   `reconcile_fields` with per-field source attribution; a VLM failure degrades to
+   the OCR read (`vlm_unavailable` reason).
+
+Status mapping: `ok` (level low), `uncertain` (medium/high without rescan),
+`needs_rescan` (frame unacceptable), `no_medication_found` (no bottle/label and no
+readable name/strength), `error` (e.g. `INVALID_IMAGE`, `OCR_UNAVAILABLE`; HTTP
+200 domain envelope). Request `hints.known_candidates` bias OCR (`name`,
+`lexicon`, strength) and are passed to the matcher; they never become field values.
 
 ## Transport error envelope
 
@@ -74,11 +114,12 @@ curl -s -X POST localhost:8300/v1/scan \
 | 400 | `INVALID_MODE` / `INVALID_CLIENT` / `INVALID_HINTS` / `EMPTY_IMAGE` | semantic form errors |
 | 413 | `PAYLOAD_TOO_LARGE` | image > 12 MiB |
 | 415 | `UNSUPPORTED_IMAGE_TYPE` | content-type not JPEG/PNG |
-| 503 | `REAL_PIPELINE_UNAVAILABLE` | `mode=real` (or `MEDCHECK_API_MODE=real`) before wiring |
+| 503 | `REAL_PIPELINE_UNAVAILABLE` | `mode=real` but vision/OCR deps are not installed |
 | 504 | `SCAN_TIMEOUT` | scan exceeded the budget |
 
 Domain failures stay **HTTP 200** with `status:"error"` in the `ScanResponse`
-(e.g. `INVALID_IMAGE` when magic bytes do not match the declared type).
+(e.g. `INVALID_IMAGE` when bytes cannot be decoded, `OCR_UNAVAILABLE` when the
+RapidOCR backend is missing).
 
 ## Mock behavior
 
@@ -97,15 +138,17 @@ Domain failures stay **HTTP 200** with `status:"error"` in the `ScanResponse`
 
 - `ScanContext` — request_id, image bytes, content_type, client, requested_mode, hints.
 - `ScanPipeline` protocol — `mode` + `async scan(ctx) -> ScanResponse`.
-- `MockPipeline` — current implementation.
-- `get_pipeline(resolved_mode)` — returns mock, raises `PipelineUnavailable` for real.
+- `MockPipeline` — deterministic fixture pipeline (default).
+- `RealScanPipeline` (`services/api/real_pipeline.py`) — Vision → OCR → matcher →
+  optional VLM; heavy imports loaded lazily so mock mode stays dependency-light.
+- `get_pipeline(resolved_mode)` — returns mock or real; raises
+  `PipelineUnavailable` when real deps are missing (→ HTTP 503).
+- `real_pipeline_available()` / `real_component_status()` — spec-based readiness
+  without importing numpy/cv2/rapidocr (used by `/ready`).
+- `vlm_enabled()` — `MEDCHECK_VLM_ENABLED` flag parsing.
 - `to_contract_json(response)` — serializer that keeps output valid against
   `contracts/v1/scan_response.schema.json` (omits null optional objects, keeps
   required-but-nullable keys).
-
-**Wiring real mode later:** implement a `RealPipeline` composing Vision → OCR →
-candidate matching → optional VLM, return it from `get_pipeline("real")`, and
-flip `/ready` components. The HTTP surface, schemas, and tests do not change.
 
 ## iOS / backend integration notes
 
@@ -121,7 +164,18 @@ flip `/ready` components. The HTTP surface, schemas, and tests do not change.
 
 ## Verification
 
-- `pytest services/api -q` → **40 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **54 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
-  pydantic mirror round-trip, determinism, safety block).
-- Live demo on port 8300: `/health`, `/ready`, mock `/v1/scan` (see report).
+  mock determinism, real pipeline on `samples/` (dark/sharp/blurry), no-medication
+  and invalid-image paths, matcher seam, VLM escalation via `httpx.MockTransport`).
+- `pytest services tests/integration -q` → **206 passed** in the merged worktree.
+- Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).
+
+## Known integration notes
+
+- `samples/label_metformin.png` is a flat white label; vision classifies it
+  `too_bright` + `has_glare` → real mode returns `needs_rescan` by design. The
+  `samples/label_metformin_dark.png` variant passes quality and OCRs cleanly.
+  (Reported to Atlas; either the sample set or vision thresholds may be recalibrated.)
+- `label.detected=false` with `label.text` populated is valid: OCR falls back to
+  the full frame when no label region is localized.

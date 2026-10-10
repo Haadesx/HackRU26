@@ -11,7 +11,9 @@ must not redefine them.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Protocol
@@ -110,12 +112,13 @@ def build_error_response(
     code: str,
     message: str,
     detail: Any = None,
+    mode: ResolvedMode = "mock",
 ) -> ScanResponse:
     """Domain-level error payload (HTTP 200 + ``status:"error"``)."""
     return ScanResponse(
         request_id=request_id,
         status="error",
-        mode="mock",
+        mode=mode,
         frame_quality=FrameQuality(
             acceptable=False,
             score=0.0,
@@ -177,12 +180,61 @@ class MockPipeline:
 
 _MOCK_PIPELINE = MockPipeline()
 
+# Real-mode components (PI-1 Vision + PI-2 OCR). Checked by spec so /ready and
+# get_pipeline can report availability without importing the heavy stack.
+_REAL_MODULES: Dict[str, tuple] = {
+    "vision": ("numpy", "cv2", "PIL", "services.vision.pipeline"),
+    "ocr": ("rapidocr_onnxruntime", "services.ocr.engine", "services.ocr.extract"),
+}
+
+
+def vlm_enabled() -> bool:
+    """Whether the optional PI-3 VLM fallback is enabled (off by default)."""
+    return os.getenv("MEDCHECK_VLM_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _missing_real_modules() -> list:
+    missing = []
+    for modules in _REAL_MODULES.values():
+        for module in modules:
+            if importlib.util.find_spec(module) is None:
+                missing.append(module)
+    return missing
+
+
+def real_pipeline_available() -> tuple:
+    """``(available, reasons)`` for real mode without importing the stack."""
+    missing = _missing_real_modules()
+    return (not missing, [f"missing:{name}" for name in missing])
+
+
+def real_component_status() -> Dict[str, str]:
+    """Per-component readiness map for ``GET /ready``."""
+    missing = set(_missing_real_modules())
+    components = {
+        name: ("missing" if any(module in missing for module in modules) else "ready")
+        for name, modules in _REAL_MODULES.items()
+    }
+    components["pipeline"] = "unavailable" if missing else "real"
+    components["vlm"] = "enabled" if vlm_enabled() else "disabled"
+    return components
+
+
+_REAL_PIPELINE: Optional[ScanPipeline] = None
+
 
 def get_pipeline(resolved_mode: ResolvedMode) -> ScanPipeline:
     """Return the pipeline for a resolved mode, or raise if not wired yet."""
     if resolved_mode == "mock":
         return _MOCK_PIPELINE
-    raise PipelineUnavailable("real pipeline is not wired yet; use mode=mock or mode=auto")
+    global _REAL_PIPELINE
+    if _REAL_PIPELINE is None:
+        try:
+            from services.api.real_pipeline import RealScanPipeline
+        except ImportError as exc:  # pragma: no cover - depends on environment
+            raise PipelineUnavailable(f"real pipeline dependencies unavailable: {exc}") from exc
+        _REAL_PIPELINE = RealScanPipeline()
+    return _REAL_PIPELINE
 
 
 def _self_check() -> None:

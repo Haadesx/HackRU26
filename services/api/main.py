@@ -31,6 +31,8 @@ from services.api.pipeline import (
     ScanContext,
     build_error_response,
     get_pipeline,
+    real_component_status,
+    real_pipeline_available,
     to_contract_json,
 )
 from services.common.contract import HealthResponse, ReadyResponse, ScanResponse
@@ -173,18 +175,17 @@ async def health() -> HealthResponse:
 
 @app.get("/ready", response_model=ReadyResponse)
 async def ready():
-    mode = _service_mode()
-    if mode == "real":
+    components = real_component_status()
+    if _service_mode() == "real":
+        available, reasons = real_pipeline_available()
+        if available:
+            return ReadyResponse(ready=True, mode="real", components=components, reasons=[])
         return JSONResponse(
             status_code=503,
-            content={"ready": False, "mode": "real", "components": {}, "reasons": ["real_pipeline_not_wired"]},
+            content={"ready": False, "mode": "real", "components": components, "reasons": reasons},
         )
-    return ReadyResponse(
-        ready=True,
-        mode="mock",
-        components={"pipeline": "mock", "vision": "not_wired", "ocr": "not_wired", "vlm": "not_wired"},
-        reasons=[],
-    )
+    components["pipeline"] = "mock"
+    return ReadyResponse(ready=True, mode="mock", components=components, reasons=[])
 
 
 @app.post("/v1/scan", response_model=ScanResponse)
