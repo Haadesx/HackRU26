@@ -19,9 +19,11 @@ venv/
 uv.lock
 
 # Model weights & datasets (never commit)
-models/
-data/artifacts/
-data/cache/
+# Anchored to the repo root only — unanchored `models/` silently swallowed
+# backend/app/models/ on feat/backend-urvi (fixed 2026-10-10).
+/models/
+/data/artifacts/
+/data/cache/
 *.onnx
 *.pt
 *.pth
