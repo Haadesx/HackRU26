@@ -22,7 +22,7 @@ Branch: `main` is integration-only. Date line uses UTC.
 |---|---|---|
 | G1 | Harness/Oct-Bus identification, repo init, frozen contracts | DONE |
 | G2 | Worktrees + dispatch all four workers | DONE |
-| G3 | Mock FastAPI scan endpoint live on :8300 | TODO |
+| G3 | Mock FastAPI scan endpoint live on :8300 | WIP |
 | G4 | Real OCR integrated, structured extraction verified | TODO |
 | G5 | Bottle detection + frame guidance integrated | TODO |
 | G6 | Qwen3-VL benchmarked + integrated where beneficial | TODO |
@@ -60,3 +60,9 @@ Branch: `main` is integration-only. Date line uses UTC.
 - One intrusive GPU experiment at a time, granted by the orchestrator.
 - Contract examples validated against JSON Schema + pydantic:
   `scripts/validate_contract.py` → 3/3 OK.
+- Synthetic labels + demo tooling committed: `samples/label_*.png` (sharp/blurry/dark),
+  `scripts/scan_demo.sh`, `scripts/gpu_probe.sh`, `tests/integration/test_api_contract.py`.
+- Bounded GPU window granted to PI-3 for evaluation against the *existing* vLLM only
+  (sequential, ≤120 images, nvidia-smi before/after, never restart echo-vllm/Ollama).
+- Worker branches: `feat/vision-atlas`, `feat/ocr-orion`, `feat/vlm-juno`,
+  `feat/api-athena` — all branched from `51569fd`; no worker commits yet at 15:35Z.
