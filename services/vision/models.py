@@ -33,6 +33,8 @@ class VisionResult(BaseModel):
     quality: FrameQuality
     bottle: Bottle
     label: Label
+    #: True when the detected label touches the frame edge (label likely continues).
+    label_clipped: bool = False
     #: Combined, ordered camera guidance (quality first, then detection/label).
     guidance: List[str] = Field(default_factory=list)
     timing: Timing

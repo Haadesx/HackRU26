@@ -37,9 +37,12 @@ FRAME_MAX_REGION_FRACTION = 0.98
 FRAME_BRIGHTNESS_PERCENTILE = 60.0
 FRAME_BRIGHTNESS_MARGIN = 5.0
 FRAME_MIN_BRIGHTNESS = 60.0
-FRAME_MIN_DARK_FRACTION = 0.005  # must contain some dark text-like pixels
+#: The blur-scale structure gate below is the real noise discriminator; the raw
+#: dark/edge gates are coarse text hints and must stay loose enough for sparse
+#: text on a large cut-off label crop.
+FRAME_MIN_DARK_FRACTION = 0.002  # must contain some dark text-like pixels
 FRAME_MAX_DARK_FRACTION = 0.30
-FRAME_MIN_EDGE_DENSITY = 0.003
+FRAME_MIN_EDGE_DENSITY = 0.001
 FRAME_CONFIDENCE_CAP = 0.60
 
 #: Brightness / chroma gates in CIELAB (OpenCV encoding: L in [0,255], a/b centered at 128).

@@ -49,6 +49,10 @@ result = analyze_frame(jpeg_bytes, hints={"max_side": 1280, "detector": "auto"})
   sub-scores in `[0,1]`, quality-only `guidance`.
 - `result.bottle` — `Bottle`: `detected`, `confidence`, normalized `bbox`.
 - `result.label` — `Label`: `detected`, `confidence`, normalized `bbox`.
+- `result.label_clipped` — `True` when the label bbox touches a frame edge
+  within `LABEL_CLIP_MARGIN` (1.5%); the label probably continues off-frame and
+  `guidance` then includes "Label is cut off — rotate the bottle or step back,
+  then capture again".
 - `result.guidance` — ordered camera guidance (quality fixes first, then framing).
 - `result.timing` — `total_ms` plus per-stage `stages` (`preprocess`, `quality`, `detect`, `label`).
 - `result.detector` — detector actually used (`yolo` or `heuristic`).
