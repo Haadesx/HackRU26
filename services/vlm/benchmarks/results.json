@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-10-10T19:38:12+00:00",
+  "model": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+  "endpoint": "http://ai-rig.tail6d5242.ts.net:8100/v1",
+  "images": 12,
+  "sequential": true,
+  "latency_ms": {
+    "n": 12,
+    "p50": 1584.8,
+    "p90": 1683.6,
+    "mean": 1593.1
+  },
+  "wall_s": 19.12,
+  "images_per_sec": 0.63,
+  "vram": {
+    "before": "32607, 18383, 13706",
+    "after": "32607, 18383, 13706"
+  },
+  "errors": []
+}
