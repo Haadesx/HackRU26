@@ -19,8 +19,8 @@ MEDCHECK_API_MODE=real .venv/bin/python -m uvicorn services.api.main:app --host 
 Tests:
 
 ```bash
-.venv/bin/python -m pytest services/api -q          # 67 passed
-.venv/bin/python -m pytest services tests/integration -q   # 303 passed (merged tree)
+.venv/bin/python -m pytest services/api -q          # 73 passed
+.venv/bin/python -m pytest services tests/integration -q   # 352 passed, 3 skipped (merged tree)
 ```
 
 OpenAPI docs: `http://localhost:8300/docs`.
@@ -86,6 +86,8 @@ measurements” below.
 |---|---|---|
 | `MEDCHECK_API_MODE` | `mock` | default for `mode=auto`; `real` requires vision/OCR installed |
 | `MEDCHECK_SCAN_TIMEOUT_S` | `15` | per-scan budget; exceeding returns `504 SCAN_TIMEOUT` |
+| `MEDCHECK_API_KEY` | unset (auth off) | when set, `POST /v1/scan` requires `Authorization: Bearer <key>`; `/health` and `/ready` stay open |
+| `MEDCHECK_CORS_ORIGINS` | unset (CORS off) | comma-separated browser origins for `CORSMiddleware`; `*` local dev only; restart to apply |
 | `MEDCHECK_VLM_ENABLED` | unset (off) | opt-in for the PI-3 VLM fallback; only called when `should_use_vlm()` also says yes |
 | `MEDCHECK_VLM_BASE_URL` / `MEDCHECK_VLM_MODEL` / `MEDCHECK_VLM_API_KEY` | — | existing rig vLLM endpoint (see docs §D.3); never committed |
 
@@ -189,11 +191,54 @@ mapped payload passes the backend's presence/type checks.
 | 413 | `PAYLOAD_TOO_LARGE` | image > 12 MiB |
 | 415 | `UNSUPPORTED_IMAGE_TYPE` | content-type not JPEG/PNG |
 | 503 | `REAL_PIPELINE_UNAVAILABLE` | `mode=real` but vision/OCR deps are not installed |
+| 401 | `UNAUTHORIZED` | `MEDCHECK_API_KEY` set and bearer token missing/invalid |
 | 504 | `SCAN_TIMEOUT` | scan exceeded the budget |
 
 Domain failures stay **HTTP 200** with `status:"error"` in the `ScanResponse`
 (e.g. `INVALID_IMAGE` when bytes cannot be decoded, `OCR_UNAVAILABLE` when the
 RapidOCR backend is missing).
+
+## Network access, auth, CORS and TLS
+
+### Bind for device testing
+
+Local dev default: `--host 127.0.0.1`. For iOS/web devices on the same Tailnet:
+
+```bash
+MEDCHECK_API_MODE=real .venv/bin/uvicorn services.api.main:app --host 0.0.0.0 --port 8300
+# reachable at http://<tailscale-host>:8300 (e.g. http://ai-rig.<tailnet>.ts.net:8300)
+```
+
+Only expose the gateway on trusted networks — the local dev build has no TLS.
+
+### Optional bearer auth (`MEDCHECK_API_KEY`)
+
+- When set, `POST /v1/scan` requires `Authorization: Bearer <key>` on every
+  request. Comparison is constant-time (`hmac.compare_digest`); missing/wrong
+  tokens return `401` with the standard envelope (`code: UNAUTHORIZED`).
+- `GET /health` and `GET /ready` stay open for probes and load balancers.
+- Unset (default) = local development, behaviour unchanged. Never commit the key
+  value; set it in the shell or a secret manager on the host.
+
+### CORS for the web UI (`MEDCHECK_CORS_ORIGINS`)
+
+- Comma-separated allow-list, e.g.
+  `MEDCHECK_CORS_ORIGINS=http://localhost:5173,https://medcheck.example`.
+- Enables `CORSMiddleware` on the API routes with `GET/POST/OPTIONS` and
+  `Authorization`/`Content-Type` request headers.
+- `*` is acceptable **only** for local development (any website could then call a
+  keyless gateway); prefer explicit origins anywhere else.
+- Read at startup — restart the gateway after changing it.
+
+### TLS (documented, not terminated by the app)
+
+Two hardening options:
+
+1. **Direct TLS** — point uvicorn at a certificate:
+   `uvicorn services.api.main:app --host 0.0.0.0 --port 8300 \
+   --ssl-keyfile /path/key.pem --ssl-certfile /path/cert.pem`
+2. **Reverse proxy** — terminate TLS in nginx/Caddy/ALB and forward to
+   `127.0.0.1:8300`; keep uvicorn bound to loopback in that setup.
 
 ## Mock behavior
 
@@ -239,13 +284,15 @@ RapidOCR backend is missing).
 
 ## Verification
 
-- `pytest services/api -q` → **67 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **73 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
   mock determinism, real pipeline on `samples/` (dark/sharp/blurry), EXIF-safe
   decode, no-medication and invalid-image paths, matcher seam, M3 escalation
-  matrix via `httpx.MockTransport`, v1.1 dose real/mock/omission + bridge units).
-- `pytest services tests/integration -q` → **303 passed** in the merged worktree,
-  including Urvi's backend-fit mapping (`tests/integration/test_backend_fit.py`).
+  matrix via `httpx.MockTransport`, v1.1 dose real/mock/omission + bridge units,
+  optional bearer auth and CORS).
+- `pytest services tests/integration -q` → **352 passed, 3 skipped** in the merged
+  worktree (skips are model-dependent ONNX tests), including Urvi's backend-fit
+  mapping (`tests/integration/test_backend_fit.py`).
 - Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).
 
 ## Known integration notes
