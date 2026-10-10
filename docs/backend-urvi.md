@@ -236,7 +236,8 @@ Not verified: real SMS/push delivery, load/performance, TigerData cloud.
 
 ## J. Change log
 
-- **2026-10-10** — Branch `feat/backend-urvi` created from `origin/feat/inference-medcheck` (remote has no `main`). Initial backend: all phases 1–9 from `plan.md` (files under `backend/`), migrations 0001/0002, seed, worker, 61 tests passing, live smoke test. Dependencies: see D. Schema changes recorded in `db.md`: `dose_events` gains `patient_id`, `prescription_item_id`, `medication_id`, `window_name`; `vision_observations.received_at`; schedule frequencies; one schedule per item; prescription item fields required at activation; patient in-app missed alert; adherence bucketing note. API additions beyond `plan.md`: `GET /patients/{id}/prescriptions/active`, `POST /prescriptions/{id}/revise`, `GET /doses/{id}`. Commit: `0c1a4fdad6bd0709de6dbc1801a0fb7f8f223879` (local; not pushed yet).
+- **2026-10-10** — Branch `feat/backend-urvi` created from `origin/feat/inference-medcheck` (remote has no `main`). Initial backend: all phases 1–9 from `plan.md` (files under `backend/`), migrations 0001/0002, seed, worker, 61 tests passing, live smoke test. Dependencies: see D. Schema changes recorded in `db.md`: `dose_events` gains `patient_id`, `prescription_item_id`, `medication_id`, `window_name`; `vision_observations.received_at`; schedule frequencies; one schedule per item; prescription item fields required at activation; patient in-app missed alert; adherence bucketing note. API additions beyond `plan.md`: `GET /patients/{id}/prescriptions/active`, `POST /prescriptions/{id}/revise`, `GET /doses/{id}`. Commit: `0c1a4fdad6bd0709de6dbc1801a0fb7f8f223879`.
+- **2026-10-10** — Pushed `feat/backend-urvi` to origin (first push; tracks `origin/feat/backend-urvi`). No code changes.
 
 ## K. Known issues and outstanding work
 
