@@ -58,7 +58,7 @@ def test_mock_multi_capture_and_determinism():
     assert response.status_code == 200
     payload = response.json()
     _validate(payload)
-    assert payload["contract_version"] == "1.2.0"
+    assert payload["contract_version"] == "1.3.0"
     assert payload["mode"] == "mock"
     assert payload["status"] == "ok"
     assert payload["capture"]["fusion"] == "multi_frame"
