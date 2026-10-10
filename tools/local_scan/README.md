@@ -6,13 +6,16 @@ Mac camera, then shows the structured `ScanResponse` (status, fields with confid
 source, candidates, guidance, timing) with bottle/label boxes drawn on the image.
 
 ```
-scripts/local_scan.sh          # real mode + VLM fallback (uses ~/.medcheck/vllm.env)
-scripts/local_scan.sh --no-vlm # real OCR-first only (no rig calls)
-scripts/local_scan.sh --mock   # mock pipeline
+scripts/local_scan.sh --daemon   # start in background (survives terminal close) ← recommended
+scripts/local_scan.sh            # real mode + VLM fallback, foreground (Ctrl-C stops)
+scripts/local_scan.sh --no-vlm   # real OCR-first only (no rig calls)
+scripts/local_scan.sh --mock     # mock pipeline
+scripts/local_scan.sh --status   # is it running?
+scripts/local_scan.sh --stop     # stop the daemon instance
 ```
 
-Then open <http://127.0.0.1:8400> (the script opens it for you). Ctrl-C stops both
-processes.
+Daemon mode keeps the API + console alive after the terminal/tool session ends (logs in
+`$TMPDIR/medcheck-local-scan/`). Then open <http://127.0.0.1:8400>.
 
 ## How it works
 

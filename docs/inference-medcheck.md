@@ -377,8 +377,8 @@ scripts/setup_full_env.sh
 .venv-full/bin/python -m pytest services tests/integration -q
 
 # Local test console (no iOS app needed) — upload/webcam → real engine
-scripts/local_scan.sh            # real + VLM (needs ~/.medcheck/vllm.env)
-scripts/local_scan.sh --no-vlm   # real OCR-first only
+scripts/local_scan.sh --daemon   # background, survives terminal close; prints URL
+scripts/local_scan.sh --status   # / --stop
 # → http://127.0.0.1:8400
 
 # Real mode live (see §I for measured results)
@@ -518,6 +518,15 @@ sequential calls, no restarts).
 - `feat/api-athena` `a855318` — mock FastAPI gateway on :8300, 40 tests, live smoke OK.
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
+
+**2026-10-10** — **Local console daemon mode + fix.** Varesh's first attempt found the
+console down (foreground process died with its shell). Added `--daemon` (nohup, PID
+files, logs in `$TMPDIR/medcheck-local-scan/`), `--status`, `--stop`, port-conflict
+handling. Fixed a daemon bug where `MODE`/`VLM` were not exported, silently starting
+mock mode. Re-verified end-to-end through the console proxy: page 200; clean scan with
+matching candidate → Metformin 500 mg, score 1.0, **no VLM** (vlm stage 0.0, 692 ms);
+mismatched registry → real Qwen3-VL call (1721 ms stage). Console left running for
+Varesh at `http://127.0.0.1:8400`.
 
 **2026-10-10** — **Local test console delivered** (`tools/local_scan/`): stdlib proxy +
 browser UI (upload, webcam capture, bbox overlay, field/confidence rendering, raw JSON)
