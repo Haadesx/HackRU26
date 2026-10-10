@@ -1,0 +1,6 @@
+# MedCheck vision service — runtime deps (CPU-only; GPU optional via ultralytics/torch).
+# Install:  uv pip install -p .venv -r services/vision/requirements.txt
+numpy>=1.26,<3
+opencv-python-headless>=4.9,<5
+Pillow>=10.2,<12
+pydantic>=2.6,<3
