@@ -110,7 +110,7 @@ def test_scan_fixture_statuses(fixture_key):
     jsonschema.validate(instance=payload, schema=SCHEMA)
 
     fixture = fixture_by_key(fixture_key)
-    assert payload["contract_version"] == "1.1.0"
+    assert payload["contract_version"] == "1.2.0"
     assert payload["status"] == fixture["status"]
     assert payload["mode"] == "mock"
     assert payload["request_id"].startswith("req-")

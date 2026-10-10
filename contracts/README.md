@@ -46,6 +46,11 @@ minor version (`1.1.0`); breaking changes bump the major version and require a n
 
 **Changelog**
 
+- `1.2.0` (2026-10-10) — additive: `capture` block for **multi-frame label capture**
+  (`POST /v1/scan/multi`): `{frames_requested, frames_used, fusion:"single|multi_frame",
+  per_frame[{index,status,label_detected?,label_confidence?,clipped?,guidance?}]}`. Enables
+  rotation-assisted scanning for labels larger than a single frame; single-frame responses
+  remain unchanged (field optional/absent).
 - `1.1.0` (2026-10-10) — additive: `instructions.dose` (`{quantity, unit, confidence,
   source}`), the structured per-dose quantity as written on the label. Added so the
   backend's `POST /api/v1/scans` gets a real numeric quantity from inference instead of

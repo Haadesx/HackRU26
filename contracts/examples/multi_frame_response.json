@@ -1,0 +1,63 @@
+{
+  "contract_version": "1.2.0",
+  "request_id": "req-multi3f0e21",
+  "status": "uncertain",
+  "mode": "real",
+  "capture": {
+    "frames_requested": 3,
+    "frames_used": 3,
+    "fusion": "multi_frame",
+    "per_frame": [
+      { "index": 0, "status": "accepted", "label_detected": true, "label_confidence": 0.81, "clipped": true, "guidance": ["Label is cut off — rotate the bottle or step back, then capture again"] },
+      { "index": 1, "status": "accepted", "label_detected": true, "label_confidence": 0.74, "clipped": true },
+      { "index": 2, "status": "accepted", "label_detected": true, "label_confidence": 0.69, "clipped": true }
+    ]
+  },
+  "frame_quality": {
+    "acceptable": true,
+    "score": 0.78,
+    "blur": { "score": 0.8, "is_blurry": false },
+    "exposure": { "score": 0.82, "too_dark": false, "too_bright": false },
+    "glare": { "score": 0.9, "has_glare": false },
+    "guidance": []
+  },
+  "bottle": { "detected": false, "confidence": 0.0 },
+  "label": {
+    "detected": true,
+    "confidence": 0.81,
+    "bbox": { "x": 0.02, "y": 0.02, "w": 0.5, "h": 0.96 },
+    "text": "HYDROCHLOROTHIAZIDE 25 mg TABLETS\nTake 1 tablet by mouth once daily in the morning.\nSwallow whole with a glass of water.\nWARNING: Do not take if pregnant or breastfeeding."
+  },
+  "medication": {
+    "name": { "value": "Hydrochlorothiazide", "confidence": 0.97, "source": "ocr" },
+    "strength": { "value": 25, "unit": "mg", "confidence": 0.98, "source": "ocr" },
+    "form": { "value": "tablet", "confidence": 0.8, "source": "ocr" },
+    "manufacturer": { "value": null, "confidence": 0, "source": "none" }
+  },
+  "instructions": {
+    "raw_text": "--- frame 1 ---\nTake 1 tablet by mouth once daily in the mornin\n--- frame 2 ---\nh once daily in the morning.\nSwallow whole with a glass of water.\nWARNING: Do not take if pregnant or breastfee\n--- frame 3 ---\neding.",
+    "parsed": [
+      { "kind": "dose", "text": "1 tablet" },
+      { "kind": "route", "text": "by mouth" },
+      { "kind": "frequency", "text": "once daily" },
+      { "kind": "other", "text": "in the morning" },
+      { "kind": "other", "text": "Swallow whole with a glass of water." },
+      { "kind": "warning", "text": "Do not take if pregnant or breastfeeding." }
+    ],
+    "dose": { "quantity": 1, "unit": "tablet", "confidence": 0.9, "source": "ocr" }
+  },
+  "candidates": [],
+  "interpretation": { "available": false, "summary": null, "source": null, "model": null },
+  "uncertainty": {
+    "level": "medium",
+    "reasons": ["fused_from_3_frames", "missing:manufacturer"],
+    "rescan_required": false
+  },
+  "timing": { "total_ms": 1893, "stages": { "frame_0": 612, "frame_1": 548, "frame_2": 521, "fuse": 3 } },
+  "safety": {
+    "disclaimer": "Informational only; not medical advice. Verify with a pharmacist or prescriber.",
+    "ingestion_not_inferred": true,
+    "backend_authoritative": true
+  },
+  "error": null
+}

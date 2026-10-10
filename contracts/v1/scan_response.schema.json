@@ -11,7 +11,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "contract_version": { "type": "string", "const": "1.1.0" },
+    "contract_version": { "type": "string", "const": "1.2.0" },
     "request_id": { "type": "string", "minLength": 8 },
     "status": {
       "type": "string",
@@ -210,6 +210,34 @@
         "code": { "type": "string" },
         "message": { "type": "string" },
         "detail": {}
+      }
+    },
+
+    "capture": {
+      "type": ["object", "null"],
+      "description": "v1.2 additive: present for multi-frame label capture (POST /v1/scan/multi) and for single-frame responses that want to report frame accounting.",
+      "additionalProperties": false,
+      "required": ["frames_requested", "frames_used", "fusion", "per_frame"],
+      "properties": {
+        "frames_requested": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "frames_used": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "fusion": { "type": "string", "enum": ["single", "multi_frame"] },
+        "per_frame": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "status"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "status": { "type": "string", "enum": ["accepted", "needs_rescan", "no_medication_found", "error"] },
+              "label_detected": { "type": ["boolean", "null"] },
+              "label_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+              "clipped": { "type": ["boolean", "null"], "description": "label region touches the frame edge (label likely continues)" },
+              "guidance": { "type": ["array", "null"], "items": { "type": "string" } }
+            }
+          }
+        }
       }
     }
   },

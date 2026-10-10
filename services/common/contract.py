@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 
 SAFETY_DISCLAIMER = (
     "Informational only; not medical advice. "
@@ -168,6 +168,28 @@ class ErrorInfo(BaseModel):
     detail: Optional[Any] = None
 
 
+class PerFrameResult(BaseModel):
+    """One frame's outcome inside a multi-frame label capture (v1.2 additive)."""
+
+    model_config = ConfigDict(extra="forbid")
+    index: int = Field(ge=0)
+    status: str = Field(pattern="^(accepted|needs_rescan|no_medication_found|error)$")
+    label_detected: Optional[bool] = None
+    label_confidence: Optional[float] = Field(None, ge=0, le=1)
+    clipped: Optional[bool] = None
+    guidance: Optional[List[str]] = None
+
+
+class CaptureInfo(BaseModel):
+    """Frame accounting for multi-frame label capture (v1.2 additive)."""
+
+    model_config = ConfigDict(extra="forbid")
+    frames_requested: int = Field(ge=1, le=12)
+    frames_used: int = Field(ge=0, le=12)
+    fusion: str = Field("single", pattern="^(single|multi_frame)$")
+    per_frame: List[PerFrameResult] = Field(default_factory=list)
+
+
 class ScanResponse(BaseModel):
     """The single integration surface between inference and iOS/backend."""
 
@@ -189,6 +211,7 @@ class ScanResponse(BaseModel):
     timing: Timing
     safety: Safety = Field(default_factory=Safety)
     error: Optional[ErrorInfo] = None
+    capture: Optional[CaptureInfo] = None
 
 
 class HealthResponse(BaseModel):
