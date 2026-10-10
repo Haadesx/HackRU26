@@ -61,6 +61,12 @@ untouched). Push only feature branches.
   Open decision: backend requires numeric `quantity` in `POST /scans`; v1 ScanResponse
   has no structured dose quantity (only parsed text) — decide client default vs v1.1.
 
+- 2026-10-10 — Contract **v1.1** frozen (`3bdea53`): additive `instructions.dose
+  {quantity, unit, confidence, source}` to feed Urvi's `POST /api/v1/scans` quantity.
+  Orchestrator backend-fit test added; M4 dispatched (Orion extraction, Athena
+  pass-through + HANDOFF). Fit test's real-scan dose assertion is expected red until M4
+  merges.
+
 ## Dispatch log (append-only, board level)
 
 - 2026-10-10 — G1/G2 done; all four assignments dispatched via `octoberctl terminal input`

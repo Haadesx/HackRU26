@@ -251,7 +251,7 @@ Superseded decisions are preserved in §J (chronological log).
 | POST | `/v1/scan` | `multipart/form-data`: `image` (JPEG/PNG, ≤12 MiB, required), `client` (`ios|backend|test|unknown`), `mode` (`auto|mock|real`), `hints` (JSON string) | `200` `ScanResponse` (even for domain errors) ; transport errors: 400/413/415/504 |
 
 `ScanResponse` top level (all fields required unless noted):
-- `contract_version` = `"1.0.0"`, `request_id`, `status`
+- `contract_version` = `"1.1.0"`, `request_id`, `status`
   (`ok|needs_rescan|uncertain|no_medication_found|error`), `mode` (`mock|real`)
 - `frame_quality`: `acceptable`, `score`, `blur{score,is_blurry}`,
   `exposure{score,too_dark,too_bright}`, `glare{score,has_glare}`, `guidance[]`
@@ -259,7 +259,9 @@ Superseded decisions are preserved in §J (chronological log).
 - `label`: `detected`, `confidence`, `bbox?`, `text` (raw, verbatim)
 - `medication`: `name{value,confidence,source}`, `strength{value,unit,confidence,source}`,
   `form{...}`, `manufacturer{...}`; `source ∈ ocr|vlm|registry|none`
-- `instructions`: `raw_text`, `parsed[{kind ∈ dose|frequency|route|duration|warning|other, text}]`
+- `instructions`: `raw_text`, `parsed[{kind ∈ dose|frequency|route|duration|warning|other, text}]`,
+  **`dose`** (v1.1 additive) `{quantity>0|null, unit|null, confidence, source}` — the
+  per-dose amount as written on the label, never a package count
 - `candidates[]`: `{name, strength?{value,unit}, score, source ∈ registry|ocr|vlm}`
 - `interpretation`: `{available, summary?, source?:"vlm", model?}`
 - `uncertainty`: `{level ∈ low|medium|high, reasons[], rescan_required}`
@@ -532,10 +534,24 @@ Client mapping from our ScanResponse: `medication.name.value → drug_name`,
 
 - The backend never records a dose from a scan (`safety.ingestion_not_inferred`); only
   `POST /doses/{id}/confirm` changes status — aligned with our safety rule.
-- **Gap to decide:** `quantity` is required by `POST /scans` (numeric dose units), while
-  v1 ScanResponse has no structured dose quantity — only free text in
-  `instructions.parsed` (e.g. `"1 tablet"`). Options: (a) client sends `quantity=1`, or
-  (b) additive contract v1.1 fields `dose_quantity`/`dose_unit` extracted by PI-2.
+- **Gap resolved via v1.1:** `quantity` is required by `POST /scans`, and ScanResponse
+  now carries `instructions.dose.quantity`/`unit` (additive minor bump, 2026-10-10).
+  Client mapping documented in `tests/integration/test_backend_fit.py`; fallback `1`
+  only when the label does not state a per-dose amount (never from package size).
+
+| **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | mock mapping passes; real-scan `instructions.dose` assertion **expected red until M4 merges** (Orion extraction + Athena pass-through) | Orchestrator ⏳ |
+
+**2026-10-10** — **Contract v1.1 + backend fit (M4).** Added additive
+`instructions.dose {quantity, unit, confidence, source}` to the frozen contract (minor
+bump, v1 consumers ignore it) so Urvi's `POST /api/v1/scans` gets a real numeric
+quantity from the label instead of a client guess. Schema, pydantic model, examples,
+version assertions and the contract changelog updated (`3bdea53`). Orchestrator
+backend-fit test added (`tests/integration/test_backend_fit.py`, maps a real
+ScanResponse to Urvi's ScanSchema payload). M4 dispatched: Orion extracts
+`dose_quantity`/`dose_unit`/`dose_contract()` from the dose instruction (ranges →
+null, package counts never treated as doses); Athena wires `instructions.dose` into the
+real + mock pipelines and documents the backend mapping in `HANDOFF.md`. Juno's
+re-run eval (M3 defaults) is recorded in `services/vlm/EVAL.md`.
 
 **2026-10-10** — **Cross-team verification: Urvi's backend (`feat/backend-urvi` @ `85fc33f`).**
 Verified: history branches from our `e0fe570`; 64 new files all under `backend/`,
