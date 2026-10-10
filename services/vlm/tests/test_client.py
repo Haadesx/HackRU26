@@ -12,6 +12,7 @@ from services.vlm.client import (
     VlmConfigError,
     VlmImageError,
     build_prompt,
+    client_from_env,
     coerce_strength,
     encode_image_data_uri,
 )
@@ -250,3 +251,45 @@ class TestPromptAndHelpers:
         assert coerce_strength(250) == {"strength_value": 250}
         assert coerce_strength("unknown") == {}
         assert coerce_strength(None) == {}
+
+
+class TestClientFromEnv:
+    def test_reads_env_names_and_keeps_defaults(self, monkeypatch):
+        monkeypatch.setenv("MEDCHECK_VLM_BASE_URL", "http://rig:8100/v1")
+        monkeypatch.setenv("MEDCHECK_VLM_MODEL", "some/model")
+        monkeypatch.setenv("MEDCHECK_VLM_API_KEY", "env-key-not-real")
+        monkeypatch.delenv("MEDCHECK_VLM_TIMEOUT_S", raising=False)
+        monkeypatch.delenv("MEDCHECK_VLM_MAX_RETRIES", raising=False)
+        client = client_from_env()
+        assert client.config.base_url == "http://rig:8100/v1"
+        assert client.config.model == "some/model"
+        assert client.config.api_key == "env-key-not-real"
+        assert client.config.timeout_s == 60.0
+        assert client.config.max_retries == 0  # retries stay off by default
+        client.close()
+
+    def test_construction_does_not_touch_network(self, monkeypatch):
+        monkeypatch.setenv("MEDCHECK_VLM_BASE_URL", "http://rig:8100/v1")
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+            calls["n"] += 1
+            raise AssertionError("no network expected during construction")
+
+        client = client_from_env(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+        assert client.config.model == "Qwen/Qwen3-VL-8B-Instruct-FP8"
+        assert calls["n"] == 0
+        client.close()
+
+    def test_explicit_env_mapping(self):
+        client = client_from_env(
+            env={"MEDCHECK_VLM_BASE_URL": "https://vlm.example/v1", "MEDCHECK_VLM_MODEL": "m"}
+        )
+        assert client.config.base_url == "https://vlm.example/v1"
+        assert client.config.api_key is None
+        client.close()
+
+    def test_missing_base_url_raises(self, monkeypatch):
+        monkeypatch.delenv("MEDCHECK_VLM_BASE_URL", raising=False)
+        with pytest.raises(VlmConfigError):
+            client_from_env()

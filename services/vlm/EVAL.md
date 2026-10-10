@@ -97,6 +97,42 @@ Re-run this evaluation once PI-2's real OCR/extraction stack and PI-4's
 candidate matching are integrated, and again on real (non-synthetic) label
 photos; the numbers above are a controlled upper bound for clean print.
 
+### Integration contract (Milestone 2)
+
+The API should compute the candidate mismatch and pass it through `config`,
+because the frozen v1 uncertainty block has no field for it:
+
+```python
+from services.vlm import should_use_vlm, uncertainty_from_fields
+
+uncertainty = uncertainty_from_fields(ocr_fields)
+uncertainty["frame_score"] = frame_quality.score      # from PI-1 vision
+
+escalate = should_use_vlm(
+    uncertainty,
+    config={
+        "min_field_confidence": 0.75,        # tunable (default)
+        "min_frame_score": 0.45,             # tunable; None disables (default)
+        "candidate_mismatch": not matched,   # runtime signal from the matcher
+    },
+)
+```
+
+| config key | type | default | meaning |
+|---|---|---|---|
+| `min_field_confidence` | float | 0.75 | weak-field threshold on critical fields |
+| `candidate_mismatch` | bool | False | no plausible registry/candidate match for the read name or strength → escalate even at high OCR confidence (fixes the `Metformin HCI` @ 0.87 case) |
+| `min_frame_score` | float or None | None | escalate when `uncertainty.frame_score` (or `frame_quality.score`) is below this |
+| `invoke_on_rescan` | bool | False | force a VLM call even when a rescan was requested |
+
+**Candidate matcher (recommended trigger):** PI-2 Orion's matcher
+(`services/ocr/matcher.py` per the integration plan; today's name
+canonicalization lives in `services/ocr/lexicon.match_drug_name`, surfaced via
+`services/ocr/extract.find_name`). The API calls it with the OCR name and the
+registered candidates, then passes `candidate_mismatch=True` when nothing
+plausible matches. `rescan_required` still short-circuits first: retake the
+photo before spending a VLM call.
+
 ## Reproduce
 
 ```bash

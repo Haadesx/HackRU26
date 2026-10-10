@@ -13,7 +13,7 @@ be compared and reconciled):
     name, strength_value, strength_unit, form, manufacturer, instructions
 
 Usage:
-    client = Qwen3VLClient()                    # config from env
+    client = client_from_env()                # config from MEDCHECK_VLM_* env
     result = client.interpret(image_bytes, ocr_text=ocr_text)
     if result.available:
         result.fields["name"]                   # {"value", "confidence", "source"}
@@ -474,3 +474,16 @@ class Qwen3VLClient:
                 latency_ms=round((time.perf_counter() - started) * 1000, 1),
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+
+def client_from_env(
+    env: Optional[Dict[str, str]] = None, http_client: Optional[httpx.Client] = None
+) -> Qwen3VLClient:
+    """Build a ``Qwen3VLClient`` from ``MEDCHECK_VLM_*`` environment variables.
+
+    Pure construction: no network call happens here (probe with
+    ``available()`` or interpret when ready). Raises ``VlmConfigError`` when
+    ``MEDCHECK_VLM_BASE_URL`` is missing/malformed. Timeout and retries-off
+    defaults are unchanged (``VlmConfig``).
+    """
+    return Qwen3VLClient(config=VlmConfig.from_env(env), http_client=http_client)

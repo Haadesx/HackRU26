@@ -78,6 +78,59 @@ class TestShouldUseVlm:
         assert should_use_vlm(uncertainty) is False
         assert should_use_vlm(uncertainty, config={"critical_fields": ("manufacturer",)}) is True
 
+    # -- Milestone 2 triggers -------------------------------------------------
+
+    def low_uncertainty(self, **overrides):
+        base = {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {
+                "name": {"confidence": 0.87},
+                "strength_value": {"confidence": 0.92},
+                "strength_unit": {"confidence": 0.92},
+                "form": {"confidence": 0.9},
+                "manufacturer": {"confidence": 0.88},
+                "instructions": {"confidence": 0.9},
+            },
+        }
+        base.update(overrides)
+        return base
+
+    def test_candidate_mismatch_escalates_confidence_blind_case(self):
+        """Measured img_001: OCR read "Metformin HCI" at 0.87 — confident but wrong."""
+        uncertainty = self.low_uncertainty()
+        assert uncertainty["fields"]["name"]["confidence"] == 0.87
+        assert should_use_vlm(uncertainty) is False  # confidence alone misses it
+        assert should_use_vlm(uncertainty, config={"candidate_mismatch": True}) is True
+
+    def test_candidate_mismatch_from_uncertainty_payload(self):
+        assert should_use_vlm(self.low_uncertainty(candidate_mismatch=True)) is True
+
+    def test_candidate_mismatch_defaults_off(self):
+        assert should_use_vlm(self.low_uncertainty(), config={"candidate_mismatch": False}) is False
+
+    def test_rescan_still_beats_candidate_mismatch(self):
+        uncertainty = self.low_uncertainty(rescan_required=True, candidate_mismatch=True)
+        assert should_use_vlm(uncertainty) is False
+        assert should_use_vlm(uncertainty, config={"candidate_mismatch": True}) is False
+
+    def test_min_frame_score_escalates(self):
+        assert should_use_vlm(self.low_uncertainty(frame_score=0.3)) is False  # disabled by default
+        assert should_use_vlm(self.low_uncertainty(frame_score=0.3), config={"min_frame_score": 0.45}) is True
+        assert should_use_vlm(self.low_uncertainty(frame_score=0.8), config={"min_frame_score": 0.45}) is False
+
+    def test_min_frame_score_accepts_nested_frame_quality(self):
+        uncertainty = self.low_uncertainty(frame_quality={"score": 0.2})
+        assert should_use_vlm(uncertainty, config={"min_frame_score": 0.45}) is True
+
+    def test_min_frame_score_ignored_when_score_missing(self):
+        assert should_use_vlm(self.low_uncertainty(), config={"min_frame_score": 0.45}) is False
+
+    def test_min_field_confidence_is_tunable(self):
+        uncertainty = self.low_uncertainty(fields={"name": {"confidence": 0.8}, "strength_value": {"confidence": 0.9}})
+        assert should_use_vlm(uncertainty) is False
+        assert should_use_vlm(uncertainty, config={"min_field_confidence": 0.9}) is True
+
 
 class TestReconcileFields:
     def test_ocr_only(self):

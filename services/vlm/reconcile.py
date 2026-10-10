@@ -26,6 +26,10 @@ DEFAULTS: Dict[str, Any] = {
     "prefer_margin": 0.15,
     # ...unless OCR is below min_field_confidence and VLM clears this bar
     "min_vlm_confidence": 0.55,
+    # runtime signal from the candidate matcher: no registry match for the read
+    "candidate_mismatch": False,
+    # frame score below this escalates (None = disabled by default)
+    "min_frame_score": None,
 }
 
 VALID_LEVELS = ("low", "medium", "high")
@@ -46,15 +50,38 @@ def should_use_vlm(uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]]
     ----------
     uncertainty:
         ``{"level": "low|medium|high", "reasons": [...], "rescan_required": bool,
-        "fields": {canonical_key: {"confidence": 0..1}}}``. Missing pieces are
-        treated conservatively (missing level -> escalate).
+        "fields": {canonical_key: {"confidence": 0..1}}, "frame_score": 0..1}``.
+        Missing pieces are treated conservatively (missing level -> escalate).
+        ``frame_score`` may also be nested at ``frame_quality.score``.
     config:
-        Optional overrides of ``DEFAULTS``.
+        Overrides/extra signals for ``DEFAULTS``:
+
+        * ``min_field_confidence`` (float) — weak-field threshold;
+        * ``candidate_mismatch`` (bool) — runtime signal from the candidate
+          matcher: the read did not match any registered candidate. Carried in
+          ``config`` because the frozen v1 uncertainty block has no field for it;
+          a truthy value escalates even when OCR was confident;
+        * ``min_frame_score`` (float | None) — escalate when ``frame_score`` is
+          below this value; ``None`` (default) disables the check;
+        * plus the tuning keys defined in ``DEFAULTS``.
     """
     cfg = _config(config)
     if uncertainty.get("rescan_required") and not cfg["invoke_on_rescan"]:
         # Retake the photo; the VLM cannot fix a bad frame more cheaply.
         return False
+
+    # Candidate mismatch beats confidence: "Metformin HCI" @ 0.87 reads fine to
+    # the OCR but matches no registered drug, so it must be verified.
+    if cfg.get("candidate_mismatch") or uncertainty.get("candidate_mismatch"):
+        return True
+
+    threshold = cfg.get("min_frame_score")
+    if threshold is not None:
+        frame_score = uncertainty.get("frame_score")
+        if frame_score is None:
+            frame_score = (uncertainty.get("frame_quality") or {}).get("score")
+        if frame_score is not None and float(frame_score) < float(threshold):
+            return True
 
     level = uncertainty.get("level")
     if level is None:

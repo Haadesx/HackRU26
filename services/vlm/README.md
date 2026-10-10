@@ -47,8 +47,8 @@ def should_use_vlm(uncertainty: dict, config: dict | None = None) -> bool: ...
 
 | Path | Contents |
 |---|---|
-| `client.py` | `Qwen3VLClient` OpenAI-compatible adapter; env config, timeouts, retries off, OCR-verify prompt mode, lenient JSON parsing |
-| `reconcile.py` | `should_use_vlm()`, `uncertainty_from_fields()`, `reconcile_fields()` with source attribution and contract-shaped medication mapping |
+| `client.py` | `Qwen3VLClient` OpenAI-compatible adapter + `client_from_env()` factory; env config, timeouts, retries off, OCR-verify prompt mode, lenient JSON parsing |
+| `reconcile.py` | `should_use_vlm()` (`min_field_confidence`, `candidate_mismatch`, `min_frame_score` triggers), `uncertainty_from_fields()`, `reconcile_fields()` with source attribution and contract-shaped medication mapping |
 | `dataset/` | 24 deterministic synthetic label images + `ground_truth.json` (regenerate: `python -m services.vlm.dataset.generate`) |
 | `eval/` | OCR-vs-VLM runner, Tesseract baseline engine, metrics, `results.json`; summary in `EVAL.md` |
 | `benchmarks/` | gated sequential GPU benchmark, `results.json` |
