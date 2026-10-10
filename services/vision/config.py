@@ -22,6 +22,23 @@ DeviceKind = Literal["auto", "cpu", "cuda"]
 
 #: Environment variable holding YOLO weights path.
 YOLO_MODEL_ENV = "MEDCHECK_YOLO_MODEL"
+#: Environment variable holding the YOLO confidence threshold (both backends).
+YOLO_CONF_ENV = "MEDCHECK_YOLO_CONF"
+DEFAULT_YOLO_CONF = 0.25
+
+
+def yolo_confidence_threshold(default: float = DEFAULT_YOLO_CONF) -> float:
+    """Read `MEDCHECK_YOLO_CONF`; invalid or out-of-range values fall back to `default`."""
+    raw = os.environ.get(YOLO_CONF_ENV)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if not 0.0 < value <= 1.0:
+        return default
+    return value
 
 
 class VisionConfig(BaseModel):

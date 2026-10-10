@@ -42,8 +42,10 @@ def test_package_import_never_imports_torch():
     code = (
         "import sys\n"
         "assert 'torch' not in sys.modules, 'torch present before import'\n"
+        "assert 'onnxruntime' not in sys.modules, 'onnxruntime present before import'\n"
         "import services.vision\n"
         "assert 'torch' not in sys.modules, 'torch imported by services.vision'\n"
+        "assert 'onnxruntime' not in sys.modules, 'onnxruntime imported by services.vision'\n"
         "from services.vision import analyze_frame, crop_label, crop_label_array\n"
         "print('torch-free')\n"
     )
