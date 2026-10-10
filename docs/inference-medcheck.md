@@ -49,10 +49,10 @@ October Bus (agent coordination; see §H).
 | Frozen v1 contract (schemas + pydantic mirror) | ✅ implemented, ✅ validated | `feat/inference-medcheck` |
 | PI-4 API: mock + **real OCR-first pipeline** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/api-athena` `7200f0c` → merge `b6bbbef` |
 | PI-2 OCR + extraction + **candidate matcher** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/ocr-orion` `09c41d3` → merge `a49afd0` |
-| PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED (1 regression fix pending) | `feat/vision-atlas` `27d0b21` → merge `5b60648` |
+| PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED + noise regression **fixed** (`ae1c3a8`) | `feat/vision-atlas` → merges `5b60648` + `ae1c3a8` |
 | PI-3 VLM adapter + eval + **escalation triggers** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` `338759d` → merge `91a5c83` |
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
-| Full-system acceptance on merged tree | ⏳ 270 passed / 1 failed (vision noise false-positive `label.detected`); fix dispatched to Atlas | — |
+| Full-system acceptance on merged tree | ✅ **277 passed / 0 failed** after noise fix (`ae1c3a8`) | `feat/inference-medcheck` |
 
 ---
 
@@ -433,7 +433,8 @@ every extracted field carries `{value, confidence, source}`.
 | API tests | `pytest services/api -q` | 40 passed (worker) / 40 passed on merged tree | Athena + orchestrator re-run ✅ |
 | Orchestrator integration harness (merged tree) | `.venv/bin/pytest services/api tests/integration -q` | **42 passed** (40 API + 2 integration) | Orchestrator ✅ |
 | Live API smoke on merged tree (mock) | uvicorn :8300 + `scripts/scan_demo.sh` | health/ready 200; scan `uncertain` mock, schema-valid; port freed after | Orchestrator ✅ |
-| **Merged full suite (M2)** | `.worktrees/pi-4-api/.venv/bin/python -m pytest services tests/integration` | 270 passed, **1 failed** (`test_real_scan_no_medication_found`: noise → vision label false-positive 0.505); fix dispatched | Orchestrator ✅ |
+| **Merged full suite (M2 + noise fix)** | `.worktrees/pi-4-api/.venv/bin/python -m pytest services tests/integration` | **277 passed / 0 failed** | Orchestrator ✅ |
+| **Matcher live (hints)** | real-mode curl with `known_candidates` | matching → `candidates:[{Metformin,500 mg,score 1.0,source registry}]`; mismatched → `[]` | Orchestrator ✅ |
 | **Real-mode live: /ready** | `MEDCHECK_API_MODE=real` uvicorn :8300 | `{"ready":true,"mode":"real","components":{"vision":"ready","ocr":"ready","pipeline":"real"}}` | Orchestrator ✅ |
 | **Real-mode live: sharp scan + real VLM** | curl multipart → real pipeline, `MEDCHECK_VLM_ENABLED=1` | status `uncertain`; Metformin 500 mg OCR (0.95/1.0); VLM summary + `form` from VLM; VLM stage **1745 ms**, total 2272 ms; conflicts preserved with both values | Orchestrator ✅ |
 | **Real-mode live: blurry scan** | curl blurry sample | `needs_rescan` in **19.5 ms**, 3 guidance strings, no OCR/VLM | Orchestrator ✅ |
@@ -490,6 +491,12 @@ sequential calls, no restarts).
 - `feat/api-athena` `a855318` — mock FastAPI gateway on :8300, 40 tests, live smoke OK.
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
+
+**2026-10-10** — **Noise regression fixed and merged** (`ae1c3a8`, blur-scale structure
+gate). Merged full suite: **277 passed / 0 failed**. Live matcher verification with
+hints: matching candidate → `{Metformin, 500 mg, score 1.0, source registry}`;
+mismatched candidate → `[]` while OCR still reads Metformin. Escalation tuning +
+reconcile normalization identified as M3 items (§K items 5–6).
 
 **2026-10-10** — **Milestone 2 delivered, merged, and real-mode acceptance run.** Worker tips
 verified independently (vision 70, ocr 52, vlm 91, api 56 tests) then merged: `b6bbbef`
@@ -555,11 +562,9 @@ functional.
    Permanent fix (Varesh/Desktop action): run the orchestrator in an October **agent**
    terminal and resume this Pi session (`pi --continue`). This also restores native
    `message_peer` for the orchestrator.
-3. **Noise false-positive label (regression, fix in flight)** — vision's frame-level
-   flat-label fallback fires on pure Gaussian noise (`label.detected=True`, conf 0.5053),
-   which flips the API's `no_medication_found` rule; the merged suite is 270 passed /
-   1 failed until Atlas lands a noise-immunity gate (blur-then-structure discriminator
-   suggested; repro `Image.effect_noise((320,320),40)`).
+3. **Noise false-positive label — FIXED** — `ae1c3a8` (blur-scale structure gate in the
+   frame-level fallback) merged; Gaussian noise (sigma 25/40/60) rejected, flat label
+   unchanged (conf 0.5808, same bbox); merged suite **277/277**.
 4. **Candidate/registry matching** — matcher implemented (`services/ocr/matcher.py`,
    `match_candidates`, threshold 0.75) and wired into the API when hints provide
    candidates. Still missing: `should_use_vlm` is called without the M2 config, so the
