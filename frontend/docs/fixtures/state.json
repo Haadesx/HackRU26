@@ -1,0 +1,292 @@
+{
+  "now": "2026-10-10T14:30:00.000Z",
+  "patient": {
+    "name": "Rosa",
+    "caregiver": "Elena"
+  },
+  "hub": {
+    "connected": true
+  },
+  "medications": [
+    {
+      "id": 1,
+      "name": "Lisinopril",
+      "strength": "10 mg",
+      "purpose": "for blood pressure",
+      "dose_amount": 1,
+      "doses_per_day": 1,
+      "schedule_times": [
+        "08:00"
+      ],
+      "quantity_start": 30,
+      "pills_left": 29,
+      "refills_remaining": 2,
+      "fill_date": "2026-10-09",
+      "instructions": "Take 1 tablet daily",
+      "prescriber": "Dr. Patel",
+      "prescriber_phone": "(732) 555-0170",
+      "pharmacy_name": "CVS Pharmacy",
+      "pharmacy_phone": "(732) 555-0123",
+      "confidence": {}
+    },
+    {
+      "id": 2,
+      "name": "Metformin",
+      "strength": "500 mg",
+      "purpose": "for diabetes",
+      "dose_amount": 1,
+      "doses_per_day": 2,
+      "schedule_times": [
+        "08:00",
+        "20:00"
+      ],
+      "quantity_start": 60,
+      "pills_left": 22,
+      "refills_remaining": 1,
+      "fill_date": "2026-09-21",
+      "instructions": "Take 1 tablet twice daily with food",
+      "prescriber": "Dr. Patel",
+      "prescriber_phone": "(732) 555-0170",
+      "pharmacy_name": "CVS Pharmacy",
+      "pharmacy_phone": "(732) 555-0123",
+      "confidence": {}
+    },
+    {
+      "id": 3,
+      "name": "Atorvastatin",
+      "strength": "20 mg",
+      "purpose": "for cholesterol",
+      "dose_amount": 1,
+      "doses_per_day": 1,
+      "schedule_times": [
+        "20:00"
+      ],
+      "quantity_start": 30,
+      "pills_left": 2,
+      "refills_remaining": 0,
+      "fill_date": "2026-09-19",
+      "instructions": "Take 1 tablet at bedtime",
+      "prescriber": "Dr. Okafor",
+      "prescriber_phone": "(732) 555-0144",
+      "pharmacy_name": "CVS Pharmacy",
+      "pharmacy_phone": "(732) 555-0123",
+      "confidence": {
+        "prescriber": "unsure"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Amlodipine",
+      "strength": "5 mg",
+      "purpose": "for blood pressure",
+      "dose_amount": 1,
+      "doses_per_day": 1,
+      "schedule_times": [
+        "08:00"
+      ],
+      "quantity_start": 90,
+      "pills_left": 64,
+      "refills_remaining": 3,
+      "fill_date": "2026-09-14",
+      "instructions": "Take 1 tablet daily",
+      "prescriber": "Dr. Patel",
+      "prescriber_phone": "(732) 555-0170",
+      "pharmacy_name": "CVS Pharmacy",
+      "pharmacy_phone": "(732) 555-0123",
+      "confidence": {}
+    },
+    {
+      "id": 5,
+      "name": "Vitamin D3",
+      "strength": "1000 IU",
+      "purpose": "supplement",
+      "dose_amount": 1,
+      "doses_per_day": 1,
+      "schedule_times": [
+        "08:00"
+      ],
+      "quantity_start": 100,
+      "pills_left": 4,
+      "refills_remaining": null,
+      "otc": true,
+      "fill_date": "2026-07-06",
+      "instructions": "Take 1 tablet daily",
+      "prescriber": "",
+      "prescriber_phone": "",
+      "pharmacy_name": "Over the counter",
+      "pharmacy_phone": "",
+      "confidence": {}
+    }
+  ],
+  "doses": [
+    {
+      "id": 1048,
+      "medication_id": 3,
+      "slot": "20:00",
+      "date": "2026-10-09",
+      "taken_at": "2026-10-09T20:04:00.000Z",
+      "method": "voice"
+    },
+    {
+      "id": 1049,
+      "medication_id": 4,
+      "slot": "08:00",
+      "date": "2026-10-09",
+      "taken_at": "2026-10-09T08:07:00.000Z",
+      "method": "button"
+    },
+    {
+      "id": 1050,
+      "medication_id": 5,
+      "slot": "08:00",
+      "date": "2026-10-09",
+      "taken_at": "2026-10-09T08:10:00.000Z",
+      "method": "voice"
+    },
+    {
+      "id": 1051,
+      "medication_id": 1,
+      "slot": "08:00",
+      "date": "2026-10-10",
+      "taken_at": "2026-10-10T08:05:00.000Z",
+      "method": "voice"
+    },
+    {
+      "id": 1052,
+      "medication_id": 2,
+      "slot": "08:00",
+      "date": "2026-10-10",
+      "taken_at": "2026-10-10T08:08:00.000Z",
+      "method": "button"
+    },
+    {
+      "id": 1053,
+      "medication_id": 4,
+      "slot": "08:00",
+      "date": "2026-10-10",
+      "taken_at": "2026-10-10T08:14:00.000Z",
+      "method": "voice"
+    }
+  ],
+  "reminders": [],
+  "alerts": [
+    {
+      "id": 1054,
+      "medication_id": 3,
+      "type": "no_refills",
+      "sent_at": "2026-10-09T09:00:00.000Z",
+      "message": "No refills left for Atorvastatin. Dr. Okafor needs to send a new prescription."
+    },
+    {
+      "id": 1055,
+      "medication_id": 5,
+      "type": "low_5",
+      "sent_at": "2026-10-10T07:00:00.000Z",
+      "message": "Rosa has about 4 days of Vitamin D3 left."
+    }
+  ],
+  "events": [
+    {
+      "id": 1056,
+      "type": "wrong_bottle",
+      "at": "2026-10-10T07:59:00.000Z",
+      "message": "Rosa picked up Metformin when Lisinopril was due. MedCheck stopped her before she took it."
+    }
+  ],
+  "scans": [
+    {
+      "id": 501,
+      "status": "needs_caregiver",
+      "photos": 2,
+      "fields": {
+        "name": {
+          "value": "Losartan",
+          "state": "filled"
+        },
+        "strength": {
+          "value": "25 mg",
+          "state": "filled"
+        },
+        "dose_amount": {
+          "value": "1",
+          "state": "filled"
+        },
+        "schedule_times": {
+          "value": "08:00",
+          "state": "filled"
+        },
+        "quantity_start": {
+          "value": "",
+          "state": "missing"
+        },
+        "refills_remaining": {
+          "value": "",
+          "state": "missing"
+        },
+        "pharmacy_name": {
+          "value": "CVS Pharmacy",
+          "state": "filled"
+        },
+        "pharmacy_phone": {
+          "value": "(732) 555-0123",
+          "state": "filled"
+        },
+        "prescriber": {
+          "value": "Dr. Pat?l",
+          "state": "unsure"
+        }
+      },
+      "created_at": "2026-10-10T14:10:00.000Z",
+      "history": [
+        {
+          "step": "Scanned",
+          "at": "2026-10-10T14:10:00.000Z",
+          "detail": "Read 7 of 9 details."
+        },
+        {
+          "step": "Asked Rosa",
+          "at": "2026-10-10T14:11:00.000Z",
+          "detail": "“How many tablets came in this bottle?”"
+        },
+        {
+          "step": "Rosa wasn't sure",
+          "at": "2026-10-10T14:13:00.000Z",
+          "detail": "She said “I don't know.”"
+        },
+        {
+          "step": "Sent to you",
+          "at": "2026-10-10T14:14:00.000Z",
+          "detail": "Waiting for you now."
+        }
+      ]
+    }
+  ],
+  "settings": {
+    "thresholds": {
+      "first": 7,
+      "second": 5,
+      "urgent": 3
+    },
+    "alert_missed": true,
+    "alert_no_refills": true,
+    "alert_wrong_bottle": false,
+    "remind_again": "30",
+    "voice_language": "English",
+    "camera_paused": false,
+    "caregivers": [
+      {
+        "id": 1,
+        "name": "Elena",
+        "phone": "(732) 555-0187",
+        "scope": "all",
+        "you": true
+      },
+      {
+        "id": 2,
+        "name": "Marco",
+        "phone": "(908) 555-0142",
+        "scope": "refills"
+      }
+    ]
+  }
+}
