@@ -261,8 +261,13 @@ def test_hint_extraction_helpers():
 
 
 # --------------------------------------------------------------------------
-# VLM escalation — off by default, mocked HTTP when enabled
+# VLM escalation — off by default; identity-critical, mocked HTTP when enabled
 # --------------------------------------------------------------------------
+#: Same-name/wrong-strength candidate -> matcher drops it (0.70 < 0.75) -> mismatch.
+MISMATCH_HINTS = {"known_candidates": [{"name": "Metformin", "strength": {"value": 999, "unit": "mg"}}]}
+MATCH_HINTS = {"known_candidates": [{"name": "Metformin", "strength": {"value": 500, "unit": "mg"}}]}
+
+
 def _mock_vlm_factory(calls: list):
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
@@ -307,17 +312,21 @@ def test_vlm_off_by_default(monkeypatch):
     def must_not_be_called():  # pragma: no cover - fails the test if reached
         raise AssertionError("VLM must not be called when MEDCHECK_VLM_ENABLED is unset")
 
-    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=must_not_be_called)
+    _, payload = run_scan(DARK.read_bytes(), hints=MISMATCH_HINTS, vlm_client_factory=must_not_be_called)
     assert payload["interpretation"]["available"] is False
     assert payload["timing"]["stages"]["vlm"] == 0.0
 
 
-def test_vlm_escalation_with_mocked_http(monkeypatch):
+def test_candidate_mismatch_escalates_with_mocked_http(monkeypatch):
+    """(a) confident OCR + mismatched registered candidates -> VLM invoked."""
     monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
     calls: list = []
-    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=_mock_vlm_factory(calls))
+    _, payload = run_scan(
+        DARK.read_bytes(), hints=MISMATCH_HINTS, vlm_client_factory=_mock_vlm_factory(calls)
+    )
 
     assert len(calls) == 1
+    assert payload["candidates"] == []  # mismatched candidate was dropped
     assert payload["interpretation"]["available"] is True
     assert payload["interpretation"]["source"] == "vlm"
     assert payload["interpretation"]["model"] == "Qwen/Test-VL"
@@ -328,6 +337,33 @@ def test_vlm_escalation_with_mocked_http(monkeypatch):
     assert payload["uncertainty"]["level"] == "low"
     assert payload["timing"]["stages"]["vlm"] >= 0
     _assert_safety(payload)
+
+
+def test_matched_candidate_does_not_escalate(monkeypatch):
+    """(b) registered candidate matched at/above threshold -> no VLM call."""
+    monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
+    calls: list = []
+    _, payload = run_scan(
+        DARK.read_bytes(), hints=MATCH_HINTS, vlm_client_factory=_mock_vlm_factory(calls)
+    )
+
+    assert calls == []
+    assert payload["interpretation"]["available"] is False
+    assert payload["candidates"] and payload["candidates"][0]["score"] >= 0.75
+    assert payload["timing"]["stages"]["vlm"] == 0.0
+
+
+def test_missing_optional_field_does_not_escalate(monkeypatch):
+    """(c) missing manufacturer alone must not cost a VLM call."""
+    monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
+
+    def must_not_be_called():  # pragma: no cover - fails the test if reached
+        raise AssertionError("VLM invoked for a missing optional field")
+
+    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=must_not_be_called)
+    assert payload["interpretation"]["available"] is False
+    assert payload["timing"]["stages"]["vlm"] == 0.0
+    assert "missing:manufacturer" in payload["uncertainty"]["reasons"]
 
 
 def test_vlm_transport_failure_degrades(monkeypatch):
@@ -342,7 +378,7 @@ def test_vlm_transport_failure_degrades(monkeypatch):
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )
 
-    _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=factory)
+    _, payload = run_scan(DARK.read_bytes(), hints=MISMATCH_HINTS, vlm_client_factory=factory)
     assert payload["interpretation"]["available"] is False
     assert payload["status"] in {"uncertain", "ok"}
     assert payload["medication"]["name"]["value"] == "Metformin"
