@@ -232,6 +232,28 @@ def activate(rx: Prescription, *, user_id: uuid.UUID, initialize_inventory: bool
     }
 
 
+def deactivate(patient_id: uuid.UUID) -> Prescription | None:
+    """Stop the active prescription without a replacement (e.g. the last medication was removed).
+
+    History is kept; schedules stop and not-yet-taken pending doses are removed.
+    """
+    rx = db.session.scalar(
+        select(Prescription)
+        .where(Prescription.patient_id == patient_id, Prescription.status == "active")
+        .with_for_update()
+    )
+    if rx is None:
+        return None
+    schedule_ids = [i.schedule.id for i in rx.items if i.schedule is not None]
+    for item in rx.items:
+        if item.schedule is not None:
+            item.schedule.active = False
+    scheduling.delete_future_pending(schedule_ids, utcnow(), include_current=True)
+    rx.status = "superseded"
+    db.session.flush()
+    return rx
+
+
 def revise(rx: Prescription) -> Prescription:
     """Copy an active/superseded prescription into a new draft, including schedules."""
     if rx.status == "draft":

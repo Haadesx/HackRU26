@@ -222,7 +222,7 @@ Untested: deploying to TigerData / Render / Railway / Fly.io; real Twilio/FCM se
 
 ## I. Testing and verification
 
-`backend/tests/` (61 tests, all passing; `pytest` 9.1.1 against TimescaleDB 2.30.2, last run 2026-10-10):
+`backend/tests/` (75 tests incl. 14 for `/hub` in `test_hub.py`, all passing; `pytest` 9.1.1 against TimescaleDB 2.30.2, last run 2026-10-10):
 - `test_auth_permissions.py`: windows seeded, login/refresh, error envelope, caregiver read-only on every write route, revoke, invite rules.
 - `test_scheduling.py`: 48h generation, snapshotted windows, confirm_deadline (next dose / 24h cap), idempotency, local-today view, DST (Nov 1 2026), every_other_day, activation validation, window edit vs history, revise/supersede without duplicates.
 - `test_scans_doses.py`: match/fuzzy/no_match/not_due/ambiguous, idempotency, user mismatch, future/naive timestamps, confirm from scan, on-time boundary, early confirm 409, mismatch alerts, skip, insufficient stock.
@@ -239,8 +239,67 @@ Not verified: real SMS/push delivery, load/performance, TigerData cloud.
 - **2026-10-10** — Branch `feat/backend-urvi` created from `origin/feat/inference-medcheck` (remote has no `main`). Initial backend: all phases 1–9 from `plan.md` (files under `backend/`), migrations 0001/0002, seed, worker, 61 tests passing, live smoke test. Dependencies: see D. Schema changes recorded in `db.md`: `dose_events` gains `patient_id`, `prescription_item_id`, `medication_id`, `window_name`; `vision_observations.received_at`; schedule frequencies; one schedule per item; prescription item fields required at activation; patient in-app missed alert; adherence bucketing note. API additions beyond `plan.md`: `GET /patients/{id}/prescriptions/active`, `POST /prescriptions/{id}/revise`, `GET /doses/{id}`. Commit: `0c1a4fdad6bd0709de6dbc1801a0fb7f8f223879`.
 - **2026-10-10** — Pushed `feat/backend-urvi` to origin (first push; tracks `origin/feat/backend-urvi`). No code changes.
 - **2026-10-10** — Bug fix: the root `.gitignore` rule `models/` (unanchored) silently excluded `backend/app/models/`, so the first push was missing all model files and would not run from a fresh clone. Cherry-picked the orchestrator's fix (`/models/` anchored to repo root, upstream 179c4d6) and committed the models (`4a01a5b`). Verified: fresh `git worktree` checkout of the branch → `pytest` 61 passed.
+- **2026-10-10** — Created `feat/integration` from `origin/feat/inference-medcheck` (which already contains the UI via PR #1) and merged `feat/backend-urvi` (no conflicts). Added the `/hub` compatibility layer (section L): `app/hub/` (routes, state, labels, contacts, rx, defaults), `app/models/hub.py`, migration `0003_hub_compat` (7 hub_* tables), `services/prescriptions.deactivate`, `mark_missed(on_missed=...)` hook, CORS for `/hub/*`, new `HUB_*` env vars. Migration env now ignores TimescaleDB's own hypertable indexes during autogenerate (autogenerate had tried to drop them; dev DB indexes recreated; `flask db check` clean). Tests: 75 passed (61 + 14 hub). Live: UI dev server + inference mock + backend hub, scans through real inference HTTP, complete → new medication, Home/History rendered with real data.
+
+## L. Dashboard compatibility layer (`/hub`)
+
+**Why:** the React dashboard (`frontend/`, Sinchana) was built against its own contract (`frontend/docs/api-contract.md`: no login, integer ids, one polled `GET /state`, photo upload scans, `{"detail": ...}` errors). `/hub` implements that contract exactly on top of the core backend, so the UI runs with no code changes. iOS and other clients keep using `/api/v1`.
+
+**Status:** implemented on `feat/integration`; 14 tests (`tests/test_hub.py`) + verified live with the real UI dev server, the inference gateway (mock mode), and the seeded DB (headless-Chrome screenshots of Home and History rendered real data).
+
+**Security:** `/hub` has **no authentication**. Every request acts as `HUB_PATIENT_EMAIL`. It is registered only when `HUB_ENABLED=true` (default false) and must never be exposed publicly. Run it on localhost for the demo.
+
+**Run the dashboard against the real backend:**
+```bash
+# inference gateway (mock mode needs only fastapi/uvicorn/python-multipart/pydantic)
+python3 -m venv .venv-inference && .venv-inference/bin/pip install "fastapi>=0.110" "uvicorn[standard]>=0.29" "python-multipart>=0.0.9" "pydantic>=2.6,<3"
+MEDCHECK_API_MODE=mock .venv-inference/bin/python -m uvicorn services.api.main:app --host 127.0.0.1 --port 8300
+# backend (in backend/)
+HUB_ENABLED=true CORS_ORIGINS=http://localhost:5173 .venv/bin/gunicorn -w 2 -b 127.0.0.1:8000 wsgi:app
+.venv/bin/python -m app.jobs.worker      # optional, for missed doses / reminders / texts
+# dashboard (in frontend/)
+VITE_API_URL=http://localhost:8000/hub npm run dev
+```
+Requires the seeded patient (`python -m scripts.seed`) or another patient set in `HUB_PATIENT_EMAIL`.
+
+**Endpoint mapping** (all under `/hub`):
+
+| Dashboard call | Backend behavior |
+|---|---|
+| `GET /health` | `{"ok": true}` after a DB ping |
+| `GET /state` | Built from the active prescription, dose_events, inventory, hub_* tables. Also runs supply-alert checks and scan escalation (side effects on a GET; cheap and idempotent) |
+| `POST /medications/{id}/doses` `{method, slot?}` | Confirms today's matching core dose via `services/doses.confirm` (manual). Without `slot`, picks the first dose whose window is open. Never logs a dose before its window opens (409 with the opening time) |
+| `POST /medications/{id}/remind` `{slot}` | Records it and sends the patient an in-app/SMS reminder |
+| `POST /medications/{id}/counts` `{count, confidence?}` | `inventory.set_quantity` (manual_adjustment). `confidence < 0.8` → 422 "count again" (tray counter rule) |
+| `POST /medications/{id}/refill` | Fulfilled `refill_requests` row + refill transaction of `quantity_start`; refills_remaining −1; fill_date today; clears low_* alerts |
+| `PATCH /medications/{id}` | Label details (prescriber, pharmacy, purpose, quantity_start, refills_remaining) in hub_medications; `instructions` edits the active item text only; clears `confidence` |
+| `DELETE /medications/{id}` | New prescription version without it (or deactivates when it was the last). History kept |
+| `POST /scans` (photo) / `POST /scans/{id}/photos` | Photo → inference `POST /v1/scan` (hints = tracked meds) → nine fields, merged by highest confidence |
+| `POST /scans` `{manual: true}` | Empty manual scan |
+| `GET/DELETE /scans/{id}` | Read / discard |
+| `POST /scans/{id}/complete` | Validates (422 readable), adds the medication as a new prescription version with schedule (times matching a preset window use it, others use generic), stock = quantity_start, doses generated immediately |
+| `GET /adherence?month=YYYY-MM` | Month calendar from dose_events in the patient's timezone; month 0-based in the response |
+| `PUT /settings` | Validated and stored in hub_settings |
+| `GET /export` | JSON download of the state |
+| `DELETE /data` | Deletes the patient's medications, doses, stock, scans, alerts, events. Settings and caregiver contacts stay |
+| `POST /events` `{type, message, at?}` | Wearable mistakes (not called by the UI) |
+
+**Label → field mapping** (`app/hub/labels.py`): name, strength, dose_amount from inference fields with their confidence; schedule_times converted from frequency wording (confidence capped at 0.7 → "unsure"); quantity, refills, pharmacy, phone, prescriber by regex over the raw OCR text (0.7–0.75 → "unsure"). Nothing is filled unless it appears in the label text. Cutoffs: ≥0.85 filled, ≥0.5 unsure, else missing. Inference `needs_rescan` adds `guidance` (extra field) without changing fields. Inference down → 503 with a readable sentence.
+
+**Scan status flow:** `reading` → (still missing a required field after 2+ photos) `asking_patient` → after `HUB_ASK_PATIENT_MINUTES` (3) `needs_caregiver` → `complete`. There is no wearable integration yet, so no one actually asks the patient; the history says "Still missing … / Sent to you".
+
+**Texts to dashboard contacts** (`settings.caregivers`, `app/hub/contacts.py`): supply alerts (scopes all + refills), missed doses when `alert_missed` (worker hook, scope all), wrong-bottle/double-dose events when `alert_wrong_bottle`. US numbers are converted to E.164. Skipped when Twilio isn't configured. This differs from `/api/v1`, where alerts go to linked caregiver *accounts*; both run.
+
+New env vars: `HUB_ENABLED`, `HUB_PATIENT_EMAIL`, `HUB_INFERENCE_URL`, `HUB_INFERENCE_API_KEY` (matches the gateway's `MEDCHECK_API_KEY`), `HUB_INFERENCE_TIMEOUT_S`, `HUB_ASK_PATIENT_MINUTES`.
+New tables (migration `0003_hub_compat`): see db.md §18.
 
 ## K. Known issues and outstanding work
+
+- `/hub` is unauthenticated (demo only; see L). Adding a shared token would need a one-line change in `frontend/src/api/client.js` (teammate's file).
+- Dashboard text hard-codes the name "Rosa" in a few places ("Each bottle shows how many days of pills Rosa has left", "Remind Rosa"); `patient.name` from the hub is the seeded "Ada". Frontend change, not done.
+- For a medication added mid-day, the dashboard computes earlier slots from `schedule_times` and shows them as not taken/missed, while `/hub/adherence` (backend truth) doesn't count doses that were never scheduled. Seen live on Oct 10 (Amoxicillin 08:00). Frontend computes its own missed list for the day panel.
+- Wearable dose logging can't pass its own `taken_at` yet (uses now).
+- Inference real mode was not run here (its OCR stack needs Python 3.11 + pinned packages; `rapidocr-onnxruntime==1.4.4` has no wheel for Python 3.14). Verified with the gateway in mock mode only.
 
 - Deployment (plan phase 10) not done; TigerData connection untested.
 - Twilio and FCM never exercised with real credentials. Twilio trial accounts only text verified numbers.

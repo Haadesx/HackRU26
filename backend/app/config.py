@@ -46,6 +46,16 @@ class Config:
     WORKER_RETRY_INTERVAL_S = _int("WORKER_RETRY_INTERVAL_S", 300)
     DELIVERY_MAX_ATTEMPTS = 3
 
+    # /hub compatibility layer for the React dashboard (frontend/docs/api-contract.md).
+    # It has NO login: every request acts as HUB_PATIENT_EMAIL. Keep it off unless you
+    # are running the dashboard demo, and never expose it publicly.
+    HUB_ENABLED = _bool("HUB_ENABLED", False)
+    HUB_PATIENT_EMAIL = os.getenv("HUB_PATIENT_EMAIL", "demo.patient@example.com")
+    HUB_INFERENCE_URL = os.getenv("HUB_INFERENCE_URL", "http://127.0.0.1:8300").rstrip("/")
+    HUB_INFERENCE_API_KEY = os.getenv("HUB_INFERENCE_API_KEY") or None
+    HUB_INFERENCE_TIMEOUT_S = float(os.getenv("HUB_INFERENCE_TIMEOUT_S", "90"))
+    HUB_ASK_PATIENT_MINUTES = _int("HUB_ASK_PATIENT_MINUTES", 3)
+
     # flask-smorest / OpenAPI
     API_TITLE = "MedCheck Backend API"
     API_VERSION = "v1"

@@ -15,6 +15,9 @@ os.environ["DATABASE_URL"] = os.environ.get(
 )
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-not-for-production-use-0123456789"
 os.environ["OPENFDA_ENABLED"] = "false"
+os.environ["HUB_ENABLED"] = "true"
+os.environ["HUB_PATIENT_EMAIL"] = "hub.patient@example.com"
+os.environ["HUB_INFERENCE_URL"] = "http://inference.test"
 for var in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "FIREBASE_CREDENTIALS_JSON"):
     os.environ[var] = ""
 
@@ -29,6 +32,7 @@ from app.utils import time as clock  # noqa: E402
 T0 = datetime(2026, 10, 12, 11, 0, tzinfo=timezone.utc)
 
 TABLES = [
+    "hub_alerts", "hub_reminders", "hub_scans", "hub_events", "hub_dose_refs", "hub_medications", "hub_settings",
     "notification_deliveries", "reminders", "inventory_transactions", "refill_requests",
     "medication_inventory", "dose_outcomes", "vision_observations", "dose_events",
     "dose_schedule_times", "dose_schedules", "dose_windows", "prescription_items",

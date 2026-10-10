@@ -25,7 +25,10 @@ def generate_dose_events(now: datetime | None = None) -> int:
 
 
 def mark_missed_doses(now: datetime | None = None) -> int:
-    count = doses.mark_missed(now or utcnow())
+    hook = None
+    if current_app.config.get("HUB_ENABLED"):
+        from app.hub.routes import on_missed as hook
+    count = doses.mark_missed(now or utcnow(), on_missed=hook)
     db.session.commit()
     return count
 

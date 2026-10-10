@@ -30,7 +30,10 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     jwt.init_app(app)
     cors.init_app(
         app,
-        resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}},
+        resources={
+            r"/api/*": {"origins": app.config["CORS_ORIGINS"]},
+            r"/hub/*": {"origins": app.config["CORS_ORIGINS"]},
+        },
         allow_headers=["Authorization", "Content-Type"],
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
@@ -41,6 +44,11 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     register_blueprints(smorest_api)
     _register_jwt_handlers()
     register_error_handlers(app)
+    if app.config["HUB_ENABLED"]:
+        from app.hub import hub_bp
+
+        app.register_blueprint(hub_bp, url_prefix="/hub")
+        app.logger.warning("HUB_ENABLED: /hub has no login and acts as %s. Demo use only.", app.config["HUB_PATIENT_EMAIL"])
     return app
 
 

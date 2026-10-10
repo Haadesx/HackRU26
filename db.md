@@ -160,6 +160,16 @@ Enforce: delta is negative for dose, positive for refill; non-zero otherwise.
 Enforce: patient_id + medication_id must reference an existing medication_inventory row.
 Note: every change to medication_inventory.quantity_remaining must have a matching transaction.
 
+*18. Dashboard compatibility tables (hub_*)*
+Used only by the /hub layer that serves the React dashboard's contract (frontend/docs/api-contract.md). Integer ids because that contract uses integers. Doses, stock, schedules and prescriptions stay in the core tables above.
+- hub_settings: ✅ patient_id (PK), settings (JSONB: thresholds, alert toggles, remind_again, voice_language, camera_paused, caregivers = phone contacts with scope all|refills), updated_at.
+- hub_medications: ✅ id (int), patient_id, medication_id, purpose, otc, prescriber, prescriber_phone, pharmacy_name, pharmacy_phone, confidence (JSONB), created_at; ➖ quantity_start, refills_remaining, fill_date. Enforce: patient_id + medication_id unique. id is the dashboard's medication id and stays stable across prescription versions.
+- hub_dose_refs: ✅ id (int), dose_event_id (unique, FK cascade); ➖ method (voice|button|dashboard).
+- hub_scans: ✅ id (int), patient_id, status (reading|asking_patient|needs_caregiver|complete), photos, manual, fields (JSONB, nine {value,state}), confidence (JSONB), guidance (JSONB), history (JSONB), created_at, updated_at; ➖ instructions, medication_id (hub_medications.id). Images are never stored.
+- hub_events: ✅ id (int), patient_id, type (wrong_bottle|double_dose), message, at.
+- hub_alerts: ✅ id (int), patient_id, hub_medication_id, type (low_7|low_5|low_3|no_refills), message, sent_at. Enforce: hub_medication_id + type unique (once per threshold per bottle; low_* rows are deleted on refill).
+- hub_reminders: ✅ id (int), patient_id, hub_medication_id, date, sent_at; ➖ slot.
+
 *DATABASE ENFORCEMENT*
 - Primary keys and foreign keys must be valid.
 - Required fields must not be NULL.
