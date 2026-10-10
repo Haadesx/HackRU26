@@ -238,6 +238,7 @@ Not verified: real SMS/push delivery, load/performance, TigerData cloud.
 
 - **2026-10-10** — Branch `feat/backend-urvi` created from `origin/feat/inference-medcheck` (remote has no `main`). Initial backend: all phases 1–9 from `plan.md` (files under `backend/`), migrations 0001/0002, seed, worker, 61 tests passing, live smoke test. Dependencies: see D. Schema changes recorded in `db.md`: `dose_events` gains `patient_id`, `prescription_item_id`, `medication_id`, `window_name`; `vision_observations.received_at`; schedule frequencies; one schedule per item; prescription item fields required at activation; patient in-app missed alert; adherence bucketing note. API additions beyond `plan.md`: `GET /patients/{id}/prescriptions/active`, `POST /prescriptions/{id}/revise`, `GET /doses/{id}`. Commit: `0c1a4fdad6bd0709de6dbc1801a0fb7f8f223879`.
 - **2026-10-10** — Pushed `feat/backend-urvi` to origin (first push; tracks `origin/feat/backend-urvi`). No code changes.
+- **2026-10-10** — Bug fix: the root `.gitignore` rule `models/` (unanchored) silently excluded `backend/app/models/`, so the first push was missing all model files and would not run from a fresh clone. Cherry-picked the orchestrator's fix (`/models/` anchored to repo root, upstream 179c4d6) and committed the models (`4a01a5b`). Verified: fresh `git worktree` checkout of the branch → `pytest` 61 passed.
 
 ## K. Known issues and outstanding work
 
