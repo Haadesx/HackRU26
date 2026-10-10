@@ -300,6 +300,12 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
     `ELEVENLABS_API_KEY` (verified: 21 voices) + `ELEVENLABS_VOICE_ID`/`_MODEL_ID`;
     committed `.env.example` templates (root + `backend/.env.example`) document the
     names. Planned use: TTS voice reminders via Twilio’s ElevenLabs `<Say>` provider.
+16. **ElevenLabs TTS smoke-tested** (`scripts/tts_smoke.py`): real cloud synthesis
+    (no local engine) of “Rosa, it’s time for your Metformin. Take one tablet with
+    breakfast.” → `~/.medcheck/voice/reminder-*.mp3`, 71.5 KiB in **1.29 s** using
+    “Sarah – Mature, Reassuring, Confident” (`EXAVITQu4vr4xnSDxMaL`) on
+    `eleven_multilingual_v2`. Script supports `--list-voices`, `--text`, `--voice`,
+    `--play`; output stays outside git.
 
 ---
 
