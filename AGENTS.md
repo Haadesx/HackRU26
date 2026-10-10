@@ -4,6 +4,20 @@ Read this file before touching any code. The orchestrator (Apollo) owns this rep
 integration branch and this file. Workers may propose edits via Bus message; do not
 edit it silently.
 
+## 0. Documentation (standing rule — Varesh, 2026-10-10)
+
+- **`docs/inference-medcheck.md` is the single source of truth** for all technical work
+  on this component. It must be updated in the SAME task as any feature, dependency,
+  API/schema, config, architectural decision, bugfix, workaround, or benchmark change.
+- The orchestrator owns the file. Workers must include a `DOC:` block in every milestone
+  report with doc-ready bullets: feature, files, interfaces, dependency/version changes,
+  tests + observed results, caveats/limitations.
+- Never invent completed work; mark proposed / implemented / tested / blocked explicitly.
+- Never put secrets (keys, tokens, passwords) in documentation — names/purposes only.
+- Do not modify teammates' documentation files or unrelated components.
+- `docs/STATUS.md` is the live task board (gates + dispatch log); the technical detail
+  lives in `docs/inference-medcheck.md`.
+
 ## 1. Mission
 
 Build MedCheck's AI inference subsystem: bottle detection, frame-quality guidance,
@@ -20,8 +34,10 @@ fallback**. Do not silently change this architecture.
 | `services/ocr/**`     | PI-2 Orion   | `feat/ocr-orion`      | `.worktrees/pi-2-ocr`           |
 | `services/vlm/**`     | PI-3 Juno    | `feat/vlm-juno`       | `.worktrees/pi-3-vlm`           |
 | `services/api/**`     | PI-4 Athena  | `feat/api-athena`     | `.worktrees/pi-4-api`           |
-| `contracts/**`, `services/common/**`, `docs/**`, `scripts/**`, `tests/integration/**`, root files | ORCHESTRATOR Apollo | `main` | repo root |
+| `contracts/**`, `services/common/**`, `docs/**`, `scripts/**`, `tests/integration/**`, root files | ORCHESTRATOR Apollo | `feat/inference-medcheck` | repo root |
 
+- **Integration branch is `feat/inference-medcheck`** (created 2026-10-10). Do not
+  develop on or merge into `main`; `main` stays untouched for the team.
 - Shared contract changes (`contracts/**`, `services/common/**`) require an
   orchestrator-approved Bus request **before** you code against a change.
 - Keep the API gateway (`services/api`) the only place where service modules are composed.
@@ -30,7 +46,10 @@ fallback**. Do not silently change this architecture.
 ## 3. Git rules
 
 - One repository, five worktrees. Work only inside your worktree.
-- Commit small and often. Conventional prefix: `vision:`, `ocr:`, `vlm:`, `api:`, `contracts:`.
+- The integration branch is `feat/inference-medcheck`; `origin` is
+  `https://github.com/Haadesx/HackRU26`. Push only your own feature branch when the
+  orchestrator authorizes it; never push `main`.
+- Commit small and often. Conventional prefix: `vision:`, `ocr:`, `vlm:`, `api:`, `contracts:`, `docs:`.
 - Never `git reset --hard`, `git clean`, or force-push shared branches.
 - Report the full commit SHA with every milestone.
 - Do not merge another worker's branch yourself; the orchestrator integrates.
@@ -70,6 +89,8 @@ fallback**. Do not silently change this architecture.
 
 Use `message_peer` to Apollo (or plain text if asked) with:
 
+REPORTING FORMAT (required — include the `DOC:` block always)
+
 ```
 STATUS: <in_progress|blocked|done>
 WORK: <what was completed>
@@ -78,6 +99,8 @@ COMMIT: <full SHA or "none">
 TESTS: <commands + observed results>
 FAILURES: <failures/blockers, or "none">
 RESOURCES: <CPU/GPU/VRAM if relevant>
+DOC: <doc-ready bullets for docs/inference-medcheck.md: feature, interfaces,
+      dependency/version changes, verified-vs-unverified, caveats>
 NEXT: <remaining work>
 ```
 

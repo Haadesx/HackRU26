@@ -1,16 +1,20 @@
-# MedCheck Task Board & Integration Log
+# MedCheck Task Board (live)
 
-Owner: **ORCHESTRATOR (Apollo)**. Updated at every gate. Workers report via Bus; only
-the orchestrator edits this file.
+Owner: **ORCHESTRATOR (Apollo)**. Technical details live in
+**`docs/inference-medcheck.md`** (single source of truth). This file is the board only:
+gates, dispatch, and status. Legend: `TODO` / `WIP` / `BLOCKED` / `DONE` / `MERGED`.
 
-Legend: `TODO` / `WIP` / `BLOCKED` / `DONE` / `MERGED`
-Branch: `main` is integration-only. Date line uses UTC.
+## Integration branch
+
+`feat/inference-medcheck` (never `main`). Remote `origin` =
+`https://github.com/Haadesx/HackRU26` (was empty at 2026-10-10; `main` intentionally
+untouched). Push only feature branches.
 
 ## Team
 
 | Agent | Role | Branch | Worktree | Terminal node |
 |---|---|---|---|---|
-| Apollo | Orchestrator / integration | `main` | repo root | `term-mv2rzwwy-f` |
+| Apollo | Orchestrator / integration / docs | `feat/inference-medcheck` | repo root | `term-mv2rzwwy-f` |
 | Atlas | PI-1 VISION | `feat/vision-atlas` | `.worktrees/pi-1-vision` | `term-mv2s2l67-g` |
 | Orion | PI-2 OCR | `feat/ocr-orion` | `.worktrees/pi-2-ocr` | `term-mv2s36el-h` |
 | Juno | PI-3 VLM | `feat/vlm-juno` | `.worktrees/pi-3-vlm` | `term-mv2s5dfg-k` |
@@ -20,49 +24,31 @@ Branch: `main` is integration-only. Date line uses UTC.
 
 | Gate | Description | Status |
 |---|---|---|
-| G1 | Harness/Oct-Bus identification, repo init, frozen contracts | DONE |
+| G1 | Harness/Oct-Bus identification, repo init, frozen contracts | DONE (`51569fd`) |
 | G2 | Worktrees + dispatch all four workers | DONE |
-| G3 | Mock FastAPI scan endpoint live on :8300 | WIP |
-| G4 | Real OCR integrated, structured extraction verified | TODO |
-| G5 | Bottle detection + frame guidance integrated | TODO |
-| G6 | Qwen3-VL benchmarked + integrated where beneficial | TODO |
+| G3 | Mock FastAPI scan endpoint live on :8300 | DELIVERED by Athena (`a855318`); orchestrator re-verify + merge WIP |
+| G4 | Real OCR integrated, structured extraction verified | OCR module delivered (`987dd88`); API wiring TODO |
+| G5 | Bottle detection + frame guidance integrated | Vision module delivered (`f55025c`); API wiring TODO |
+| G6 | Qwen3-VL benchmarked + integrated where beneficial | Benchmarked (hybrid F1 0.993, p50 1.58 s); API wiring TODO |
 | G7 | Full integration tests + GPU measurements | TODO |
-| G8 | Mac→home-rig inference through approved private connection (Tailscale/SSH) | TODO |
-| G9 | Stable contract delivered to iOS/backend | TODO |
+| G8 | Mac→home-rig inference through approved private connection | vLLM `/v1/models` from Mac verified; end-to-end scan TODO |
+| G9 | Stable contract delivered to iOS/backend | Contract frozen; handoff package TODO |
 
-## Dispatch log
+## Worker milestone 1 — delivered (2026-10-10, worker-reported)
 
-- 2026-10-10 — **G1 + G2.** Repo initialized on `main` @ `51569fd` (contracts v1 frozen,
-  AGENTS.md, service ownership). Four worktrees created:
-  `.worktrees/pi-1-vision` (`feat/vision-atlas`), `.worktrees/pi-2-ocr` (`feat/ocr-orion`),
-  `.worktrees/pi-3-vlm` (`feat/vlm-juno`), `.worktrees/pi-4-api` (`feat/api-athena`).
-- 2026-10-10 — All four assignments dispatched via `octoberctl terminal input` (October
-  sanctioned channel) with acceptance criteria + reporting requirements. Acks/reports
-  expected via `message_peer` to Apollo.
-- 2026-10-10 — Environment identified: upstream **Pi 1.1.0** (not an October Pi fork);
-  October Desktop harness is OpenCode-derived `0.87.1-october.3`. Pi talks to October
-  via the auto-generated `~/.pi/agent/extensions/october-bus.ts` + `october-bus-static`
-  Bus MCP. Four worker agent-terminals verified live; Apollo terminal is a `user-shell`
-  terminal (bus mutating tools refused: `unactivated-terminal`), so outbound dispatch
-  uses October's sanctioned `octoberctl terminal input`; inbound uses the native Bus
-  wake path. Loop verified end-to-end with Atlas.
+| Branch | HEAD | Tests (worker) | Notes |
+|---|---|---|---|
+| `feat/vision-atlas` | `f55025c` | 46 passed | quality/detect/label, CPU fallback |
+| `feat/ocr-orion` | `987dd88` | 25 passed | RapidOCR; 33/33 extraction, 8/8 e2e |
+| `feat/vlm-juno` | `9ac2305` | 79 passed | 24-img eval; hybrid F1 0.993; escalation 8.3 % |
+| `feat/api-athena` | `a855318` | 40 passed | mock gateway :8300; live smoke OK |
 
-## Notes
+## Dispatch log (append-only, board level)
 
-- Existing vLLM Qwen3-VL on `hermes-linux` was up at kickoff: 32,607 MiB total,
-  17,659 MiB used, 14,430 MiB free. Treat it as shared; never restart it.
-- vLLM service facts (verified 2026-10-10): Docker container `echo-vllm`,
-  tailnet endpoint `http://ai-rig.tail6d5242.ts.net:8100/v1`, model
-  `Qwen/Qwen3-VL-8B-Instruct-FP8`, max_model_len 16384, auth via bearer key.
-  Credentials live in `~/.medcheck/vllm.env` (mode 600) on the Mac and the rig —
-  never commit or paste the key. `GET /v1/models` verified from the Mac through
-  Tailscale (Gate 8 pre-check).
-- One intrusive GPU experiment at a time, granted by the orchestrator.
-- Contract examples validated against JSON Schema + pydantic:
-  `scripts/validate_contract.py` → 3/3 OK.
-- Synthetic labels + demo tooling committed: `samples/label_*.png` (sharp/blurry/dark),
-  `scripts/scan_demo.sh`, `scripts/gpu_probe.sh`, `tests/integration/test_api_contract.py`.
-- Bounded GPU window granted to PI-3 for evaluation against the *existing* vLLM only
-  (sequential, ≤120 images, nvidia-smi before/after, never restart echo-vllm/Ollama).
-- Worker branches: `feat/vision-atlas`, `feat/ocr-orion`, `feat/vlm-juno`,
-  `feat/api-athena` — all branched from `51569fd`; no worker commits yet at 15:35Z.
+- 2026-10-10 — G1/G2 done; all four assignments dispatched via `octoberctl terminal input`
+  (Apollo terminal is `user-shell` on the Bus; see `docs/inference-medcheck.md` §H.2).
+- 2026-10-10 — All four milestone-1 reports queued to Apollo; orchestrator scope review
+  clean; re-verification and merge into `feat/inference-medcheck` in progress.
+- 2026-10-10 — Documentation system adopted (standing rule in `AGENTS.md` §0):
+  `docs/inference-medcheck.md` maintained by the orchestrator; workers include `DOC:`
+  blocks in reports.
