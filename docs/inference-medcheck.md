@@ -325,7 +325,9 @@ HackRU26/
 │   ├── vlm/                      PI-3 (Juno): client/reconcile/dataset/eval/benchmarks + EVAL.md
 │   └── api/                      PI-4 (Athena): main/pipeline/fixtures + HANDOFF.md
 ├── samples/                      synthetic label images (sharp/blurry/dark)
-├── scripts/                      validate_contract.py, scan_demo.sh, gpu_probe.sh
+├── scripts/                      validate_contract.py, scan_demo.sh, gpu_probe.sh,
+│                                 setup_full_env.sh, local_scan.sh
+├── tools/local_scan/             local test console (stdlib proxy + browser UI + README)
 ├── tests/integration/            orchestrator ASGI contract tests
 ├── docs/
 │   ├── STATUS.md                 live task board + gate log (orchestrator)
@@ -373,6 +375,11 @@ scripts/gpu_probe.sh
 # Combined environment + full suite (fresh env, 277 passed / 12 s)
 scripts/setup_full_env.sh
 .venv-full/bin/python -m pytest services tests/integration -q
+
+# Local test console (no iOS app needed) — upload/webcam → real engine
+scripts/local_scan.sh            # real + VLM (needs ~/.medcheck/vllm.env)
+scripts/local_scan.sh --no-vlm   # real OCR-first only
+# → http://127.0.0.1:8400
 
 # Real mode live (see §I for measured results)
 MEDCHECK_API_MODE=real MEDCHECK_VLM_ENABLED=1 .venv-full/bin/uvicorn services.api.main:app --port 8300
@@ -511,6 +518,14 @@ sequential calls, no restarts).
 - `feat/api-athena` `a855318` — mock FastAPI gateway on :8300, 40 tests, live smoke OK.
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
+
+**2026-10-10** — **Local test console delivered** (`tools/local_scan/`): stdlib proxy +
+browser UI (upload, webcam capture, bbox overlay, field/confidence rendering, raw JSON)
+launched with `scripts/local_scan.sh` on `http://127.0.0.1:8400`. Verified end-to-end:
+page 200, `/api/ready` proxy, multipart scan through the proxy → real pipeline
+(Metformin 0.95, label bbox, 513 ms); ports cleaned up after. JS syntax-checked with
+`node --check`. Lets Varesh exercise the engine from his Mac while the iOS app is still
+in frontend development.
 
 **2026-10-10** — **Milestone 3 merged and verified.** Juno (`9e13a4f`, `16ca2dd`) +
 Athena (`6ec5c0b`, `66d58b0`, `c9a8a4a`) → merges `fc5ff80`, `4d0d32c`. Fresh-env full

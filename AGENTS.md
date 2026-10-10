@@ -34,7 +34,7 @@ fallback**. Do not silently change this architecture.
 | `services/ocr/**`     | PI-2 Orion   | `feat/ocr-orion`      | `.worktrees/pi-2-ocr`           |
 | `services/vlm/**`     | PI-3 Juno    | `feat/vlm-juno`       | `.worktrees/pi-3-vlm`           |
 | `services/api/**`     | PI-4 Athena  | `feat/api-athena`     | `.worktrees/pi-4-api`           |
-| `contracts/**`, `services/common/**`, `docs/**`, `scripts/**`, `tests/integration/**`, root files | ORCHESTRATOR Apollo | `feat/inference-medcheck` | repo root |
+| `contracts/**`, `services/common/**`, `docs/**`, `scripts/**`, `tools/**`, `tests/integration/**`, root files | ORCHESTRATOR Apollo | `feat/inference-medcheck` | repo root |
 
 - **Integration branch is `feat/inference-medcheck`** (created 2026-10-10). Do not
   develop on or merge into `main`; `main` stays untouched for the team.

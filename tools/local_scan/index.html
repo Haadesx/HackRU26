@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MedCheck — Local Test Console</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1b232d; --border:#2a3441;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#4c9aff;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#8b949e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:650}
+  header .sub{color:var(--muted);font-size:13px}
+  #apiState{margin-left:auto;font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--border);color:var(--muted)}
+  main{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1.1fr);gap:20px;padding:20px 24px 40px;max-width:1280px;margin:0 auto}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .card h2{font-size:14px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#06101f;font-weight:650}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  select,textarea,input[type=file]{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:14px}
+  textarea{width:100%;min-height:70px;font:12px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
+  label{font-size:13px;color:var(--muted)}
+  .previewWrap{position:relative;margin-top:12px;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:#000;min-height:120px;display:flex;align-items:center;justify-content:center}
+  .previewWrap img,.previewWrap video{max-width:100%;display:block}
+  .previewWrap canvas{position:absolute;inset:0;width:100%;height:100%}
+  .placeholder{color:var(--muted);font-size:13px;padding:36px 12px;text-align:center}
+  .chip{display:inline-block;padding:4px 12px;border-radius:99px;font-size:13px;font-weight:650}
+  .chip.ok{background:rgba(63,185,80,.15);color:var(--ok);border:1px solid var(--ok)}
+  .chip.uncertain{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid var(--warn)}
+  .chip.needs_rescan{background:rgba(219,109,40,.18);color:#db6d28;border:1px solid #db6d28}
+  .chip.no_medication_found{background:rgba(139,148,158,.15);color:var(--info);border:1px solid var(--info)}
+  .chip.error{background:rgba(248,81,73,.15);color:var(--bad);border:1px solid var(--bad)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td{padding:6px 4px;border-bottom:1px solid var(--border);vertical-align:top}
+  td.k{color:var(--muted);width:38%}
+  .bar{display:inline-block;height:7px;border-radius:4px;background:var(--accent);vertical-align:middle;min-width:2px}
+  .barTrack{display:inline-block;width:64px;height:7px;border-radius:4px;background:var(--panel2);margin-left:8px;vertical-align:middle}
+  .src{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:6px}
+  .guidance li{margin:4px 0}
+  .muted{color:var(--muted);font-size:13px}
+  details{margin-top:14px}
+  summary{cursor:pointer;color:var(--muted);font-size:13px}
+  pre{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px;overflow:auto;max-height:420px;font:12px/1.5 ui-monospace,Menlo,monospace}
+  footer{padding:0 24px 30px;color:var(--muted);font-size:12px;max-width:1280px;margin:0 auto}
+  .err{color:var(--bad);font-size:13px;margin-top:10px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>MedCheck — Local Test Console</h1>
+  <span class="sub">capture or upload a label photo · runs against the local inference API</span>
+  <span id="apiState">checking API…</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1 · Input</h2>
+    <div class="row">
+      <button id="camBtn">Start camera</button>
+      <button id="shotBtn" disabled>Capture</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <input type="file" id="file" accept="image/*">
+    </div>
+    <div class="previewWrap" id="wrap">
+      <div class="placeholder" id="ph">No image yet — start the camera or choose a photo.<br>Tip: hold the bottle steady and fill the frame with the label.</div>
+      <video id="video" autoplay playsinline muted style="display:none"></video>
+      <img id="img" style="display:none" alt="">
+      <canvas id="overlay" style="display:none"></canvas>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label>Mode
+        <select id="mode">
+          <option value="real" selected>real</option>
+          <option value="mock">mock</option>
+        </select>
+      </label>
+      <button class="primary" id="scanBtn" disabled style="margin-left:auto">Scan label</button>
+    </div>
+    <details style="margin-top:10px">
+      <summary>Registered candidates (optional hints)</summary>
+      <textarea id="hints">{"known_candidates":[{"name":"Metformin","strength":{"value":500,"unit":"mg"}},{"name":"Lisinopril","strength":{"value":10,"unit":"mg"}}]}</textarea>
+      <div class="muted">Uncheck or clear to scan without a registry — the engine reads the label first and only escalates to the VLM on weak or mismatched identity.</div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>2 · Result</h2>
+    <div id="result"><div class="muted">Scan a label to see structured output. Yes — this is real inference; the only thing mocked is the mock mode.</div></div>
+  </section>
+</main>
+
+<footer>
+  Informational only — not medical advice. Inference reads labels; it never infers ingestion and never authorizes dosing.
+  The backend owns schedules, history and prescription authority. Images are forwarded in memory and not stored.
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const apiState = $("apiState");
+let stream = null, currentBlob = null;
+let currentMeta = null; // {bottle:{bbox},label:{bbox}} for overlay
+
+async function api(path){ const r = await fetch(path); return {ok:r.ok, data: await r.json().catch(()=>null)}; }
+
+(async function ping(){
+  try{
+    const h = await api("/api/health"); const rd = await api("/api/ready");
+    const mode = h.data?.service ? (rd.data?.mode || "?") : "?";
+    apiState.textContent = rd.data?.ready ? `API ready · ${mode}` : `API not ready · ${mode}`;
+    apiState.style.color = rd.data?.ready ? "var(--ok)" : "var(--warn)";
+  }catch(e){ apiState.textContent="API unreachable"; apiState.style.color="var(--bad)"; }
+})();
+
+$("camBtn").onclick = async () => {
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}});
+    const v=$("video"); v.srcObject=stream; v.style.display="block";
+    $("img").style.display="none"; $("ph").style.display="none"; $("overlay").style.display="none";
+    $("shotBtn").disabled=false; $("stopBtn").disabled=false;
+    // mirror front camera only
+    const s=stream.getVideoTracks()[0].getSettings();
+    v.style.transform = s.facingMode==="user" ? "scaleX(-1)" : "none";
+  }catch(e){ $("result").innerHTML = `<div class="err">Camera unavailable: ${e.message}\nAllow camera access for localhost, or use the file picker.</div>`; }
+};
+$("stopBtn").onclick = () => { stream?.getTracks().forEach(t=>t.stop()); stream=null;
+  $("video").style.display="none"; $("stopBtn").disabled=true; $("shotBtn").disabled=true; $("camBtn").disabled=false; };
+$("shotBtn").onclick = () => {
+  const v=$("video"); const c=document.createElement("canvas");
+  c.width=v.videoWidth; c.height=v.videoHeight;
+  const flip = stream && stream.getVideoTracks()[0].getSettings().facingMode==="user";
+  const ctx=c.getContext("2d"); if(flip){ctx.translate(c.width,0);ctx.scale(-1,1);}
+  ctx.drawImage(v,0,0);
+  c.toBlob(b=>{ currentBlob=b; showBlob(b); }, "image/png", 0.95);
+};
+$("file").onchange = (e) => { const f=e.target.files[0]; if(f){ currentBlob=f; showBlob(f); } };
+
+function showBlob(blob){
+  const url=URL.createObjectURL(blob);
+  const img=$("img"); img.src=url; img.style.display="block";
+  $("ph").style.display="none"; $("video").style.display="none";
+  $("scanBtn").disabled=false;
+  img.onload = () => drawOverlay(null);
+  $("stopBtn").disabled=true; $("camBtn").disabled=false;
+}
+
+function bboxToRect(bb, img){
+  return { x: bb.x*img.naturalWidth, y: bb.y*img.naturalHeight, w: bb.w*img.naturalWidth, h: bb.h*img.naturalHeight };
+}
+function drawOverlay(result){
+  const img=$("img"), cv=$("overlay");
+  if(!img.naturalWidth){ cv.style.display="none"; return; }
+  cv.width=img.naturalWidth; cv.height=img.naturalHeight; cv.style.display="block";
+  const ctx=cv.getContext("2d"); ctx.clearRect(0,0,cv.width,cv.height);
+  const draw=(bb,color,label)=>{
+    const r=bboxToRect(bb,img);
+    ctx.strokeStyle=color; ctx.lineWidth=Math.max(3,cv.width/300);
+    ctx.strokeRect(r.x,r.y,r.w,r.h);
+    ctx.font=`${Math.max(16,cv.width/34)}px -apple-system,sans-serif`;
+    const tw=ctx.measureText(label).width+12;
+    ctx.fillStyle=color; ctx.fillRect(r.x,Math.max(0,r.y-24),tw,24);
+    ctx.fillStyle="#06101f"; ctx.fillText(label,r.x+6,Math.max(18,r.y-6));
+  };
+  if(result?.bottle?.detected && result.bottle.bbox) draw(result.bottle.bbox,"#4c9aff","bottle");
+  if(result?.label?.detected && result.label.bbox) draw(result.label.bbox,"#3fb950","label");
+  if(!result){ // clear on new image
+    ctx.clearRect(0,0,cv.width,cv.height);
+  }
+}
+
+$("scanBtn").onclick = async () => {
+  if(!currentBlob) return;
+  $("scanBtn").disabled=true; $("scanBtn").textContent="Scanning…";
+  $("result").innerHTML = `<div class="muted">Running vision → OCR → registry → (VLM only if needed) …</div>`;
+  const fd=new FormData();
+  fd.append("image", currentBlob, currentBlob.name || "capture.png");
+  fd.append("mode", $("mode").value);
+  fd.append("client","test");
+  const hints=$("hints").value.trim(); if(hints){ fd.append("hints", hints); }
+  try{
+    const t0=performance.now();
+    const r=await fetch("/api/scan",{method:"POST",body:fd});
+    const ms=Math.round(performance.now()-t0);
+    const body=await r.json();
+    if(!r.ok && body?.error){ $("result").innerHTML=`<div class="err">HTTP ${r.status}: ${body.error.message||body.error.code}</div>`; return; }
+    render(body, ms);
+    drawOverlay(body);
+  }catch(e){ $("result").innerHTML=`<div class="err">Scan failed: ${e.message}</div>`; }
+  finally{ $("scanBtn").disabled=false; $("scanBtn").textContent="Scan label"; }
+};
+
+const esc=(s)=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function field(f){
+  if(!f) return `<span class="muted">—</span>`;
+  const v = f.value===null||f.value===undefined||f.value==="" ? `<span class="muted">not found</span>` : esc(f.value)+(f.unit?` ${esc(f.unit)}`:"");
+  const pct=Math.round((f.confidence||0)*100);
+  return `${v}<span class="src">${f.source||"?"}</span><span class="barTrack"><span class="bar" style="width:${pct}%"></span></span><span class="muted"> ${pct}%</span>`;
+}
+function render(p, uiMs){
+  const st=p.status||"error";
+  const timing=p.timing?.stages||{};
+  const stages=Object.entries(timing).filter(([,v])=>v>0).map(([k,v])=>`${k} ${Math.round(v)}ms`).join(" · ");
+  const med=p.medication||{};
+  const cand=(p.candidates||[]).map(c=>`<li>${esc(c.name)}${c.strength?` ${c.strength.value??""}${c.strength.unit??""}`:""} <span class="muted">score ${(c.score??0).toFixed(2)} · ${c.source}</span></li>`).join("") || `<li class="muted">none</li>`;
+  const guide=(p.frame_quality?.guidance||[]).map(g=>`<li>${esc(g)}</li>`).join("");
+  const unc=(p.uncertainty?.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join("") || `<li class="muted">none</li>`;
+  $("result").innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <span class="chip ${st}">${st}</span>
+      <span class="muted">round-trip ${uiMs} ms · engine ${Math.round(p.timing?.total_ms??0)} ms · ${p.mode||""}</span>
+    </div>
+    ${guide?`<ul class="guidance">${guide}</ul>`:""}
+    <table>
+      <tr><td class="k">Name</td><td>${field(med.name)}</td></tr>
+      <tr><td class="k">Strength</td><td>${field(med.strength)}</td></tr>
+      <tr><td class="k">Form</td><td>${field(med.form)}</td></tr>
+      <tr><td class="k">Manufacturer</td><td>${field(med.manufacturer)}</td></tr>
+      <tr><td class="k">Bottle / label</td><td>${p.bottle?.detected?"bottle ✓":"bottle ✗"} · ${p.label?.detected?"label ✓":"label ✗"} <span class="muted">(${((p.bottle?.confidence??0)*100).toFixed(0)}% / ${((p.label?.confidence??0)*100).toFixed(0)}%)</span></td></tr>
+      <tr><td class="k">Instructions</td><td>${p.instructions?.parsed?.length?p.instructions.parsed.map(i=>`<div>${esc(i.text)} <span class="src">${i.kind}</span></div>`).join(""):`<span class="muted">not found</span>`}</td></tr>
+      <tr><td class="k">Registered candidates</td><td><ul style="margin:0;padding-left:18px">${cand}</ul></td></tr>
+      <tr><td class="k">VLM interpretation</td><td>${p.interpretation?.available?`${esc(p.interpretation.summary||"")}<div class="muted">${esc(p.interpretation.model||"")}</div>`:`<span class="muted">not used (OCR was sufficient)</span>`}</td></tr>
+      <tr><td class="k">Uncertainty</td><td>${p.uncertainty?.level}${p.uncertainty?.rescan_required?" · rescan" : ""}<ul style="margin:4px 0 0;padding-left:18px">${unc}</ul></td></tr>
+      <tr><td class="k">Timing</td><td class="muted">${stages||"—"}</td></tr>
+      <tr><td class="k">Raw label text</td><td class="muted" style="white-space:pre-wrap">${esc(p.label?.text||"—")}</td></tr>
+    </table>
+    <details><summary>Raw JSON response</summary><pre>${esc(JSON.stringify(p,null,2))}</pre></details>
+    <div class="muted" style="margin-top:10px">${esc(p.safety?.disclaimer||"")}</div>
+  `;
+}
+</script>
+</body>
+</html>
