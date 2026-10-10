@@ -48,7 +48,7 @@ def test_scan_accepts_correct_bearer(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["mode"] == "mock"
-    assert body["contract_version"] == "1.1.0"
+    assert body["contract_version"] == "1.2.0"
 
 
 def test_auth_disabled_when_key_unset(monkeypatch):
