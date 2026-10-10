@@ -1,0 +1,9 @@
+# PI-3 VLM service dependencies (owner: Juno)
+# Install: uv pip install --python .venv/bin/python -r services/vlm/requirements.txt
+pydantic>=2.6,<3
+httpx>=0.27
+pillow>=10
+pytesseract>=0.3.10   # local OCR baseline for evaluation; binary: tesseract
+
+# dev/test
+pytest>=8

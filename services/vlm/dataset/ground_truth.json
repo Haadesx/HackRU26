@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "name": "medcheck-synthetic-labels",
+  "seed": 1337,
+  "note": "Fully synthetic test fixtures. No real medication labels or patient data.",
+  "count": 24,
+  "images": [
+    {
+      "id": "img_001",
+      "file": "images/img_001_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-916151",
+      "ground_truth": {
+        "name": "Metformin HCl",
+        "strength_value": 500,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 tablet by mouth twice daily"
+      },
+      "sha256": "4e1f722ea2b711d96f758b57e62723ad0eeb2e6282023d084b3de5819955cba9"
+    },
+    {
+      "id": "img_002",
+      "file": "images/img_002_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-758203",
+      "ground_truth": {
+        "name": "Lisinopril",
+        "strength_value": 10,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Bluepeak Labs",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "957bec0aa557c2a0812cbd80c0cc8424b44409103c88e0c66a831fb41fcab720"
+    },
+    {
+      "id": "img_003",
+      "file": "images/img_003_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-469416",
+      "ground_truth": {
+        "name": "Atorvastatin Calcium",
+        "strength_value": 20,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth at bedtime"
+      },
+      "sha256": "723fd9425682f54f64828fb94507f626c561b380cf41b03bf9f6efa0a017dce1"
+    },
+    {
+      "id": "img_004",
+      "file": "images/img_004_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-574988",
+      "ground_truth": {
+        "name": "Levothyroxine Sodium",
+        "strength_value": 50,
+        "strength_unit": "mcg",
+        "form": "Tablet",
+        "manufacturer": "Vertexia Labs",
+        "instructions": "Take 1 tablet by mouth each morning before food"
+      },
+      "sha256": "850de7822b07839b4cc545e6f22698a7a10d533bc33108a8aad2472cae96bf3c"
+    },
+    {
+      "id": "img_005",
+      "file": "images/img_005_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-982546",
+      "ground_truth": {
+        "name": "Amoxicillin",
+        "strength_value": 875,
+        "strength_unit": "mg",
+        "form": "Capsule",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 capsule by mouth every 12 hours for 7 days"
+      },
+      "sha256": "49ba03bcff3caa397684b5bb8242e48cba2622173a81decebfb27b144d6dba61"
+    },
+    {
+      "id": "img_006",
+      "file": "images/img_006_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-450449",
+      "ground_truth": {
+        "name": "Omeprazole",
+        "strength_value": 20,
+        "strength_unit": "mg",
+        "form": "Capsule",
+        "manufacturer": "Bluepeak Labs",
+        "instructions": "Take 1 capsule by mouth once daily before breakfast"
+      },
+      "sha256": "a178da0ec7acdc76aa741812f6caf7e681bddeb8aaaa8f96fd5f53886deb4432"
+    },
+    {
+      "id": "img_007",
+      "file": "images/img_007_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-537107",
+      "ground_truth": {
+        "name": "Amlodipine Besylate",
+        "strength_value": 5,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "1cf959fa1a5c4c223a705799b3c41502efd33365f0e0155984ffbd0275df09d6"
+    },
+    {
+      "id": "img_008",
+      "file": "images/img_008_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-204054",
+      "ground_truth": {
+        "name": "Sertraline HCl",
+        "strength_value": 50,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Vertexia Labs",
+        "instructions": "Take 1 tablet by mouth once daily in the morning"
+      },
+      "sha256": "86bc36f1773509dcc1624f65cd330911848c8904657643677e1eeda23e3ff478"
+    },
+    {
+      "id": "img_009",
+      "file": "images/img_009_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-413639",
+      "ground_truth": {
+        "name": "Metoprolol Succinate",
+        "strength_value": 25,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "614bdbec175e109600f656790ba6ce8d5035d0b056cbf774c7a81ca1e177537a"
+    },
+    {
+      "id": "img_010",
+      "file": "images/img_010_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-611536",
+      "ground_truth": {
+        "name": "Gabapentin",
+        "strength_value": 300,
+        "strength_unit": "mg",
+        "form": "Capsule",
+        "manufacturer": "Bluepeak Labs",
+        "instructions": "Take 1 capsule by mouth three times daily"
+      },
+      "sha256": "fff9a56886c0ddbe49f5ba67ef8b6d3ed6f8bc7765228d7053a7dc3c47874b89"
+    },
+    {
+      "id": "img_011",
+      "file": "images/img_011_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-508951",
+      "ground_truth": {
+        "name": "Hydrochlorothiazide",
+        "strength_value": 12.5,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily in the morning"
+      },
+      "sha256": "97e86a556a01159c057026e95d2f1df95462c05ab444e452eadec9486c32a9ea"
+    },
+    {
+      "id": "img_012",
+      "file": "images/img_012_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-105688",
+      "ground_truth": {
+        "name": "Montelukast Sodium",
+        "strength_value": 10,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Vertexia Labs",
+        "instructions": "Take 1 tablet by mouth once daily at bedtime"
+      },
+      "sha256": "5531b3e068b1c52b682d24b35e98c489305c71fd18a5a82a1e37c7a71f6d34ab"
+    },
+    {
+      "id": "img_013",
+      "file": "images/img_013_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-615348",
+      "ground_truth": {
+        "name": "Losartan Potassium",
+        "strength_value": 50,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "ecf7f86ee063b324bce198c6b24604ec4ccbe596eabb930678e00c099fbee196"
+    },
+    {
+      "id": "img_014",
+      "file": "images/img_014_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-269020",
+      "ground_truth": {
+        "name": "Pantoprazole Sodium",
+        "strength_value": 40,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Bluepeak Labs",
+        "instructions": "Take 1 tablet by mouth once daily before breakfast"
+      },
+      "sha256": "337a8a188e98a5f357b9ea5b983e04a6935522ca4a40f825336bf601e3f527fe"
+    },
+    {
+      "id": "img_015",
+      "file": "images/img_015_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-412675",
+      "ground_truth": {
+        "name": "Escitalopram",
+        "strength_value": 10,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "9d5bb247ab23bfee0844deb62da23d74ececf78f58726005c5604960860454cf"
+    },
+    {
+      "id": "img_016",
+      "file": "images/img_016_clean.png",
+      "condition": "clean",
+      "rx_number": "SYN-313407",
+      "ground_truth": {
+        "name": "Prednisone",
+        "strength_value": 5,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Vertexia Labs",
+        "instructions": "Take 1 tablet by mouth once daily in the morning"
+      },
+      "sha256": "db2a29c3d6bc4d197b57dc2aa48f76b93f23e30bea3586e3f6d7a65213fa01bc"
+    },
+    {
+      "id": "img_017",
+      "file": "images/img_017_blur.png",
+      "condition": "blur",
+      "rx_number": "SYN-664146",
+      "ground_truth": {
+        "name": "Lisinopril",
+        "strength_value": 10,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Bluepeak Labs",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "019de6495ab7672ad4450bd10032a7d6fa5ff126ae2370be2708f737f76ffa8d"
+    },
+    {
+      "id": "img_018",
+      "file": "images/img_018_dark.png",
+      "condition": "dark",
+      "rx_number": "SYN-808794",
+      "ground_truth": {
+        "name": "Atorvastatin Calcium",
+        "strength_value": 20,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth at bedtime"
+      },
+      "sha256": "010a9374abbd7f8f011761f1a328a7d581130ec5c77a35246ba10d57fe1e5f12"
+    },
+    {
+      "id": "img_019",
+      "file": "images/img_019_glare.png",
+      "condition": "glare",
+      "rx_number": "SYN-361335",
+      "ground_truth": {
+        "name": "Amoxicillin",
+        "strength_value": 875,
+        "strength_unit": "mg",
+        "form": "Capsule",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 capsule by mouth every 12 hours for 7 days"
+      },
+      "sha256": "a4d5319ec8255619a930c606486fbc1a8842e75e0cae938842f9fb56b92a16fe"
+    },
+    {
+      "id": "img_020",
+      "file": "images/img_020_tilt.png",
+      "condition": "tilt",
+      "rx_number": "SYN-705628",
+      "ground_truth": {
+        "name": "Amlodipine Besylate",
+        "strength_value": 5,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "4fa5a02a203106976b0c140de65e9dd8f592e7eb6cb08f9b4ff31ede2e68dafa"
+    },
+    {
+      "id": "img_021",
+      "file": "images/img_021_small_text.png",
+      "condition": "small_text",
+      "rx_number": "SYN-113912",
+      "ground_truth": {
+        "name": "Metoprolol Succinate",
+        "strength_value": 25,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "7ce852a2375302b09136dc80ce2351b5e3abb93443b000732eaec549191bfd06"
+    },
+    {
+      "id": "img_022",
+      "file": "images/img_022_low_contrast.png",
+      "condition": "low_contrast",
+      "rx_number": "SYN-595503",
+      "ground_truth": {
+        "name": "Hydrochlorothiazide",
+        "strength_value": 12.5,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily in the morning"
+      },
+      "sha256": "2c8946b12632a798764a7ef16e305386da2673eb14f64442ff2d2730195bda17"
+    },
+    {
+      "id": "img_023",
+      "file": "images/img_023_tilt.png",
+      "condition": "tilt",
+      "rx_number": "SYN-939698",
+      "ground_truth": {
+        "name": "Losartan Potassium",
+        "strength_value": 50,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Acme Pharma",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "c0fb361200dd5d449a0ce41ef5a10888d35f11ebf0233109455ab6252b594a2e"
+    },
+    {
+      "id": "img_024",
+      "file": "images/img_024_blur.png",
+      "condition": "blur",
+      "rx_number": "SYN-220289",
+      "ground_truth": {
+        "name": "Escitalopram",
+        "strength_value": 10,
+        "strength_unit": "mg",
+        "form": "Tablet",
+        "manufacturer": "Northstar Generics",
+        "instructions": "Take 1 tablet by mouth once daily"
+      },
+      "sha256": "37934419d46e04d2d3ace82b855c9f4e4c3f864da0b2f7e3367d62c87c08e2da"
+    }
+  ]
+}

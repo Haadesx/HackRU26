@@ -1,0 +1,224 @@
+{
+  "generated_at": "2026-10-10T19:37:30+00:00",
+  "dataset": "medcheck-synthetic-labels",
+  "images": 24,
+  "conditions": {
+    "blur": 2,
+    "clean": 16,
+    "dark": 1,
+    "glare": 1,
+    "low_contrast": 1,
+    "small_text": 1,
+    "tilt": 2
+  },
+  "modes": {
+    "ocr_only": {
+      "mode": "ocr_only",
+      "samples": 24,
+      "fields": {
+        "name": {
+          "precision": 0.958,
+          "recall": 0.958,
+          "f1": 0.958,
+          "tp": 23,
+          "fp": 1,
+          "fn": 1,
+          "truth_present": 24
+        },
+        "strength_value": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "strength_unit": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "form": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "manufacturer": {
+          "precision": 1.0,
+          "recall": 0.958,
+          "f1": 0.979,
+          "tp": 23,
+          "fp": 0,
+          "fn": 1,
+          "truth_present": 24
+        },
+        "instructions": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        }
+      },
+      "macro_f1": 0.99
+    },
+    "vlm_only": {
+      "mode": "vlm_only",
+      "samples": 24,
+      "fields": {
+        "name": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "strength_value": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "strength_unit": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "form": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "manufacturer": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "instructions": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        }
+      },
+      "macro_f1": 1.0
+    },
+    "ocr_first_vlm": {
+      "mode": "ocr_first_vlm",
+      "samples": 24,
+      "fields": {
+        "name": {
+          "precision": 0.958,
+          "recall": 0.958,
+          "f1": 0.958,
+          "tp": 23,
+          "fp": 1,
+          "fn": 1,
+          "truth_present": 24
+        },
+        "strength_value": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "strength_unit": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "form": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "manufacturer": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        },
+        "instructions": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "tp": 24,
+          "fp": 0,
+          "fn": 0,
+          "truth_present": 24
+        }
+      },
+      "macro_f1": 0.993
+    }
+  },
+  "vlm": {
+    "model": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+    "calls": 26,
+    "budget": 120,
+    "invocation_rate": 0.083
+  },
+  "latency_ms": {
+    "ocr": {
+      "n": 24,
+      "p50": 270.6,
+      "p90": 278.5,
+      "mean": 266.5
+    },
+    "vlm": {
+      "n": 26,
+      "p50": 1573.2,
+      "p90": 1675.7,
+      "mean": 1668.4
+    }
+  },
+  "vram": {
+    "before": "32607, 17865, 14224",
+    "after": "32607, 18383, 13706"
+  },
+  "errors": []
+}

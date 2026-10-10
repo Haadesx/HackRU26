@@ -42,3 +42,26 @@ def should_use_vlm(uncertainty: dict, config: dict | None = None) -> bool: ...
 - EVAL.md with measured numbers and an explicit recommendation.
 - No second VLM launched; VRAM logged.
 - Report SHA + tests to Apollo via Bus.
+
+## Implementation status
+
+| Path | Contents |
+|---|---|
+| `client.py` | `Qwen3VLClient` OpenAI-compatible adapter; env config, timeouts, retries off, OCR-verify prompt mode, lenient JSON parsing |
+| `reconcile.py` | `should_use_vlm()`, `uncertainty_from_fields()`, `reconcile_fields()` with source attribution and contract-shaped medication mapping |
+| `dataset/` | 24 deterministic synthetic label images + `ground_truth.json` (regenerate: `python -m services.vlm.dataset.generate`) |
+| `eval/` | OCR-vs-VLM runner, Tesseract baseline engine, metrics, `results.json`; summary in `EVAL.md` |
+| `benchmarks/` | gated sequential GPU benchmark, `results.json` |
+| `tests/` | 79 tests; mocked HTTP + local OCR only, no GPU |
+
+```bash
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python -r services/vlm/requirements.txt
+.venv/bin/pytest services/vlm/tests -q
+.venv/bin/python -m services.vlm.eval.run_eval --env-file ~/.medcheck/vllm.env \
+    --ssh-host hermes-linux --md
+```
+
+Measured results (2026-10-10, granted GPU window, 40 sequential calls): VLM-only 1.0
+macro F1 on the synthetic set; OCR-first 0.993 at an 8.3% escalation rate; VLM p50
+≈1.58 s, 0.63 img/s, ≈13.7 GiB VRAM headroom. Details and recommendation: [`EVAL.md`](EVAL.md).
