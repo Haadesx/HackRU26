@@ -6,7 +6,7 @@
 > verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
 > refreshed at every milestone.
 >
-> **Last updated:** 2026-10-10 ~18:05 UTC · **Repo:** https://github.com/Haadesx/HackRU26
+> **Last updated:** 2026-10-10 ~19:05 UTC · **Repo:** https://github.com/Haadesx/HackRU26
 > **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
 
 ---
@@ -180,16 +180,19 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
 
 ## 6. Web UI / iOS status
 
-- **Web UI (Sinchana) is merged into the integration branch** (`frontend/`, React 18 + Vite +
-  Tailwind) and the Python suite stays green (**452/452**).
-- The UI expects a **hub** at `VITE_API_URL` (default `:8000`) with `GET /state`,
-  `POST /scans` (multipart `photo`), `POST /scans/{id}/photos` (extra photos merged),
-  `POST /scans/{id}/complete`, `GET /adherence`, `PUT /settings` (see
-  `frontend/docs/api-contract.md`). Its nine scan fields map to our contract v1.3 — table +
-  the open decision in `docs/client-integration.md` §3b.
+- **The full stack is live and verified**: Sinchana's dashboard → **Urvi's `/hub`
+  compatibility layer** (backend, persists to TimescaleDB) → **real inference** (`:8300`,
+  YOLO + OCR + fusion, VLM when needed). Headless-browser check: Home renders patient
+  “Ada”/caregiver “Cara”, three medications with real stock, today's doses,
+  “Connected to Ada's hub”.
+- **Decision made:** the backend's `/hub` is the primary hub (Urvi built it; it persists,
+  ships 15 tests, prefers our v1.3 `label_meta`); the orchestrator's file-backed adapter
+  (`tools/hub_adapter`, `:8500`) stays as a no-DB fallback (`scripts/run_ui_demo.sh
+  --adapter`).
+- Run it: `scripts/run_ui_demo.sh` → UI **http://127.0.0.1:5199** (backend `:8000/hub`,
+  inference `:8300`). The demo uses the seeded patient `demo.patient@example.com`
+  (`HUB_PATIENT_EMAIL`); `/hub` has **no auth** and must stay on localhost.
 - **iOS (Aparajita)** has no branch on the remote yet (frontend in development per Varesh).
-- **Decision needed:** does the hub (backend) proxy inference server-to-server (Sinchana’s
-  model; recommended) or do clients call inference directly (Urvi’s current model)?
 
 ---
 
@@ -316,6 +319,16 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
     Verified live on her seeded TimescaleDB: 2 meds with real stock, a scan-added
     medication kept the others, count 46→50, refill 23→53 pills. Gaps: medication
     edit/stop and alerts/events/reminders are not mapped yet; settings stay adapter-local.
+18. **Urvi shipped a `/hub` compatibility layer** (backend owns the hub):
+    `backend/app/hub/` + `hub_*` tables (migration 0003), 15 tests, prefers inference v1.3
+    `label_meta`, refuses duplicates (409 “already being tracked”), full medication
+    CRUD/refill/count semantics, supply alerts. Merged into `feat/integration`.
+19. **Full-stack verification (orchestrator):** migrated + independently ran her 15 hub
+    tests (pass); live scan through `/hub` → 9/9 fields from real inference; complete →
+    new medication persisted (+ duplicate refusal); UI switched to
+    `VITE_API_URL=http://localhost:8000/hub` with CORS verified; headless-Chrome render of
+    Home shows real backend data. `run_ui_demo.sh` now starts the whole stack (her hub
+    primary, `--adapter` fallback). Inference suite **522/522**; backend suite green.
 
 ---
 
