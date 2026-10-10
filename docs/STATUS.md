@@ -39,9 +39,9 @@ untouched). Push only feature branches.
 | Branch | Tip | Tests (worker) | Notes |
 |---|---|---|---|
 | `feat/vision-atlas` | `ae1c3a8` | 76 passed | noise gate; merged (`5b60648`+`34480c3`) |
-| `feat/ocr-orion` | `09c41d3` | 52 passed | matcher; merged (`a49afd0`) |
+| `feat/ocr-orion` | `cb31f7e` | 75 passed | matcher + v1.1 dose extraction; merged (`f284f3b`) |
 | `feat/vlm-juno` | `16ca2dd` | 104 passed | M3 fields+normalization; merged (`fc5ff80`) |
-| `feat/api-athena` | `66d58b0` | 59 passed | M3 escalation wiring + HANDOFF; merged (`4d0d32c`) |
+| `feat/api-athena` | `2e53239` | 62 passed | v1.1 dose + backend bridge + HANDOFF; merged (`aa3ccd3`) |
 
 ## Final verification (orchestrator)
 
@@ -66,6 +66,10 @@ untouched). Push only feature branches.
   Orchestrator backend-fit test added; M4 dispatched (Orion extraction, Athena
   pass-through + HANDOFF). Fit test's real-scan dose assertion is expected red until M4
   merges.
+
+- 2026-10-10 — **M4 merged**: contract v1.1 `instructions.dose` end-to-end (Orion
+  extraction `cb31f7e`, Athena bridge `2e53239`); full suite **326/326** including the
+  backend-fit test. Atlas M5 (ONNX YOLO11n bottle detector) in flight.
 
 ## Dispatch log (append-only, board level)
 

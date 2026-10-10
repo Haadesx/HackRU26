@@ -52,7 +52,7 @@ October Bus (agent coordination; see §H).
 | PI-1 Vision: quality/detect/label + **crop_label handoff** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED + noise regression **fixed** (`ae1c3a8`) | `feat/vision-atlas` → merges `5b60648` + `ae1c3a8` |
 | PI-3 VLM adapter + eval + **escalation triggers + normalization** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` → merges `91a5c83`, `fc5ff80` |
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
-| Full-system acceptance on merged tree | ✅ **293 passed / 0 failed** (fresh env, M3 merged) | `feat/inference-medcheck` |
+| Full-system acceptance on merged tree | ✅ **326 passed / 0 failed** (M4 merged: contract v1.1 + dose + backend fit) | `feat/inference-medcheck` |
 
 ---
 
@@ -539,7 +539,15 @@ Client mapping from our ScanResponse: `medication.name.value → drug_name`,
   Client mapping documented in `tests/integration/test_backend_fit.py`; fallback `1`
   only when the label does not state a per-dose amount (never from package size).
 
-| **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | mock mapping passes; real-scan `instructions.dose` assertion **expected red until M4 merges** (Orion extraction + Athena pass-through) | Orchestrator ⏳ |
+| **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | ✅ green after M4: real scan → `instructions.dose {1,"tablet",conf≥0.5,"ocr"}`; payload maps to Urvi's ScanSchema fields | Orchestrator ✅ |
+
+**2026-10-10** — **M4 merged; backend fit complete.** Orion `cb31f7e` (structured per-dose
+quantity extraction, 75 OCR tests) + Athena `2e53239` (real+mock `instructions.dose`,
+backend bridge, HANDOFF) merged into integration. Full suite **326 passed / 0 failed**,
+including the orchestrator backend-fit test ↔ Urvi's `POST /api/v1/scans` payload.
+Contract is now v1.1.0 (additive). Atlas M5 in flight: ONNX YOLO11n bottle detector
+(real-photo evidence: heuristic 0/3 detections vs YOLO 0.485 on the clearest real scan,
+~60 ms CPU; model at `models/yolo11n.onnx`, gitignored).
 
 **2026-10-10** — **Contract v1.1 + backend fit (M4).** Added additive
 `instructions.dose {quantity, unit, confidence, source}` to the frozen contract (minor
