@@ -2,26 +2,36 @@
 OCR/VLM field reads with source attribution.
 
 The product architecture is OCR-first: the API asks
-``should_use_vlm(uncertainty)`` after OCR and only pays for a VLM call when the
-OCR read is weak or a critical field is low-confidence. ``reconcile_fields``
-then merges both reads without ever fabricating a value.
+``should_use_vlm(uncertainty)`` after OCR and only pays for a VLM call when an
+escalation field (default: ``name``, ``strength_value``) is missing or weak, the
+candidate matcher reports a mismatch, or the frame score is too low. Missing
+optional fields (``manufacturer``, ``form``, ``instructions``) never escalate on
+their own. ``reconcile_fields`` then merges both reads without ever fabricating
+a value.
+
+Equivalence rules (normalization, not semantics) keep noise out of conflicts:
+case/whitespace folding, unit aliases (µg/ug -> mcg), dosage-form plurals
+("TABLETS" == "Tablet"), leading-token variants for names/manufacturers
+("Metformin" == "Metformin HCl", salt/suffix), and parsed-instruction item
+comparison. Anything else is a real conflict: both values are preserved and the
+resolution reason is recorded.
 
 Canonical field keys match ``services.vlm.client.CANONICAL_FIELDS``.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 DEFAULTS: Dict[str, Any] = {
     # OCR field confidence below this is "weak"
     "min_field_confidence": 0.75,
-    # uncertainty levels that alone justify a VLM call
-    "invoke_on_levels": ("medium", "high"),
     # when a rescan is required, prefer retaking the photo over spending a VLM call
     "invoke_on_rescan": False,
-    # fields that matter enough to trigger the VLM even at level "low"
-    "critical_fields": ("name", "strength_value"),
+    # fields whose missing/weak state triggers escalation; optional fields
+    # (manufacturer, form, instructions) never escalate on their own
+    "escalation_fields": ("name", "strength_value"),
     # VLM must beat OCR by this margin to replace a disagreeing OCR value
     "prefer_margin": 0.15,
     # ...unless OCR is below min_field_confidence and VLM clears this bar
@@ -40,6 +50,11 @@ def _config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     merged = dict(DEFAULTS)
     if config:
         merged.update(config)
+    # ``critical_fields`` was the Milestone-2 name; keep it as an alias.
+    alias = merged.pop("critical_fields", None)
+    if alias is not None:
+        merged["escalation_fields"] = tuple(alias)
+    merged["escalation_fields"] = tuple(merged.get("escalation_fields") or DEFAULTS["escalation_fields"])
     return merged
 
 
@@ -57,13 +72,20 @@ def should_use_vlm(uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]]
         Overrides/extra signals for ``DEFAULTS``:
 
         * ``min_field_confidence`` (float) — weak-field threshold;
+        * ``escalation_fields`` (sequence of canonical keys) — only these fields
+          can trigger escalation when missing or weak. Optional fields
+          (``manufacturer``, ``form``, ``instructions``) never escalate alone.
+          ``critical_fields`` is accepted as the Milestone-2 alias;
         * ``candidate_mismatch`` (bool) — runtime signal from the candidate
           matcher: the read did not match any registered candidate. Carried in
           ``config`` because the frozen v1 uncertainty block has no field for it;
           a truthy value escalates even when OCR was confident;
         * ``min_frame_score`` (float | None) — escalate when ``frame_score`` is
-          below this value; ``None`` (default) disables the check;
-        * plus the tuning keys defined in ``DEFAULTS``.
+          below this value; ``None`` (default) disables the check.
+
+    ``level: "high"`` always escalates; ``medium``/``low`` escalate only on
+    missing/weak escalation fields (or when the caller supplies no per-field
+    evidence at all, in which case the conservative choice is to escalate).
     """
     cfg = _config(config)
     if uncertainty.get("rescan_required") and not cfg["invoke_on_rescan"]:
@@ -86,13 +108,15 @@ def should_use_vlm(uncertainty: Dict[str, Any], config: Optional[Dict[str, Any]]
     level = uncertainty.get("level")
     if level is None:
         return True  # unknown state: escalate rather than guess
-    if level in cfg["invoke_on_levels"]:
-        return True
+    if level == "high":
+        return True  # coarse high signal always escalates
 
     fields = uncertainty.get("fields") or {}
-    for key in cfg["critical_fields"]:
-        entry = fields.get(key) or {}
-        confidence = entry.get("confidence")
+    if not fields:
+        return True  # no per-field evidence: escalate rather than guess
+    for key in cfg["escalation_fields"]:
+        entry = fields.get(key)
+        confidence = entry.get("confidence") if isinstance(entry, dict) else None
         if confidence is None or float(confidence) < cfg["min_field_confidence"]:
             return True
     return False
@@ -107,8 +131,110 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
-def _same_value(left: Any, right: Any) -> bool:
+_FORM_PLURALS = {
+    "tablets": "tablet",
+    "capsules": "capsule",
+    "caplets": "caplet",
+    "syrups": "syrup",
+    "creams": "cream",
+    "injections": "injection",
+    "suppositories": "suppository",
+    "solutions": "solution",
+    "suspensions": "suspension",
+}
+
+_UNIT_ALIASES = {
+    "µg": "mcg",
+    "ug": "mcg",
+    "microgram": "mcg",
+    "micrograms": "mcg",
+    "milligram": "mg",
+    "milligrams": "mg",
+    "gram": "g",
+    "grams": "g",
+}
+
+
+def _tokens(value: Any) -> List[str]:
+    text = str(value).strip().lower().replace(",", " ")
+    return [token for token in (piece.strip(".;:") for piece in text.split()) if token]
+
+
+def _normalize_form(value: Any) -> str:
+    return " ".join(_FORM_PLURALS.get(token, token) for token in _tokens(value))
+
+
+def _normalize_unit(value: Any) -> str:
+    return _UNIT_ALIASES.get(str(value).strip().lower().rstrip("."), str(value).strip().lower())
+
+
+def _numeric_equal(left: Any, right: Any) -> bool:
+    try:
+        return float(left) == float(right)
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_prefix_variant(shorter: List[str], longer: List[str]) -> bool:
+    return bool(shorter) and len(shorter) <= len(longer) and longer[: len(shorter)] == shorter
+
+
+def _instruction_items(value: Any) -> List[str]:
+    """Normalized parsed-instruction items; falls back to sentence splitting.
+
+    Uses PI-2's parser when importable (no hard dependency on the OCR service).
+    """
+    try:
+        from services.ocr.extract import parse_instructions  # lazy optional import
+
+        items = parse_instructions(str(value))
+        normalized = sorted(
+            _normalize_value(item.text) for item in items if getattr(item, "text", None)
+        )
+        if normalized:
+            return normalized
+    except Exception:  # noqa: BLE001 - OCR stack is optional at reconcile time
+        pass
+    return sorted(_normalize_value(part) for part in re.split(r"[.;\n]+", str(value)) if part.strip())
+
+
+def _instructions_equivalent(left: Any, right: Any) -> bool:
+    left_items, right_items = _instruction_items(left), _instruction_items(right)
+    if left_items and right_items:
+        return left_items == right_items
     return _normalize_value(left) == _normalize_value(right)
+
+
+def _same_value(key: str, left: Any, right: Any) -> bool:
+    """True when two reads differ only by normalization noise, per field."""
+    if key == "strength_value":
+        return _numeric_equal(left, right)
+    if key == "strength_unit":
+        return _normalize_unit(left) == _normalize_unit(right)
+    if key == "form":
+        return _normalize_form(left) == _normalize_form(right)
+    if key == "instructions":
+        return _instructions_equivalent(left, right)
+    if key in ("name", "manufacturer"):
+        left_tokens, right_tokens = _tokens(left), _tokens(right)
+        if left_tokens == right_tokens:
+            return True
+        shorter, longer = (
+            (left_tokens, right_tokens) if len(left_tokens) <= len(right_tokens) else (right_tokens, left_tokens)
+        )
+        # Conservative salt/suffix rule: "Metformin" == "Metformin HCl".
+        return _is_prefix_variant(shorter, longer)
+    return _normalize_value(left) == _normalize_value(right)
+
+
+def _equivalent_choice(key: str, ocr: Dict[str, Any], vlm: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the more specific read when two equivalent values differ textually."""
+    confidence = min(1.0, max(ocr["confidence"], vlm["confidence"]))
+    if key in ("name", "manufacturer", "form"):
+        ocr_tokens, vlm_tokens = _tokens(ocr["value"]), _tokens(vlm["value"])
+        if len(vlm_tokens) > len(ocr_tokens) and _is_prefix_variant(ocr_tokens, vlm_tokens):
+            return {"value": vlm["value"], "confidence": confidence, "source": "vlm"}
+    return {"value": ocr["value"], "confidence": confidence, "source": "ocr"}
 
 
 @dataclass
@@ -121,6 +247,7 @@ class Conflict:
     ocr_confidence: float
     vlm_confidence: float
     chosen_source: str
+    reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -130,6 +257,7 @@ class Conflict:
             "ocr_confidence": self.ocr_confidence,
             "vlm_confidence": self.vlm_confidence,
             "chosen_source": self.chosen_source,
+            "reason": self.reason,
         }
 
 
@@ -149,7 +277,8 @@ class ReconcileResult:
     def conflict_reasons(self) -> List[str]:
         """Human-readable reasons suitable for ``uncertainty.reasons``."""
         return [
-            f"ocr_vlm_conflict:{c.key} (ocr={c.ocr_value!r} vlm={c.vlm_value!r}, kept {c.chosen_source})"
+            f"ocr_vlm_conflict:{c.key} (ocr={c.ocr_value!r} vlm={c.vlm_value!r}, "
+            f"kept {c.chosen_source}: {c.reason})"
             for c in self.conflicts
         ]
 
@@ -178,10 +307,13 @@ def reconcile_fields(
     Rules (deterministic, no fabrication):
 
     * only one side has the field -> use it;
-    * both agree -> keep OCR's value, confidence ``max(ocr, vlm)``, source OCR;
-    * both disagree -> VLM wins when ``vlm_conf >= ocr_conf + prefer_margin``,
+    * both reads are equivalent after normalization -> keep the more specific
+      value (e.g. the salt form), confidence ``max(ocr, vlm)``; no conflict. See
+      the module docstring for the equivalence rules;
+    * real disagreement -> VLM wins when ``vlm_conf >= ocr_conf + prefer_margin``,
       or when OCR is below ``min_field_confidence`` and VLM clears
-      ``min_vlm_confidence``; otherwise OCR wins. Every disagreement is recorded.
+      ``min_vlm_confidence``; otherwise OCR wins. Both values and the resolution
+      reason are recorded on the conflict.
     """
     cfg = _config(config)
     keys: Iterable[str] = sorted(set(ocr_fields) | set(vlm_fields))
@@ -206,20 +338,32 @@ def reconcile_fields(
                 "source": "ocr",
             }
             continue
-        if _same_value(ocr["value"], vlm["value"]):
-            result.fields[key] = {
-                "value": ocr["value"],
-                "confidence": min(1.0, max(ocr["confidence"], vlm["confidence"])),
-                "source": "ocr",
-            }
+        if _same_value(key, ocr["value"], vlm["value"]):
+            result.fields[key] = _equivalent_choice(key, ocr, vlm)
             continue
 
         vlm_wins = vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"] or (
             ocr["confidence"] < cfg["min_field_confidence"]
             and vlm["confidence"] >= cfg["min_vlm_confidence"]
         )
-        winner = vlm if vlm_wins else ocr
-        source = "vlm" if vlm_wins else "ocr"
+        if vlm_wins:
+            winner, source = vlm, "vlm"
+            if vlm["confidence"] >= ocr["confidence"] + cfg["prefer_margin"]:
+                reason = (
+                    f"vlm {vlm['confidence']:.2f} beats ocr {ocr['confidence']:.2f} "
+                    f"by >= margin {cfg['prefer_margin']}"
+                )
+            else:
+                reason = (
+                    f"ocr {ocr['confidence']:.2f} below {cfg['min_field_confidence']} "
+                    f"and vlm {vlm['confidence']:.2f} >= {cfg['min_vlm_confidence']}"
+                )
+        else:
+            winner, source = ocr, "ocr"
+            reason = (
+                f"ocr {ocr['confidence']:.2f} kept; vlm {vlm['confidence']:.2f} does not clear "
+                f"margin {cfg['prefer_margin']}"
+            )
         result.fields[key] = {
             "value": winner["value"],
             "confidence": winner["confidence"],
@@ -233,6 +377,7 @@ def reconcile_fields(
                 ocr_confidence=ocr["confidence"],
                 vlm_confidence=vlm["confidence"],
                 chosen_source=source,
+                reason=reason,
             )
         )
     return result
@@ -308,8 +453,9 @@ def uncertainty_from_fields(
 
     Used by OCR-first callers (and the evaluation) to decide whether to escalate:
 
-    * any critical field missing/weak -> ``high``;
-    * only non-critical fields missing/weak -> ``medium``;
+    * an escalation field missing/weak -> ``high``;
+    * only optional fields missing/weak -> ``medium`` (the gate still does not
+      escalate on optional fields alone);
     * everything present and confident -> ``low``.
 
     ``rescan_required`` is left False here; frame quality (vision service) owns it
@@ -330,13 +476,13 @@ def uncertainty_from_fields(
         if not isinstance(entry, dict) or entry.get("value") is None:
             reason = f"missing:{key}"
             reasons.append(reason)
-            bump("high" if key in cfg["critical_fields"] else "medium")
+            bump("high" if key in cfg["escalation_fields"] else "medium")
             continue
         confidence = _entry(fields, key)["confidence"]
         confidences[key] = confidence
         if confidence < cfg["min_field_confidence"]:
             reasons.append(f"low_confidence:{key}({confidence:.2f})")
-            bump("high" if key in cfg["critical_fields"] else "medium")
+            bump("high" if key in cfg["escalation_fields"] else "medium")
 
     return {
         "level": level,
