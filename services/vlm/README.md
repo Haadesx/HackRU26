@@ -48,11 +48,11 @@ def should_use_vlm(uncertainty: dict, config: dict | None = None) -> bool: ...
 | Path | Contents |
 |---|---|
 | `client.py` | `Qwen3VLClient` OpenAI-compatible adapter + `client_from_env()` factory; env config, timeouts, retries off, OCR-verify prompt mode, lenient JSON parsing |
-| `reconcile.py` | `should_use_vlm()` (`min_field_confidence`, `candidate_mismatch`, `min_frame_score` triggers), `uncertainty_from_fields()`, `reconcile_fields()` with source attribution and contract-shaped medication mapping |
+| `reconcile.py` | `should_use_vlm()` (`escalation_fields`, `min_field_confidence`, `candidate_mismatch`, `min_frame_score` triggers), `uncertainty_from_fields()`, `reconcile_fields()` with normalization equivalence, conflict reasons, source attribution, and contract-shaped medication mapping |
 | `dataset/` | 24 deterministic synthetic label images + `ground_truth.json` (regenerate: `python -m services.vlm.dataset.generate`) |
 | `eval/` | OCR-vs-VLM runner, Tesseract baseline engine, metrics, `results.json`; summary in `EVAL.md` |
 | `benchmarks/` | gated sequential GPU benchmark, `results.json` |
-| `tests/` | 79 tests; mocked HTTP + local OCR only, no GPU |
+| `tests/` | 104 tests; mocked HTTP + local OCR only, no GPU |
 
 ```bash
 uv venv .venv --python 3.11
@@ -62,6 +62,8 @@ uv pip install --python .venv/bin/python -r services/vlm/requirements.txt
     --ssh-host hermes-linux --md
 ```
 
-Measured results (2026-10-10, granted GPU window, 40 sequential calls): VLM-only 1.0
-macro F1 on the synthetic set; OCR-first 0.993 at an 8.3% escalation rate; VLM p50
-≈1.58 s, 0.63 img/s, ≈13.7 GiB VRAM headroom. Details and recommendation: [`EVAL.md`](EVAL.md).
+Measured results (2026-10-10, granted GPU window, sequential): VLM-only 1.0 macro F1
+on the synthetic set; Milestone-3 defaults give OCR-first 0.99 at a 0% escalation
+rate (optional-field misses no longer escalate), versus the Milestone-2 run at
+0.993 at 8.3%. VLM p50 ≈1.53–1.58 s, 0.63 img/s, ≈13.7 GiB VRAM headroom.
+Details and recommendation: [`EVAL.md`](EVAL.md).

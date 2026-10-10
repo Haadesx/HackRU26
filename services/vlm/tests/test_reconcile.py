@@ -131,6 +131,50 @@ class TestShouldUseVlm:
         assert should_use_vlm(uncertainty) is False
         assert should_use_vlm(uncertainty, config={"min_field_confidence": 0.9}) is True
 
+    def test_missing_optional_fields_do_not_escalate(self):
+        """Apollo M3 regression: sharp label, manufacturer missing, still no VLM."""
+        fields = {
+            "name": field("Metformin HCl", 0.95),
+            "strength_value": field(500, 0.9),
+            "strength_unit": field("mg", 0.9),
+            "form": field("Tablet", 0.75),
+            "instructions": field("Take 1 tablet by mouth twice daily", 0.9),
+            # manufacturer missing on purpose
+        }
+        uncertainty = uncertainty_from_fields(fields)
+        assert uncertainty["level"] == "medium"  # optional field missing
+        assert should_use_vlm(uncertainty) is False
+
+    def test_medium_level_with_confident_escalation_fields_does_not_escalate(self):
+        uncertainty = {
+            "level": "medium",
+            "rescan_required": False,
+            "fields": {"name": {"confidence": 0.9}, "strength_value": {"confidence": 0.9}},
+        }
+        assert should_use_vlm(uncertainty) is False
+
+    def test_escalation_fields_is_configurable(self):
+        uncertainty = self.low_uncertainty(
+            fields={
+                "name": {"confidence": 0.3},
+                "strength_value": {"confidence": 0.9},
+                "form": {"confidence": 0.95},
+            }
+        )
+        assert should_use_vlm(uncertainty) is True  # name is an escalation field
+        assert should_use_vlm(uncertainty, config={"escalation_fields": ("form",)}) is False
+        assert should_use_vlm(uncertainty, config={"escalation_fields": ("strength_value",)}) is False
+
+    def test_critical_fields_alias_still_resolves(self):
+        uncertainty = {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {"name": {"confidence": 0.9}, "strength_value": {"confidence": 0.9},
+                       "form": {"confidence": 0.5}},
+        }
+        assert should_use_vlm(uncertainty) is False
+        assert should_use_vlm(uncertainty, config={"critical_fields": ("form",)}) is True
+
 
 class TestReconcileFields:
     def test_ocr_only(self):
@@ -185,6 +229,93 @@ class TestReconcileFields:
     def test_deterministic_key_order(self):
         result = reconcile_fields({"strength_unit": field("mg")}, {"form": field("Tablet", 0.8, "vlm")})
         assert list(result.fields) == ["form", "strength_unit"]
+
+
+class TestReconcileNormalization:
+    """Case/whitespace/unit-form noise must not be reported as conflicts."""
+
+    def test_form_plural_not_conflict(self):
+        result = reconcile_fields(
+            {"form": field("Tablet", 0.9)},
+            {"form": field("TABLETS", 0.8, "vlm")},
+        )
+        assert result.conflicts == []
+        assert result.fields["form"]["value"] == "Tablet"
+
+    def test_name_case_whitespace_not_conflict(self):
+        result = reconcile_fields(
+            {"name": field("Metformin  HCl", 0.9)},
+            {"name": field("metformin hcl", 0.8, "vlm")},
+        )
+        assert result.conflicts == []
+
+    def test_salt_suffix_not_conflict_keeps_more_specific(self):
+        result = reconcile_fields(
+            {"name": field("Metformin", 0.9)},
+            {"name": field("METFORMIN HCl", 0.85, "vlm")},
+        )
+        assert result.conflicts == []
+        assert result.fields["name"] == {
+            "value": "METFORMIN HCl",
+            "confidence": 0.9,
+            "source": "vlm",
+        }
+
+    def test_manufacturer_suffix_not_conflict(self):
+        result = reconcile_fields(
+            {"manufacturer": field("Acme", 0.8)},
+            {"manufacturer": field("Acme Pharma", 0.7, "vlm")},
+        )
+        assert result.conflicts == []
+        assert result.fields["manufacturer"]["value"] == "Acme Pharma"
+
+    def test_unit_alias_not_conflict(self):
+        result = reconcile_fields(
+            {"strength_unit": field("µg", 0.9)},
+            {"strength_unit": field("MCG", 0.8, "vlm")},
+        )
+        assert result.conflicts == []
+
+    def test_strength_number_and_spacing_not_conflict(self):
+        result = reconcile_fields(
+            {"strength_value": field(500, 0.9), "strength_unit": field("mg", 0.9)},
+            {"strength_value": field(500.0, 0.8, "vlm"), "strength_unit": field(" MG ", 0.8, "vlm")},
+        )
+        assert result.conflicts == []
+
+    def test_instructions_whitespace_not_conflict(self):
+        result = reconcile_fields(
+            {"instructions": field("Take 1 tablet by mouth twice daily", 0.9)},
+            {"instructions": field("  Take 1 tablet by mouth twice daily. ", 0.8, "vlm")},
+        )
+        assert result.conflicts == []
+
+    def test_instructions_real_difference_is_conflict_with_both_values(self):
+        ocr_text = "Take 1 tablet by mouth twice daily"
+        vlm_text = "Take 1 tablet by mouth once daily"
+        result = reconcile_fields(
+            {"instructions": field(ocr_text, 0.9)},
+            {"instructions": field(vlm_text, 0.5, "vlm")},
+        )
+        assert len(result.conflicts) == 1
+        conflict = result.conflicts[0]
+        assert conflict.ocr_value == ocr_text
+        assert conflict.vlm_value == vlm_text
+        assert conflict.chosen_source == "ocr"
+        assert conflict.reason  # never silent
+        payload = conflict.to_dict()
+        assert payload["ocr_value"] == ocr_text and payload["vlm_value"] == vlm_text
+        assert payload["reason"]
+
+    def test_real_name_conflict_reports_reason(self):
+        result = reconcile_fields(
+            {"name": field("Metformin", 0.4)},
+            {"name": field("Metronidazole", 0.95, "vlm")},
+        )
+        assert len(result.conflicts) == 1
+        assert result.fields["name"]["source"] == "vlm"
+        assert "vlm" in result.conflicts[0].reason
+        assert "0.40" in result.conflicts[0].reason
 
 
 class TestContractMapping:

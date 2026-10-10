@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T19:37:30+00:00",
+  "generated_at": "2026-10-10T20:01:34+00:00",
   "dataset": "medcheck-synthetic-labels",
   "images": 24,
   "conditions": {
@@ -176,11 +176,11 @@
         },
         "manufacturer": {
           "precision": 1.0,
-          "recall": 1.0,
-          "f1": 1.0,
-          "tp": 24,
+          "recall": 0.958,
+          "f1": 0.979,
+          "tp": 23,
           "fp": 0,
-          "fn": 0,
+          "fn": 1,
           "truth_present": 24
         },
         "instructions": {
@@ -193,31 +193,31 @@
           "truth_present": 24
         }
       },
-      "macro_f1": 0.993
+      "macro_f1": 0.99
     }
   },
   "vlm": {
     "model": "Qwen/Qwen3-VL-8B-Instruct-FP8",
-    "calls": 26,
+    "calls": 24,
     "budget": 120,
-    "invocation_rate": 0.083
+    "invocation_rate": 0.0
   },
   "latency_ms": {
     "ocr": {
       "n": 24,
-      "p50": 270.6,
-      "p90": 278.5,
-      "mean": 266.5
+      "p50": 278.1,
+      "p90": 362.5,
+      "mean": 291.2
     },
     "vlm": {
-      "n": 26,
-      "p50": 1573.2,
-      "p90": 1675.7,
-      "mean": 1668.4
+      "n": 24,
+      "p50": 1525.1,
+      "p90": 1621.3,
+      "mean": 1544.2
     }
   },
   "vram": {
-    "before": "32607, 17865, 14224",
+    "before": "32607, 18383, 13706",
     "after": "32607, 18383, 13706"
   },
   "errors": []
