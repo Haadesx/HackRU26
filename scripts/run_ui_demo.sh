@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Run the full MedCheck demo stack: backend (TimescaleDB) + inference + hub adapter + web UI.
 #
-#   scripts/run_ui_demo.sh          # start everything, print URLs
-#   scripts/run_ui_demo.sh --stop   # stop adapter + UI + backend gunicorn (DB stays up)
+#   scripts/run_ui_demo.sh          # start everything (backend /hub is the primary hub)
+#   scripts/run_ui_demo.sh --adapter  # use the orchestrator's file-backed adapter instead
+#   scripts/run_ui_demo.sh --stop   # stop UI + hubs + backend gunicorn (DB stays up)
 #
-# Stack:  backend :8000  →  hub adapter :8500  →  web UI :5199
-#         inference :8300  (called by the adapter for scans)
+# Stack:  UI :5199  →  backend /hub :8000/hub  →  inference :8300
+#         (`--adapter` instead routes the UI through the file-backed adapter :8500)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,6 +26,10 @@ stop_all() {
 }
 
 [ "${1:-}" = "--stop" ] && { stop_all; exit 0; }
+USE_ADAPTER=0
+[ "${1:-}" = "--adapter" ] && USE_ADAPTER=1
+HUB_URL="http://127.0.0.1:8000/hub"
+[ "$USE_ADAPTER" = 1 ] && HUB_URL="http://127.0.0.1:8500"
 
 [ -x .venv-full/bin/python ] || { echo "run scripts/setup_full_env.sh first"; exit 1; }
 [ -d frontend/node_modules ] || { echo "frontend deps missing — run: (cd frontend && npm install)"; exit 1; }
@@ -43,7 +48,7 @@ if ! curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
       ( cd backend && SEED_PASSWORD=medcheck-demo-password PYTHONPATH=. "../../$VENV_BACKEND/bin/python" scripts/seed.py >/dev/null 2>&1 )
       echo "seeded demo patient (demo.patient@example.com)"
     fi
-    ( cd backend && PYTHONPATH=. nohup "../../$VENV_BACKEND/bin/gunicorn" -b 127.0.0.1:8000 --workers 1 --threads 4 wsgi:app >"$RUN_DIR/backend.log" 2>&1 & echo $! > "$RUN_DIR/backend.pid" )
+    ( cd backend && HUB_ENABLED=true HUB_PATIENT_EMAIL=demo.patient@example.com HUB_INFERENCE_URL=http://127.0.0.1:8300 CORS_ORIGINS='*' PYTHONPATH=. nohup "../../$VENV_BACKEND/bin/gunicorn" -b 127.0.0.1:8000 --workers 1 --threads 4 wsgi:app >"$RUN_DIR/backend.log" 2>&1 & echo $! > "$RUN_DIR/backend.pid" )
     for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1 && break; sleep 0.5; done
   else
     echo "backend venv missing ($VENV_BACKEND) — install backend/requirements.txt first"
@@ -62,9 +67,9 @@ if ! curl -sf http://127.0.0.1:8300/health >/dev/null 2>&1; then
   for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8300/health >/dev/null 2>&1 && break; sleep 0.5; done
 fi
 
-# ── hub adapter (:8500) — the UI's contract, backed by the real backend + inference
-if ! curl -sf http://127.0.0.1:8500/health >/dev/null 2>&1; then
-  echo "starting hub adapter on :8500 (backend mode) …"
+# ── fallback hub adapter (:8500) — only with --adapter (no DB required)
+if [ "$USE_ADAPTER" = 1 ] && ! curl -sf http://127.0.0.1:8500/health >/dev/null 2>&1; then
+  echo "starting fallback hub adapter on :8500 (backend mode) …"
   HUB_MODE=backend nohup .venv-full/bin/uvicorn tools.hub_adapter.app:app --host 127.0.0.1 --port 8500 >"$RUN_DIR/hub.log" 2>&1 &
   echo $! > "$RUN_DIR/hub.pid"
   for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8500/health >/dev/null 2>&1 && break; sleep 0.5; done
@@ -73,14 +78,14 @@ fi
 # ── web UI (:5199)
 if ! curl -sf http://127.0.0.1:5199/ >/dev/null 2>&1; then
   echo "starting web UI on :5199 …"
-  ( cd frontend && VITE_API_URL=http://127.0.0.1:8500 nohup npm run dev -- --host 127.0.0.1 --port 5199 --strictPort >"$RUN_DIR/ui.log" 2>&1 & echo $! > "$RUN_DIR/ui.pid" )
+  ( cd frontend && VITE_API_URL="$HUB_URL" nohup npm run dev -- --host 127.0.0.1 --port 5199 --strictPort >"$RUN_DIR/ui.log" 2>&1 & echo $! > "$RUN_DIR/ui.pid" )
   for _ in $(seq 1 60); do curl -sf http://127.0.0.1:5199/ >/dev/null 2>&1 && break; sleep 0.5; done
 fi
 
 echo
 echo "MedCheck demo stack"
 echo "  web UI        → http://127.0.0.1:5199   (camera scan, verify, add)"
-echo "  hub adapter   → http://127.0.0.1:8500   (UI contract ↔ backend + inference)"
+echo "  hub           → $HUB_URL   ($([ "$USE_ADAPTER" = 1 ] && echo 'file-backed adapter' || echo "Urvi's backend /hub"))"
 echo "  backend API   → http://127.0.0.1:8000/api/v1"
 echo "  inference API → http://127.0.0.1:8300   ($(curl -s http://127.0.0.1:8300/ready 2>/dev/null || echo 'not ready'))"
 echo "  logs          → $RUN_DIR"
