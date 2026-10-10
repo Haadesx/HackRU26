@@ -69,9 +69,28 @@ uv pip install -r services/ocr/requirements.txt
 .venv/bin/python -m pytest services/ocr -q
 ```
 
-Latest results: **50 passed**; synthetic-set field accuracy 33/33 for name,
+Latest results: **75 passed**; synthetic-set field accuracy 33/33 for name,
 strength and form (precision = recall = 1.000); end-to-end through rendered
 images 8/8 name, 8/8 strength, 8/8 form.
+
+### Structured per-dose quantity (contract v1.1)
+
+`Extraction` carries `dose_quantity`, `dose_unit`, `dose_confidence`, `dose_source`;
+`dose_contract()` returns the frozen `instructions.dose` shape
+`{quantity, unit, confidence, source}`, also embedded as
+`instructions_contract()["dose"]` for direct API composition.
+
+- Parsed only from dose segments (a `dose` instruction item, or a word/fraction
+  quantity such as `half tablet`). Warning text is skipped.
+- Units are normalized to lowercase singular (`CAPSULES` -> `capsule`, `caps` ->
+  `capsule`); volumes (`ml`, `tsp`, `tbsp`) are supported.
+- Word/fraction quantities are supported: `half`/`quarter`/`one`..`six`,
+  `one and a half`, `1/2`, `1 1/2`, `½`.
+- Ambiguous ranges (`1 to 2 tablets`, `1-2 tablets`) yield `quantity=None` — never
+  a guessed number. Package counts (`90 tablets`, `30 capsules per bottle`) are
+  never doses.
+- No dose stated -> `{quantity: null, unit: null, confidence: 0.0, source: "none"}`.
+- Confidence: numeric `0.9`, fraction `0.85`, word `0.75`.
 
 ### Registered-candidate matching
 

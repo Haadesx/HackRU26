@@ -111,12 +111,38 @@ Quality semantics worth knowing for integration:
 
 | Env var | Meaning |
 |---|---|
-| `MEDCHECK_YOLO_MODEL` | Path to YOLO-class weights. Used as the default `model_path` when hints do not set one. Unset or missing file => deterministic CPU heuristic fallback. |
+| `MEDCHECK_YOLO_MODEL` | Path to YOLO weights. `.onnx` → ONNX Runtime CPU backend; `.pt` → ultralytics backend; used as the default `model_path` when hints do not set one. Unset or missing file => deterministic CPU heuristic fallback. |
+| `MEDCHECK_YOLO_CONF` | Confidence threshold for both YOLO backends, default `0.25`. Invalid values fall back to the default. |
 
 `ultralytics` (and its torch dependency) is imported lazily **only** when a
-weights path is actually configured; `import services.vision` never imports
+`.pt` weights path is actually configured; `import services.vision` never imports
 torch, so the dev Mac stays torch-free when `MEDCHECK_YOLO_MODEL` is unset. When
-the path is set and CUDA is available the adapter uses the GPU, otherwise CPU.
+the path is set and CUDA is available the `.pt` adapter uses the GPU, otherwise CPU.
+
+### ONNX YOLO backend (recommended for real photos)
+
+An `.onnx` model runs through ONNX Runtime on CPU — no torch needed, and it
+finds bottles the color/edge heuristic misses on real photos.
+
+```bash
+export MEDCHECK_YOLO_MODEL=models/yolo11n.onnx   # or pass hints['model_path']
+export MEDCHECK_YOLO_CONF=0.25                  # optional
+python -m services.vision.demo path/to/photo.jpg
+```
+
+- **Weights:** Ultralytics YOLO11n, COCO-pretrained — `yolo11n.pt` (5.4 MB) from
+  <https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt>,
+  exported locally with `yolo export model=yolo11n.pt format=onnx simplify=True`
+  → `yolo11n.onnx` (~10.9 MB fp32, output `(1, 84, anchors)`, no embedded NMS).
+  The file is gitignored; never commit weights.
+- **Preprocessing:** letterbox to 640×640 (pad 114), RGB, scaled to `0..1`, NCHW.
+- **Postprocessing:** COCO class 39 (`bottle`), score ≥ `MEDCHECK_YOLO_CONF`
+  (default 0.25), NMS IoU 0.45, boxes clipped and mapped back to normalized
+  `[0,1]` frame coordinates.
+- **Runtime:** `onnxruntime` CPU, one cached `InferenceSession` per process,
+  `intra_op_num_threads=1` so OCR keeps CPU headroom; lazy import (ONNX Runtime
+  is never imported unless a `.onnx` model is configured). Any load/run error
+  degrades to the heuristic with `detector="heuristic"`.
 
 ### CLI demo
 

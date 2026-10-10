@@ -17,6 +17,9 @@ edit it silently.
 - Do not modify teammates' documentation files or unrelated components.
 - `docs/STATUS.md` is the live task board (gates + dispatch log); the technical detail
   lives in `docs/inference-medcheck.md`.
+- `docs/PROJECT_STATUS.md` is the **cross-team, LLM-feedable snapshot** (architecture,
+  contract, commands, verified numbers, open blockers). The orchestrator refreshes it at
+  every milestone; workers' `DOC:` blocks are its raw material.
 
 ## 1. Mission
 

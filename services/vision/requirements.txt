@@ -4,3 +4,5 @@ numpy>=1.26,<3
 opencv-python-headless>=4.9,<5
 Pillow>=10.2,<12
 pydantic>=2.6,<3
+# ONNX Runtime CPU backend for YOLO .onnx weights (MEDCHECK_YOLO_MODEL=*.onnx).
+onnxruntime>=1.17,<2

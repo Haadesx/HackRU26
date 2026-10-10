@@ -73,9 +73,9 @@ FORM_LOOSE_RE = re.compile("(" + _FORM_ALTERNATION + r")", re.IGNORECASE)
 DOSE_RE = re.compile(
     r"(?:(?<![A-Za-z])take\s*)?"
     r"(?P<qty>\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?)\s*"
-    r"(?P<form>dropperfuls?|teaspoons?|tablespoons?|capsules?|tablets?|caplets?|softgels?|"
+    r"(?P<form>dropperfuls?|teaspoons?|tablespoons?|capsules?|caplets?|caps?|tablets?|tabs?|softgels?|"
     r"suppositor(?:y|ies)|sachets?|packets?|patches?|sprays?|puffs?|drops?|geltabs?|pills?|"
-    r"tsp|tbsp|units?)",
+    r"tsp|tbsp|units?|ml)",
     re.IGNORECASE,
 )
 
@@ -103,6 +103,81 @@ DURATION_RE = re.compile(
     r"|short\s*[- ]?term)",
     re.IGNORECASE,
 )
+
+# --------------------------------------------------------------------------- #
+# Structured per-dose quantity (contract v1.1: instructions.dose)
+# --------------------------------------------------------------------------- #
+
+# Dosage-form words accepted right after a quantity (lowercase singular output).
+_DOSE_FORM_PATTERN = (
+    r"dropperfuls?|teaspoons?|tablespoons?|capsules?|caplets?|caps?|tablets?|tabs?|softgels?|"
+    r"suppositor(?:y|ies)|sachets?|packets?|patches?|sprays?|puffs?|drops?|geltabs?|pills?|"
+    r"tsp|tbsp|units?|ml"
+)
+
+# Canonical dose unit: form words plus countable volumes/units.
+DOSE_UNIT_CANONICAL: dict[str, str] = {
+    **FORM_CANONICAL,
+    "ml": "ml",
+    "milliliter": "ml",
+    "milliliters": "ml",
+    "millilitre": "ml",
+    "millilitres": "ml",
+    "tsp": "tsp",
+    "teaspoon": "tsp",
+    "teaspoons": "tsp",
+    "tbsp": "tbsp",
+    "tablespoon": "tbsp",
+    "tablespoons": "tbsp",
+    "dropperful": "dropperful",
+    "dropperfuls": "dropperful",
+    "puff": "puff",
+    "puffs": "puff",
+    "packet": "packet",
+    "packets": "packet",
+    "unit": "unit",
+    "units": "unit",
+}
+
+_QUANTITY_WORDS: dict[str, float] = {
+    "half": 0.5,
+    "quarter": 0.25,
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+}
+
+_UNICODE_FRACTIONS: dict[str, float] = {"½": 0.5, "¼": 0.25, "¾": 0.75}
+
+_ARTICLE = r"(?:a\s+|an\s+|of\s+a\s+)?"
+
+_WORD_DOSE_RE = re.compile(
+    r"\b(?P<qty>" + "|".join(_QUANTITY_WORDS) + r")(?P<extra>\s+and\s+a\s+half)?\s*"
+    r"" + _ARTICLE + r"(?P<form>" + _DOSE_FORM_PATTERN + r")\b",
+    re.IGNORECASE,
+)
+
+_FRACTION_DOSE_RE = re.compile(
+    r"(?<![\d/])(?:(?P<whole>\d+)\s+)?(?P<num>\d{1,2})\s*/\s*(?P<den>\d{1,2})\s*"
+    r"" + _ARTICLE + r"(?P<form>" + _DOSE_FORM_PATTERN + r")\b",
+    re.IGNORECASE,
+)
+
+_UNICODE_DOSE_RE = re.compile(
+    r"(?P<frac>[½¼¾])\s*" + _ARTICLE + r"(?P<form>" + _DOSE_FORM_PATTERN + r")\b",
+    re.IGNORECASE,
+)
+
+# A range such as "1 to 2" or "1-2" is ambiguous for the backend quantity.
+_DOSE_RANGE_RE = re.compile(
+    r"(?:\d+(?:\.\d+)?|\d+\s*/\s*\d+)\s*(?:to|-)\s*(?:\d+(?:\.\d+)?|\d+\s*/\s*\d+)",
+    re.IGNORECASE,
+)
+
+_DOSE_FORM_SEARCH_RE = re.compile(_DOSE_FORM_PATTERN, re.IGNORECASE)
 
 WARNING_RE = re.compile(
     r"\b(?:warning|caution|do\s*not|don'?t|avoid|alcohol|grapefruit|drowsi\w*|sleepy|driv\w*|"
@@ -562,6 +637,93 @@ def parse_instructions(raw_text: str) -> list[InstructionItem]:
 # --------------------------------------------------------------------------- #
 
 
+def normalize_dose_unit(word: str | None) -> str | None:
+    """Lowercase singular dose unit (``TABLETS`` -> ``tablet``, ``CAPS`` -> ``capsule``)."""
+    if word is None:
+        return None
+    return DOSE_UNIT_CANONICAL.get(word.casefold(), word.casefold())
+
+
+def _dose_from_segment(segment: str) -> tuple[float, str, float] | str | None:
+    """Extract one unambiguous dose from a dose segment.
+
+    Returns ``(quantity, unit, confidence)``, the string ``"ambiguous"`` for a
+    range such as ``1 to 2 tablets``, or ``None`` when no dose quantity is stated.
+    """
+    if _DOSE_RANGE_RE.search(segment) and _DOSE_FORM_SEARCH_RE.search(segment):
+        return "ambiguous"
+
+    # Fractions must be checked before plain numbers ("1/2 tablet" contains "2 tablet").
+    match = _FRACTION_DOSE_RE.search(segment)
+    if match:
+        numerator, denominator = int(match.group("num")), int(match.group("den"))
+        if denominator == 0:
+            return None
+        quantity = int(match.group("whole") or 0) + numerator / denominator
+        if quantity <= 0:
+            return None
+        return round(quantity, 4), normalize_dose_unit(match.group("form")) or "unit", 0.85
+
+    match = _UNICODE_DOSE_RE.search(segment)
+    if match:
+        quantity = _UNICODE_FRACTIONS[match.group("frac")]
+        return quantity, normalize_dose_unit(match.group("form")) or "unit", 0.85
+
+    for match in DOSE_RE.finditer(segment):
+        if not _dose_is_valid(match, segment):
+            continue
+        quantity_text = match.group("qty")
+        if re.search(r"(?:to|-)\s*\d", quantity_text):
+            return "ambiguous"
+        quantity = float(quantity_text)
+        if quantity <= 0:
+            continue
+        return quantity, normalize_dose_unit(match.group("form")) or "unit", 0.9
+
+    match = _WORD_DOSE_RE.search(segment)
+    if match:
+        quantity = _QUANTITY_WORDS[match.group("qty").casefold()]
+        if match.group("extra"):
+            quantity += 0.5
+        return round(quantity, 4), normalize_dose_unit(match.group("form")) or "unit", 0.75
+
+    return None
+
+
+def parse_dose_quantity(raw_text: str, instructions: list[InstructionItem] | None = None) -> tuple[float | None, str | None, float, str]:
+    """Parse the structured per-dose quantity (contract v1.1 ``instructions.dose``).
+
+    Only dose segments are considered: segments that already produced a ``dose``
+    instruction item, or that carry a word/fraction quantity (e.g. ``half tablet``).
+    Warning and package-count text is never treated as a dose. Ranges such as
+    ``1 to 2 tablets`` return ``(None, None, 0.0, "none")`` — never a guessed number.
+    """
+    raw = "" if raw_text is None else str(raw_text)
+    if not raw.strip():
+        return None, None, 0.0, "none"
+
+    if instructions is None:
+        instructions = parse_instructions(raw)
+    dose_texts = [item.text for item in instructions if item.kind == "dose"]
+
+    for segment in _segments(raw):
+        if WARNING_RE.search(segment):
+            continue
+        is_dose_segment = any(text and text in segment for text in dose_texts) or bool(
+            _WORD_DOSE_RE.search(segment) or _FRACTION_DOSE_RE.search(segment) or _UNICODE_DOSE_RE.search(segment)
+        )
+        if not is_dose_segment:
+            continue
+        result = _dose_from_segment(segment)
+        if result is None:
+            continue
+        if result == "ambiguous":
+            return None, None, 0.0, "none"
+        quantity, unit, confidence = result
+        return quantity, unit, confidence, "ocr"
+    return None, None, 0.0, "none"
+
+
 def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extraction:
     """Extract name / strength / form / manufacturer and parsed instructions.
 
@@ -601,13 +763,19 @@ def extract_fields(raw_text: str, hints: dict[str, Any] | None = None) -> Extrac
     strength_field = _select_strength(strengths, name_match.line_index if name_match else None, hints)
     form_field = find_form(raw, name_match, strengths)
     manufacturer = find_manufacturer(raw)
+    instructions = parse_instructions(raw)
+    dose_quantity, dose_unit, dose_confidence, dose_source = parse_dose_quantity(raw, instructions)
     return Extraction(
         raw_text=raw,
         name=name_field,
         strength=strength_field,
         form=form_field,
         manufacturer=manufacturer,
-        instructions=parse_instructions(raw),
+        instructions=instructions,
+        dose_quantity=dose_quantity,
+        dose_unit=dose_unit,
+        dose_confidence=dose_confidence,
+        dose_source=dose_source,
     )
 
 
@@ -618,5 +786,7 @@ __all__ = [
     "find_manufacturer",
     "find_name",
     "find_strengths",
+    "normalize_dose_unit",
+    "parse_dose_quantity",
     "parse_instructions",
 ]

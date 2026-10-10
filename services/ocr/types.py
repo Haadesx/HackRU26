@@ -204,6 +204,11 @@ class Extraction:
     form: FieldString
     manufacturer: FieldString = field(default_factory=absent_string)
     instructions: list[InstructionItem] = field(default_factory=list)
+    # v1.1 additive: structured per-dose quantity (never a package count).
+    dose_quantity: float | None = None
+    dose_unit: str | None = None
+    dose_confidence: float = 0.0
+    dose_source: FieldSource = "none"
 
     def medication_contract(self) -> dict[str, Any]:
         """Contract fragment for ``ScanResponse.medication``."""
@@ -214,9 +219,19 @@ class Extraction:
             "manufacturer": self.manufacturer.to_contract(),
         }
 
+    def dose_contract(self) -> dict[str, Any]:
+        """Contract fragment for ``ScanResponse.instructions.dose`` (v1.1)."""
+        return {
+            "quantity": self.dose_quantity,
+            "unit": self.dose_unit,
+            "confidence": round(float(self.dose_confidence), 4),
+            "source": self.dose_source,
+        }
+
     def instructions_contract(self) -> dict[str, Any]:
         """Contract fragment for ``ScanResponse.instructions``."""
         return {
             "raw_text": self.raw_text,
             "parsed": [item.to_contract() for item in self.instructions],
+            "dose": self.dose_contract(),
         }

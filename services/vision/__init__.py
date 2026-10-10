@@ -14,12 +14,13 @@ Public surface used by the API gateway:
 CPU-only: no GPU or model file is required; YOLO is used only when weights are
 configured and the optional `ultralytics` dependency is installed.
 """
-from services.vision.config import VisionConfig, YOLO_MODEL_ENV
+from services.vision.config import VisionConfig, YOLO_CONF_ENV, YOLO_MODEL_ENV, yolo_confidence_threshold
 from services.vision.detector import (
     BottleDetector,
     Detection,
     DetectorUnavailable,
     HeuristicBottleDetector,
+    OnnxBottleDetector,
     YoloBottleDetector,
     get_detector,
 )
@@ -50,11 +51,14 @@ __all__ = [
     "ImageDecodeError",
     "VisionConfig",
     "YOLO_MODEL_ENV",
+    "YOLO_CONF_ENV",
+    "yolo_confidence_threshold",
     "VisionResult",
     "FrameInfo",
     "Detection",
     "BottleDetector",
     "HeuristicBottleDetector",
+    "OnnxBottleDetector",
     "YoloBottleDetector",
     "DetectorUnavailable",
     "get_detector",
