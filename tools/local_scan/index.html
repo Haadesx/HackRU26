@@ -75,6 +75,7 @@
       <img id="img" style="display:none" alt="">
       <canvas id="overlay" style="display:none"></canvas>
     </div>
+    <div id="thumbs" class="row" style="margin-top:8px"></div>
     <div class="row" style="margin-top:12px">
       <button id="liveBtn" disabled>▶ Start live mode</button>
       <span id="liveState" class="muted"></span>
@@ -134,6 +135,7 @@ $("camBtn").onclick = async () => {
     const v=$("video"); v.srcObject=stream; v.style.display="block";
     $("img").style.display="none"; $("ph").style.display="none"; $("overlay").style.display="none";
     $("shotBtn").disabled=false; $("stopBtn").disabled=false; $("liveBtn").disabled=false;
+    updateLongUI();
     // mirror front camera only
     const s=stream.getVideoTracks()[0].getSettings();
     v.style.transform = s.facingMode==="user" ? "scaleX(-1)" : "none";
@@ -177,8 +179,13 @@ function longPrompt(){
 function addLongFrame(b){
   longFrames.push(b);
   if(longFrames.length>3) longFrames=longFrames.slice(-3);
-  showBlob(b);
+  // Keep the live video visible for the next shot; show captured frames as thumbs.
+  longUrls.forEach(u=>URL.revokeObjectURL(u));
+  longUrls = longFrames.map(f=>URL.createObjectURL(f));
+  $("thumbs").innerHTML = longUrls.map((u,i)=>`<img src="${u}" title="frame ${i+1}" style="height:56px;border-radius:6px;border:1px solid var(--border)">`).join("");
+  updateLongUI();
 }
+let longUrls = [];
 function updateLongUI(){
   const on=$("longMode").checked, n=longFrames.length;
   $("longState").textContent = on ? `${n}/3 · ${longPrompt()}` : "";
@@ -187,6 +194,8 @@ function updateLongUI(){
 }
 $("longMode").onchange = () => {
   longFrames=[];
+  longUrls.forEach(u=>URL.revokeObjectURL(u)); longUrls=[];
+  $("thumbs").innerHTML="";
   if($("longMode").checked) stopLive();
   updateLongUI();
 };

@@ -52,9 +52,9 @@ October Bus (agent coordination; see §H).
 | PI-1 Vision: quality/detect/label + **ONNX YOLO detector (M5)** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vision-atlas` `31c3634` → merges `5b60648`+`ae1c3a8`+M5 |
 | PI-3 VLM adapter + eval + **escalation triggers + normalization** | ✅ implemented, ✅ orchestrator-verified, ✅ MERGED | `feat/vlm-juno` → merges `91a5c83`, `fc5ff80` |
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
-| Full-system acceptance on merged tree | ✅ **349 passed / 0 failed** (M5 merged: ONNX YOLO) | `feat/inference-medcheck` |
+| Full-system acceptance on merged tree | ✅ **425 passed / 0 failed** (M7 merged: multi-frame capture) | `feat/inference-medcheck` |
 
-| Multi-frame label capture (rotation-assisted, v1.2) | ⏳ **M7 in flight**: contract `600c52c` frozen; Orion fusion, Atlas clipped-label guidance, Athena `/v1/scan/multi`, Juno multi-image VLM | `feat/inference-medcheck` |
+| Multi-frame label capture (rotation-assisted, v1.2) | ✅ **done + verified**: fusion (`63cec7e`), clipping (`2634807`), multi-image VLM (`4032711`), endpoint `POST /v1/scan/multi` (`db94131`) | `feat/inference-medcheck` |
 
 ---
 
@@ -500,6 +500,7 @@ Client mapping from our ScanResponse: `medication.name.value → drug_name`,
 | October wake delivery (worker nodes) | session JSONL `customType=october-bus-wake` + receipt; single `/hook/wake` probes | ✅ **verified end-to-end**: Orion received Athena's request as a wake (receipt `9b300f77-6…`, 19:45:01Z) and Juno's M2 summary in the same batch | Orchestrator ✅ |
 | October wake delivery (orchestrator node) | same probe against Apollo's hook credentials | ❌ **blocked by design**: `{"ok":false,"stale":true}`; root cause proven in `october-core.js` (manual-terminal hook admission) + `core-runtime.log` (`foreground-not-agent`, `inputOwner:shell`); 0 custom messages ever delivered | Orchestrator ✅ (root cause proven) |
 | **Backend-fit (contract v1.1)** | `pytest tests/integration/test_backend_fit.py` | ✅ green after M4: real scan → `instructions.dose {1,"tablet",conf≥0.5,"ocr"}`; payload maps to Urvi's ScanSchema fields | Orchestrator ✅ |
+| **Multi-frame label capture (M7, live via console proxy)** | `POST /api/multi` with `samples/long_label_{left,middle,right}.png` | fused **Hydrochlorothiazide 25 mg**, dose 1 tablet; `capture: multi_frame 3/3`, all frames `accepted` + `clipped` with rotate guidance; `fused_from_3_frames`; no VLM needed | Orchestrator ✅ |
 | **ONNX YOLO detector (M5, real photos)** | `MEDCHECK_YOLO_MODEL=models/yolo11n.onnx` + console `/api/live` | Real bottle photo: heuristic 0/3 → **YOLO bottle 0.51** through the full pipeline; warm live path **145–160 ms** CPU; suite **349 passed**; fallbacks intact | Orchestrator ✅ |
 
 Known bugs / limitations:
