@@ -114,25 +114,15 @@ def _normalize_backend_output(output: Any) -> list[tuple[Any, str, float | None]
     return items
 
 
-def _enhance_contrast(image: np.ndarray) -> np.ndarray:
-    """Mild CLAHE contrast lift for upscaled small crops."""
-    try:
-        import cv2
-
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        lightness, a_channel, b_channel = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        merged = cv2.merge([clahe.apply(lightness), a_channel, b_channel])
-        return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
-    except Exception:  # pragma: no cover - defensive; enhancement is optional
-        return image
-
-
 def _prepare_crop(crop: np.ndarray) -> tuple[np.ndarray, float, float]:
     """Upscale a small bbox crop; returns ``(image, scale_x, scale_y)``.
 
     Crops whose long side is already >= :data:`MIN_CROP_LONG_SIDE` are returned
     unchanged so the full-size path keeps its previous behavior.
+
+    Lanczos upscaling alone is used: contrast enhancement (CLAHE) was measured to
+    merge word spacing on synthetic pharmacy labels ("Take1 tabletbymouth..."),
+    which breaks cadence parsing and pharmacy-name extraction.
     """
     height, width = crop.shape[:2]
     long_side = max(height, width)
@@ -144,7 +134,6 @@ def _prepare_crop(crop: np.ndarray) -> tuple[np.ndarray, float, float]:
     import cv2
 
     resized = cv2.resize(crop, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
-    resized = _enhance_contrast(resized)
     return resized, new_width / width, new_height / height
 
 
