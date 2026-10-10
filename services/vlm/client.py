@@ -15,6 +15,7 @@ be compared and reconciled):
 Usage:
     client = client_from_env()                # config from MEDCHECK_VLM_* env
     result = client.interpret(image_bytes, ocr_text=ocr_text)
+    fused = client.interpret_multi([frame1, frame2, frame3], ocr_text=fused_text)
     if result.available:
         result.fields["name"]                   # {"value", "confidence", "source"}
 """
@@ -26,7 +27,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
@@ -108,6 +109,8 @@ class VlmConfig:
     max_tokens: int = 700
     temperature: float = 0.0
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES
+    #: Multi-frame capture: refuse more than this many frames per request.
+    max_frames: int = 6
 
     @classmethod
     def from_env(cls, env: Optional[Dict[str, str]] = None) -> "VlmConfig":
@@ -126,6 +129,7 @@ class VlmConfig:
             timeout_s=float(env.get("MEDCHECK_VLM_TIMEOUT_S", DEFAULT_TIMEOUT_S)),
             max_retries=int(env.get("MEDCHECK_VLM_MAX_RETRIES", "0")),
             max_tokens=int(env.get("MEDCHECK_VLM_MAX_TOKENS", "700")),
+            max_frames=int(env.get("MEDCHECK_VLM_MAX_FRAMES", "6")),
         )
 
     @property
@@ -188,12 +192,28 @@ def encode_image_data_uri(image_bytes: bytes, max_bytes: int = DEFAULT_MAX_IMAGE
     return f"data:{mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
 
 
-def build_prompt(question: Optional[str] = None, ocr_text: Optional[str] = None) -> str:
+def build_prompt(
+    question: Optional[str] = None,
+    ocr_text: Optional[str] = None,
+    frame_count: int = 1,
+) -> str:
     """Compose the user prompt, optionally in OCR-verification mode.
 
     In OCR mode the VLM is asked to verify/correct an existing OCR read rather
     than to transcribe from scratch; the OCR text is data, not instructions.
+    ``frame_count > 1`` switches to multi-frame fusion mode: the frames are all
+    captures of the same label and must be fused into one read.
     """
+    if frame_count > 1:
+        frames_line = (
+            f"You are given {frame_count} ordered frames of the SAME medication label "
+            "(multiple captures of one bottle). Fuse them into a single read: combine "
+            "text that is split across frames and prefer the frame where each field "
+            "is clearest. Ignore transient blur or glare. If the frames genuinely "
+            "disagree on a field, report your best reading and lower its confidence."
+        )
+    else:
+        frames_line = ""
     if ocr_text is not None:
         header = (
             "An OCR system read the label below. Verify it against the image, "
@@ -210,7 +230,7 @@ def build_prompt(question: Optional[str] = None, ocr_text: Optional[str] = None)
         header = "Read this medication label and extract the fields."
         ocr_block = ""
     ask = question or "Extract the label fields."
-    parts = [header, ask]
+    parts = [part for part in (frames_line, header, ask) if part]
     if ocr_block:
         parts.append(ocr_block)
     parts.append(_JSON_CONTRACT)
@@ -391,21 +411,16 @@ class Qwen3VLClient:
         raise last_exc
 
     def _build_payload(
-        self, image_bytes: bytes, ocr_text: Optional[str], question: Optional[str]
+        self, data_uris: Sequence[str], ocr_text: Optional[str], question: Optional[str]
     ) -> Dict[str, Any]:
-        data_uri = encode_image_data_uri(image_bytes, self.config.max_image_bytes)
-        prompt = build_prompt(question=question, ocr_text=ocr_text)
+        prompt = build_prompt(question=question, ocr_text=ocr_text, frame_count=len(data_uris))
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.extend({"type": "image_url", "image_url": {"url": uri}} for uri in data_uris)
         return {
             "model": self.config.model,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                },
+                {"role": "user", "content": content},
             ],
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
@@ -428,17 +443,8 @@ class Qwen3VLClient:
         except Exception:
             return False
 
-    def interpret(
-        self,
-        image_bytes: bytes,
-        ocr_text: Optional[str] = None,
-        question: Optional[str] = None,
-    ) -> VlmResult:
-        """Read/verify a label image. Never raises for service failures.
-
-        Programming errors (unsupported image, missing config) still raise.
-        """
-        payload = self._build_payload(image_bytes, ocr_text, question)
+    def _execute(self, payload: Dict[str, Any]) -> VlmResult:
+        """POST one chat payload and normalize the answer; never raises for service errors."""
         started = time.perf_counter()
         try:
             response = self._post_chat(payload)
@@ -474,6 +480,43 @@ class Qwen3VLClient:
                 latency_ms=round((time.perf_counter() - started) * 1000, 1),
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+    def interpret(
+        self,
+        image_bytes: bytes,
+        ocr_text: Optional[str] = None,
+        question: Optional[str] = None,
+    ) -> VlmResult:
+        """Read/verify a single label image. Never raises for service failures.
+
+        Programming errors (unsupported image, missing config) still raise.
+        """
+        data_uri = encode_image_data_uri(image_bytes, self.config.max_image_bytes)
+        return self._execute(self._build_payload([data_uri], ocr_text, question))
+
+    def interpret_multi(
+        self,
+        images: Sequence[bytes],
+        ocr_text: Optional[str] = None,
+        question: Optional[str] = None,
+    ) -> VlmResult:
+        """Read/verify several ordered frames of the SAME label in one request.
+
+        Emits one OpenAI-style ``image_url`` content part per frame so the VLM
+        can fuse text that is split across captures. Parsing, timeouts and
+        retries-off behaviour are identical to ``interpret``. Programming errors
+        (empty frame list, unsupported image, more than ``max_frames``) raise
+        ``VlmImageError``; service failures return ``available=False``.
+        """
+        frames = list(images)
+        if not frames:
+            raise VlmImageError("no frames provided")
+        if len(frames) > self.config.max_frames:
+            raise VlmImageError(
+                f"too many frames: {len(frames)} > max_frames {self.config.max_frames}"
+            )
+        data_uris = [encode_image_data_uri(frame, self.config.max_image_bytes) for frame in frames]
+        return self._execute(self._build_payload(data_uris, ocr_text, question))
 
 
 def client_from_env(

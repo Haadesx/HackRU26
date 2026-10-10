@@ -6,6 +6,7 @@ from services.vlm.reconcile import (
     instructions_raw,
     reconcile_fields,
     should_use_vlm,
+    should_use_vlm_multi,
     to_contract_medication,
     uncertainty_from_fields,
 )
@@ -174,6 +175,74 @@ class TestShouldUseVlm:
         }
         assert should_use_vlm(uncertainty) is False
         assert should_use_vlm(uncertainty, config={"critical_fields": ("form",)}) is True
+
+
+class TestShouldUseVlmMulti:
+    """Multi-frame gate: fusion conflicts escalate; otherwise single-frame rules."""
+
+    def confident(self):
+        return {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {
+                "name": {"confidence": 0.95},
+                "strength_value": {"confidence": 0.9},
+            },
+        }
+
+    def test_fusion_conflicts_bool_escalates(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = True
+        assert should_use_vlm_multi(uncertainty) is True
+        assert should_use_vlm(uncertainty) is False  # single-frame gate unchanged
+
+    def test_fusion_conflicts_list_escalates(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = ["name"]
+        assert should_use_vlm_multi(uncertainty) is True
+
+    def test_fusion_conflicts_runtime_signal_in_config(self):
+        assert should_use_vlm_multi(self.confident(), config={"fusion_conflicts": True}) is True
+
+    def test_empty_conflict_list_does_not_escalate(self):
+        uncertainty = self.confident()
+        uncertainty["fusion_conflicts"] = []
+        assert should_use_vlm_multi(uncertainty) is False
+
+    def test_rescan_beats_fusion_conflicts(self):
+        uncertainty = self.confident()
+        uncertainty.update({"fusion_conflicts": True, "rescan_required": True})
+        assert should_use_vlm_multi(uncertainty) is False
+        assert should_use_vlm_multi(uncertainty, config={"invoke_on_rescan": True}) is True
+
+    def test_weak_identity_still_escalates(self):
+        uncertainty = {
+            "level": "low",
+            "rescan_required": False,
+            "fields": {"name": {"confidence": 0.3}, "strength_value": {"confidence": 0.9}},
+        }
+        assert should_use_vlm_multi(uncertainty) is True
+
+    def test_candidate_mismatch_still_escalates(self):
+        assert should_use_vlm_multi(self.confident(), config={"candidate_mismatch": True}) is True
+
+    def test_high_level_still_escalates(self):
+        assert should_use_vlm_multi({"level": "high", "rescan_required": False}) is True
+
+    def test_matches_single_gate_without_fusion(self):
+        cases = [
+            self.confident(),
+            {"level": "high", "rescan_required": False},
+            {
+                "level": "medium",
+                "rescan_required": False,
+                "fields": {"name": {"confidence": 0.9}, "strength_value": {"confidence": 0.9}},
+            },
+            {"level": "low", "rescan_required": False, "fields": {}},
+            {"level": "low", "rescan_required": True},
+        ]
+        for uncertainty in cases:
+            assert should_use_vlm_multi(uncertainty) is should_use_vlm(uncertainty)
 
 
 class TestReconcileFields:

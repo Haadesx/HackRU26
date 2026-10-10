@@ -10,6 +10,7 @@ from services.vlm.client import Qwen3VLClient, VlmConfig, VlmResult, client_from
 from services.vlm.reconcile import (
     reconcile_fields,
     should_use_vlm,
+    should_use_vlm_multi,
     to_contract_medication,
     uncertainty_from_fields,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "client_from_env",
     "reconcile_fields",
     "should_use_vlm",
+    "should_use_vlm_multi",
     "to_contract_medication",
     "uncertainty_from_fields",
 ]
