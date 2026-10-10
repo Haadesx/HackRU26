@@ -67,13 +67,35 @@ def test_ready_mock():
     assert body["components"]["pipeline"] == "mock"
 
 
-def test_ready_503_when_real_requested(monkeypatch):
+def test_ready_real_mode_when_components_present(monkeypatch):
     monkeypatch.setenv("MEDCHECK_API_MODE", "real")
+    response = client.get("/ready")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is True
+    assert body["mode"] == "real"
+    assert body["components"]["pipeline"] == "real"
+    assert body["components"]["vision"] == "ready"
+    assert body["components"]["ocr"] == "ready"
+
+
+def test_ready_503_when_components_missing(monkeypatch):
+    import services.api.main as main_module
+
+    monkeypatch.setenv("MEDCHECK_API_MODE", "real")
+    monkeypatch.setattr(
+        main_module, "real_pipeline_available", lambda: (False, ["missing:rapidocr_onnxruntime"])
+    )
+    monkeypatch.setattr(
+        main_module,
+        "real_component_status",
+        lambda: {"vision": "ready", "ocr": "missing", "pipeline": "unavailable", "vlm": "disabled"},
+    )
     response = client.get("/ready")
     assert response.status_code == 503
     body = response.json()
     assert body["ready"] is False
-    assert "real_pipeline_not_wired" in body["reasons"]
+    assert "missing:rapidocr_onnxruntime" in body["reasons"]
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +219,18 @@ def test_rejects_non_object_hints():
     assert response.json()["error"]["code"] == "INVALID_HINTS"
 
 
-def test_real_mode_unavailable():
+def test_real_mode_503_when_pipeline_unavailable(monkeypatch):
+    import services.api.main as main_module
+    from services.api.pipeline import PipelineUnavailable
+
+    original = main_module.get_pipeline
+
+    def fake_get_pipeline(mode):
+        if mode == "real":
+            raise PipelineUnavailable("test: components missing")
+        return original(mode)
+
+    monkeypatch.setattr(main_module, "get_pipeline", fake_get_pipeline)
     response = _post_scan(_png(1), mode="real")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "REAL_PIPELINE_UNAVAILABLE"
