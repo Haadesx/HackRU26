@@ -1,0 +1,23 @@
+# Local development database: PostgreSQL 17 + TimescaleDB (same engine as TigerData).
+# Host port 5433 avoids clashing with any locally installed Postgres on 5432.
+services:
+  db:
+    image: timescale/timescaledb:latest-pg17
+    container_name: medcheck-backend-db
+    environment:
+      POSTGRES_USER: medcheck
+      POSTGRES_PASSWORD: medcheck   # local-only dev credential; never used in deployed envs
+      POSTGRES_DB: medcheck
+    ports:
+      - "5433:5432"
+    volumes:
+      - medcheck_pgdata:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medcheck -d medcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  medcheck_pgdata:
