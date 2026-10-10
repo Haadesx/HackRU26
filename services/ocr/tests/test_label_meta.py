@@ -115,6 +115,44 @@ def test_prescriber_labeled_and_dr_line():
     assert field.confidence == pytest.approx(0.7)
 
 
+def test_prescriber_punctuation_spacing_is_normalized():
+    # OCR on a crop can glue the punctuation: Prescriber:Dr.A.Demo
+    field = _meta("Prescriber:Dr.A.Demo")["prescriber"]
+    assert field.value == "Dr. A. Demo"
+    assert field.confidence == pytest.approx(0.85)
+    # Already-spaced input is unchanged.
+    assert _meta("Prescriber: Dr. A. Demo")["prescriber"].value == "Dr. A. Demo"
+
+
+def test_phone_format_is_unchanged_by_display_normalization():
+    assert _meta("Phone: (555) 010-2030")["pharmacy_phone"].value == "(555) 010-2030"
+    assert _meta("Phone: 555-010-2030")["pharmacy_phone"].value == "555-010-2030"
+
+
+def test_display_normalization_preserves_decimal_points():
+    from services.ocr.extract import _normalize_meta_spacing
+
+    assert _normalize_meta_spacing("1.5 mg") == "1.5 mg"
+    assert extract_fields("Take 1.5 tablets").dose_quantity == 1.5
+
+
+def test_display_normalization_collapses_repeated_spaces():
+    from services.ocr.extract import _normalize_meta_spacing
+
+    assert _normalize_meta_spacing("Dr.  A.   Demo") == "Dr. A. Demo"
+
+
+def test_display_normalization_does_not_touch_raw_text():
+    raw = "Prescriber:Dr.A.Demo"
+    extraction = extract_fields(raw)
+    assert extraction.raw_text == raw
+    assert extraction.label_meta["prescriber"].value == "Dr. A. Demo"
+
+
+def test_display_normalization_st_john_pharmacy():
+    assert _meta("St.John Pharmacy")["pharmacy_name"].value == "St. John Pharmacy"
+
+
 # --------------------------------------------------------------------------- #
 # Schedule derivation
 # --------------------------------------------------------------------------- #
