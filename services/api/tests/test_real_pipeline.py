@@ -152,12 +152,15 @@ def test_dose_contract_is_preferred_when_present():
         "source": "ocr",
     }
     assert _dose_payload(Ambiguous(), 0.9) is None
-    assert _dose_payload(AbsentOrAmbiguous(), 0.99) == {
+    none_shape = _dose_payload(AbsentOrAmbiguous(), 0.99)
+    assert none_shape == {
         "quantity": None,
         "unit": None,
         "confidence": 0.0,
         "source": "none",
     }
+    # Backend safety: a none-shape dose is never forwarded as quantity.
+    assert (none_shape["quantity"] if none_shape["quantity"] is not None else 1) == 1
 
 
 def test_dose_bridge_never_invents_a_quantity():

@@ -14,14 +14,16 @@ Mock mode is fully implemented; real Vision/OCR/VLM modules plug in behind the
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, UploadFile
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -58,6 +60,25 @@ app = FastAPI(
 )
 
 
+def _cors_origins() -> List[str]:
+    """``MEDCHECK_CORS_ORIGINS`` (comma-separated). Empty/unset disables CORS."""
+    raw = os.getenv("MEDCHECK_CORS_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+# Configured at startup; restart the process to apply env changes. `*` is for
+# local dev only (browsers then allow any origin).
+_CORS_ORIGINS = _cors_origins()
+if _CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_CORS_ORIGINS,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        max_age=600,
+    )
+
+
 # --------------------------------------------------------------------------
 # Config / helpers
 # --------------------------------------------------------------------------
@@ -72,6 +93,32 @@ def _scan_timeout_s() -> float:
         return max(0.1, float(os.getenv("MEDCHECK_SCAN_TIMEOUT_S", SCAN_TIMEOUT_S)))
     except ValueError:
         return SCAN_TIMEOUT_S
+
+
+def _api_key() -> str:
+    """Optional shared secret; empty means auth is disabled (local dev)."""
+    return os.getenv("MEDCHECK_API_KEY", "").strip()
+
+
+def _check_api_key(authorization: Optional[str], request_id: str) -> Optional[JSONResponse]:
+    """Enforce ``Authorization: Bearer <MEDCHECK_API_KEY>`` when configured.
+
+    Uses ``hmac.compare_digest`` (constant-time) and returns the standard error
+    envelope on failure. /health and /ready stay open for probes.
+    """
+    key = _api_key()
+    if not key:
+        return None
+    expected = f"Bearer {key}".encode("utf-8", "surrogateescape")
+    provided = (authorization or "").encode("utf-8", "surrogateescape")
+    if hmac.compare_digest(provided, expected):
+        return None
+    return _transport_error(
+        401,
+        "UNAUTHORIZED",
+        "Missing or invalid bearer token",
+        request_id,
+    )
 
 
 def _error_body(
@@ -151,6 +198,7 @@ async def _validation_error_handler(request, exc: RequestValidationError) -> JSO
 async def _http_error_handler(request, exc: StarletteHTTPException) -> JSONResponse:
     codes = {
         400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
         404: "NOT_FOUND",
         405: "METHOD_NOT_ALLOWED",
         413: "PAYLOAD_TOO_LARGE",
@@ -194,8 +242,13 @@ async def scan_v1(
     client: str = Form("unknown"),
     mode: str = Form("auto"),
     hints: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
 ) -> JSONResponse:
     request_id = "req-" + uuid.uuid4().hex[:12]
+
+    auth_error = _check_api_key(authorization, request_id)
+    if auth_error is not None:
+        return auth_error
 
     if client not in ALLOWED_CLIENTS:
         return _transport_error(
