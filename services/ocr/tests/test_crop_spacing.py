@@ -54,6 +54,14 @@ def test_crop_path_keeps_quantity_and_refills_separated():
     assert extraction.label_meta["refills_remaining"].value == "2"
 
 
+def test_crop_path_prescriber_matches_acceptance():
+    _require_ocr()
+    extraction = extract_fields(read_text(METFORMIN_PATH, bbox=METFORMIN_BBOX).raw_text)
+    # Raw text may be glued (Prescriber:Dr.A.Demo); the field is normalized to the
+    # acceptance value without adding content.
+    assert extraction.label_meta["prescriber"].value == "Dr. A. Demo"
+
+
 @pytest.mark.parametrize(("part", "expected"), [("left", "08:00"), ("middle", "08:00"), ("right", None)])
 def test_long_label_thirds_crop_path_cadence(part, expected):
     _require_ocr()
