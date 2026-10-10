@@ -69,6 +69,32 @@ def test_required_nullable_keys_survive_serialization():
     assert payload["medication"]["name"]["value"] is None
 
 
+def test_nullable_dose_keys_survive_serialization():
+    from services.common.contract import DoseInfo
+
+    response = build_fixture_response(FIXTURES[0], "req-conformance00", 1.0)
+    response.instructions.dose = DoseInfo()  # quantity/unit unknown
+    payload = to_contract_json(response)
+    assert payload["instructions"]["dose"]["quantity"] is None
+    assert payload["instructions"]["dose"]["unit"] is None
+    assert payload["instructions"]["dose"]["source"] == "none"
+    jsonschema.validate(instance=payload, schema=SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f in FIXTURES if f["instructions"].get("dose") is not None],
+    ids=[f["key"] for f in FIXTURES if f["instructions"].get("dose") is not None],
+)
+def test_mock_fixtures_carry_v11_dose(fixture):
+    payload = to_contract_json(build_fixture_response(fixture, "req-dose00000000", 1.0))
+    dose = payload["instructions"]["dose"]
+    assert dose["quantity"] > 0
+    assert dose["unit"]
+    assert dose["confidence"] >= 0.5
+    assert dose["source"] == "ocr"
+
+
 def test_mock_pipeline_is_deterministic():
     pipeline = MockPipeline()
     ctx = ScanContext(

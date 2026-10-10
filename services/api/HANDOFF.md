@@ -1,7 +1,8 @@
 # MedCheck API Gateway — Handoff (PI-4 Athena)
 
-Status: **Gate 3 (mock) accepted; Milestone 2 done — real OCR-first pipeline wired
-behind the same seam.** Branch: `feat/api-athena` · Worktree: `.worktrees/pi-4-api`
+Status: **Gates 3–4 done — mock + real OCR-first pipeline, contract v1.1 with
+`instructions.dose`, backend bridge documented.** Branch: `feat/api-athena` ·
+Worktree: `.worktrees/pi-4-api`
 
 ## Run
 
@@ -18,8 +19,8 @@ MEDCHECK_API_MODE=real .venv/bin/python -m uvicorn services.api.main:app --host 
 Tests:
 
 ```bash
-.venv/bin/python -m pytest services/api -q          # 54 passed
-.venv/bin/python -m pytest services tests/integration -q   # 206 passed (merged tree)
+.venv/bin/python -m pytest services/api -q          # 67 passed
+.venv/bin/python -m pytest services tests/integration -q   # 303 passed (merged tree)
 ```
 
 OpenAPI docs: `http://localhost:8300/docs`.
@@ -143,8 +144,34 @@ free, no growth observed). The gateway never launches a model.
 
 **iOS/backend field ownership:** see `docs/inference-medcheck.md` §E.1
 (`ScanResponse` field table) and §H.1 (client integration notes). The gateway
-always returns `contract_version:"1.0.0"` with `{value, confidence, source}` per
-field and the mandatory `safety` block.
+always returns `contract_version:"1.1.0"` with `{value, confidence, source}` per
+field, the mandatory `safety` block, and the v1.1 `instructions.dose` object (see
+next section).
+
+## Backend bridge — contract v1.1 (Urvi's `POST /api/v1/scans`)
+
+Contract **1.1.0** adds one additive optional field:
+`instructions.dose = {quantity (number>0|null), unit (string|null), confidence, source}`.
+It is the per-dose quantity as written on the label ("Take 1 tablet" → `1`,
+`"tablet"`), **never** a package count, and is omitted/null when absent or
+ambiguous. The real pipeline prefers PI-2's `Extraction.dose_contract()` (with a
+temporary, quantity-safe bridge until that ships); mock fixtures carry synthetic
+dose blocks so iOS can develop against v1.1.
+
+Client mapping for the backend ingest schema:
+
+| Backend field | ScanResponse source | Fallback / notes |
+|---|---|---|
+| `event_id` | client-generated UUID | idempotency key; generate once per submission |
+| `user_id` | client/session | — |
+| `drug_name` | `medication.name.value` | required by backend |
+| `strength` | `medication.strength` `{value, unit}` | `null` when not read |
+| `quantity` | `instructions.dose.quantity` | client default `1` when absent — never from package size |
+| `timestamp` | client-side UTC ISO-8601 (`...Z`) | client event time |
+
+Verified by `tests/integration/test_backend_fit.py`: a real scan of
+`samples/label_metformin.png` yields `dose {1, "tablet", ~0.96, "ocr"}` and the
+mapped payload passes the backend's presence/type checks.
 
 ## Transport error envelope
 
@@ -209,12 +236,13 @@ RapidOCR backend is missing).
 
 ## Verification
 
-- `pytest services/api -q` → **58 passed** (endpoint behavior, transport limits,
+- `pytest services/api -q` → **67 passed** (endpoint behavior, transport limits,
   JSON Schema conformance of HTTP payloads and all `contracts/examples/*.json`,
   mock determinism, real pipeline on `samples/` (dark/sharp/blurry), EXIF-safe
   decode, no-medication and invalid-image paths, matcher seam, M3 escalation
-  matrix (match / mismatch / optional-field) via `httpx.MockTransport`).
-- `pytest services tests/integration -q` → **279 passed** in the merged worktree.
+  matrix via `httpx.MockTransport`, v1.1 dose real/mock/omission + bridge units).
+- `pytest services tests/integration -q` → **303 passed** in the merged worktree,
+  including Urvi's backend-fit mapping (`tests/integration/test_backend_fit.py`).
 - Live demo on port 8300: mock + real `/v1/scan`, `/ready` real components (see report).
 
 ## Known integration notes
