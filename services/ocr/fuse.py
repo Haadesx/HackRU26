@@ -22,7 +22,9 @@ from typing import Any, Callable, Sequence
 
 from .lexicon import normalize_unit
 from .types import (
+    LABEL_META_KEYS,
     Extraction,
+    FieldString,
     FieldStrength,
     InstructionItem,
     absent_strength,
@@ -148,6 +150,22 @@ def _fuse_raw_text(extractions: list[Extraction]) -> str:
     return fused
 
 
+def _fuse_label_meta(extractions: list[Extraction]) -> dict[str, FieldString]:
+    """Highest-confidence non-null value per label_meta key (v1.3)."""
+    fused: dict[str, FieldString] = {}
+    for key in LABEL_META_KEYS:
+        present = [
+            (index, extraction.label_meta[key])
+            for index, extraction in enumerate(extractions)
+            if key in extraction.label_meta
+            and extraction.label_meta[key].value is not None
+            and extraction.label_meta[key].source != "none"
+        ]
+        if present:
+            fused[key] = max(present, key=lambda item: (float(item[1].confidence), -item[0]))[1]
+    return fused
+
+
 def fuse_extractions(extractions: Sequence[Extraction]) -> FusionResult:
     """Fuse per-frame extractions into one Extraction.
 
@@ -185,6 +203,7 @@ def fuse_extractions(extractions: Sequence[Extraction]) -> FusionResult:
     )
     dose_frame = _fuse_dose(frames, conflicts)
     instructions = _fuse_instructions(frames, per_frame)
+    label_meta = _fuse_label_meta(frames)
 
     if strength_field is not None:
         strength_field = FieldStrength(
@@ -214,6 +233,7 @@ def fuse_extractions(extractions: Sequence[Extraction]) -> FusionResult:
         dose_unit=dose_unit,
         dose_confidence=dose_confidence,
         dose_source=dose_source,
+        label_meta=label_meta,
     )
     conflicts.sort(key=lambda name: _FIELD_ORDER.index(name.removesuffix("_conflict")))
     return FusionResult(

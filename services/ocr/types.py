@@ -12,6 +12,16 @@ from typing import Any, Literal, Sequence
 FieldSource = Literal["ocr", "vlm", "registry", "none"]
 InstructionKind = Literal["dose", "frequency", "route", "duration", "warning", "other"]
 
+# Contract v1.3 ``label_meta`` keys, in schema order.
+LABEL_META_KEYS: tuple[str, ...] = (
+    "quantity_start",
+    "refills_remaining",
+    "pharmacy_name",
+    "pharmacy_phone",
+    "prescriber",
+    "schedule_times",
+)
+
 
 def _clamp01(value: float) -> float:
     if value < 0.0:
@@ -237,6 +247,8 @@ class Extraction:
     dose_unit: str | None = None
     dose_confidence: float = 0.0
     dose_source: FieldSource = "none"
+    # v1.3 additive: pharmacy-label metadata keyed by LABEL_META_KEYS.
+    label_meta: dict[str, FieldString] = field(default_factory=dict)
 
     def medication_contract(self) -> dict[str, Any]:
         """Contract fragment for ``ScanResponse.medication``."""
@@ -254,6 +266,17 @@ class Extraction:
             "unit": self.dose_unit,
             "confidence": round(float(self.dose_confidence), 4),
             "source": self.dose_source,
+        }
+
+    def label_meta_contract(self) -> dict[str, Any]:
+        """Contract fragment for ``ScanResponse.label_meta`` (v1.3).
+
+        Each key is a ``field_string``; missing values use
+        ``{value: None, confidence: 0.0, source: "none"}``.
+        """
+        return {
+            key: self.label_meta.get(key, absent_string()).to_contract()
+            for key in LABEL_META_KEYS
         }
 
     def instructions_contract(self) -> dict[str, Any]:
