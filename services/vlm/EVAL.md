@@ -116,7 +116,17 @@ the frozen v1 uncertainty block has no field for it:
 from services.ocr.matcher import match_candidates
 from services.vlm import should_use_vlm, uncertainty_from_fields
 
-matched = match_candidates(extraction, registered_candidates, threshold=0.75)
+# Guard the signal: `not matched` alone is True on every no-hints scan because
+# the matcher returns [] for an empty candidate list. Only claim a mismatch when
+# the caller supplied a registry AND the read has an identity field.
+registered_candidates = known_candidates_from_request(hints)
+has_identity = extraction.name.value is not None or extraction.strength.value is not None
+matched = (
+    match_candidates(extraction, registered_candidates, threshold=0.75)
+    if registered_candidates and has_identity
+    else []
+)
+candidate_mismatch = bool(registered_candidates) and has_identity and not matched
 
 uncertainty = uncertainty_from_fields(ocr_fields)
 uncertainty["frame_score"] = frame_quality.score      # from PI-1 vision
@@ -127,10 +137,14 @@ escalate = should_use_vlm(
         "min_field_confidence": 0.75,                  # tunable (default)
         "escalation_fields": ("name", "strength_value"),  # default
         "min_frame_score": 0.45,                       # tunable; None disables (default)
-        "candidate_mismatch": not matched,             # runtime signal from the matcher
+        "candidate_mismatch": candidate_mismatch,      # registry present, no plausible match
     },
 )
 ```
+
+`candidate_mismatch=True` means: a registry was supplied, an identity field was read,
+and nothing scored at or above the match threshold. Without the registry/identity
+guard, a literal `not matched` escalates every scan without hints.
 
 | config key | type | default | meaning |
 |---|---|---|---|
