@@ -306,6 +306,16 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
     “Sarah – Mature, Reassuring, Confident” (`EXAVITQu4vr4xnSDxMaL`) on
     `eleven_multilingual_v2`. Script supports `--list-voices`, `--text`, `--voice`,
     `--play`; output stays outside git.
+17. **Full-stack hookup done: Sinchana UI ↔ Urvi backend ↔ inference.**
+    `tools/hub_adapter/backend_store.py` maps her API to the UI contract: `/state`
+    (medications with live inventory + refills + schedule times, taken doses, patient),
+    scan completion → new prescription **version preserving all existing items**
+    (quantity/refills carried over) → activate → dose events + inventory,
+    dose logging (only when actually due — her API returns 409 otherwise),
+    pill-count → inventory PUT, refill → request + fulfill, adherence mapped.
+    Verified live on her seeded TimescaleDB: 2 meds with real stock, a scan-added
+    medication kept the others, count 46→50, refill 23→53 pills. Gaps: medication
+    edit/stop and alerts/events/reminders are not mapped yet; settings stay adapter-local.
 
 ---
 

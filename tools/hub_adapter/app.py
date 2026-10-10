@@ -27,12 +27,18 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from tools.hub_adapter.backend_store import BackendStore, BackendUnavailable, DoseNotDue
+
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "frontend" / "docs" / "fixtures" / "state.json"
 INFERENCE = os.environ.get("MEDCHECK_API", "http://127.0.0.1:8300").rstrip("/")
 STATE_FILE = Path(os.environ.get("HUB_STATE_FILE", str(Path.home() / ".medcheck" / "hub_state.json")))
 SCAN_DIR = Path(os.environ.get("HUB_SCANS_DIR", str(Path.home() / ".medcheck" / "hub_scans")))
 CORS = os.environ.get("HUB_CORS_ORIGINS", "*")
+BACKEND_URL = os.environ.get("HUB_BACKEND_URL", "http://127.0.0.1:8000/api/v1")
+BACKEND_EMAIL = os.environ.get("HUB_BACKEND_EMAIL", "demo.patient@example.com")
+BACKEND_PASSWORD = os.environ.get("HUB_BACKEND_PASSWORD", "medcheck-demo-password")
+BACKEND_ENABLED = os.environ.get("HUB_MODE", "backend").strip().lower() != "demo"
 
 app = FastAPI(title="MedCheck hub adapter", version="0.1.0")
 app.add_middleware(
@@ -76,6 +82,25 @@ def _save(state: Dict[str, Any]) -> None:
 STATE: Dict[str, Any] = _load()
 SEED: Dict[str, Any] = _seed()
 SCAN_DIR.mkdir(parents=True, exist_ok=True)
+
+_BACKEND: Optional[BackendStore] = None
+_BACKEND_FAILED = False
+
+
+def backend() -> Optional[BackendStore]:
+    """Lazy backend login; None (demo mode) when disabled or unreachable."""
+    global _BACKEND, _BACKEND_FAILED
+    if not BACKEND_ENABLED or _BACKEND_FAILED:
+        return None
+    if _BACKEND is None:
+        store = BackendStore(BACKEND_URL, BACKEND_EMAIL, BACKEND_PASSWORD)
+        try:
+            store.patient()
+        except BackendUnavailable:
+            _BACKEND_FAILED = True
+            return None
+        _BACKEND = store
+    return _BACKEND
 
 
 def _next_id(items: List[Dict[str, Any]]) -> int:
@@ -258,8 +283,14 @@ def health() -> Dict[str, bool]:
 
 @app.get("/state")
 def get_state() -> Dict[str, Any]:
+    store = backend()
+    if store is not None:
+        try:
+            return store.build_state(STATE)
+        except BackendUnavailable:
+            pass
     state = copy.deepcopy(STATE)
-    state["hub"] = {"connected": True}
+    state["hub"] = {"connected": True, "mode": "demo"}
     return state
 
 
@@ -298,9 +329,7 @@ def discard_scan(scan_id: int) -> Dict[str, Any]:
     return get_state()
 
 
-@app.post("/scans/{scan_id}/complete")
-async def complete_scan(scan_id: int, values: Dict[str, Any]) -> Dict[str, Any]:
-    scan = _scan_or_404(scan_id)
+async def _complete_local(scan: Dict[str, Any], values: Dict[str, Any]) -> Dict[str, Any]:
     missing = [k for k in REQUIRED if not str(values.get(k, "")).strip()]
     if missing:
         raise HTTPException(status_code=422, detail=f"Missing required fields: {', '.join(missing)}")
@@ -333,6 +362,27 @@ async def complete_scan(scan_id: int, values: Dict[str, Any]) -> Dict[str, Any]:
     return {"medication": med}
 
 
+@app.post("/scans/{scan_id}/complete")
+async def complete_scan_backend(scan_id: int, values: Dict[str, Any]) -> Dict[str, Any]:
+    """Complete a scan — persists through Urvi's backend when it is up."""
+    scan = _scan_or_404(scan_id)
+    missing = [k for k in REQUIRED if not str(values.get(k, "")).strip()]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Missing required fields: {', '.join(missing)}")
+    store = backend()
+    if store is not None:
+        try:
+            med = store.create_from_scan(values)
+            scan["status"] = "complete"
+            scan["history"].append({"step": "Added", "at": _now(),
+                                    "detail": f"Tracking {med['name']} (backend)."})
+            _save(STATE)
+            return {"medication": med}
+        except BackendUnavailable as exc:
+            scan["history"].append({"step": "Backend unavailable", "at": _now(), "detail": str(exc)[:120]})
+    return await _complete_local(scan, values)
+
+
 def _is_float(value: Any) -> bool:
     try:
         float(value)
@@ -342,8 +392,19 @@ def _is_float(value: Any) -> bool:
 
 
 @app.post("/medications/{med_id}/doses")
-async def log_dose(med_id: int, body: Dict[str, Any]) -> Dict[str, Any]:
-    med = _med_or_404(med_id)
+async def log_dose(med_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    store = backend()
+    if store is not None:
+        try:
+            store.log_dose(med_id)
+            return get_state()
+        except DoseNotDue as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except BackendUnavailable:
+            pass
+    med = _med_or_404_soft(med_id)
+    if med is None:
+        return get_state()
     slot = body.get("slot") or (med["schedule_times"][0] if med.get("schedule_times") else "08:00")
     STATE.setdefault("doses", []).append({
         "id": _next_id(STATE.get("doses", [])),
@@ -367,16 +428,33 @@ async def remind(med_id: int, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.post("/medications/{med_id}/counts")
-async def record_count(med_id: int, body: Dict[str, Any]) -> Dict[str, Any]:
-    med = _med_or_404(med_id)
-    med["pills_left"] = int(body.get("count", med.get("pills_left", 0)))
-    _save(STATE)
+async def record_count(med_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    store = backend()
+    if store is not None:
+        try:
+            store.set_count(med_id, float(body.get("count", 0)))
+            return get_state()
+        except BackendUnavailable:
+            pass
+    med = _med_or_404_soft(med_id)
+    if med is not None:
+        med["pills_left"] = int(body.get("count", med.get("pills_left", 0)))
+        _save(STATE)
     return get_state()
 
 
 @app.post("/medications/{med_id}/refill")
-async def refill(med_id: int) -> Dict[str, Any]:
-    med = _med_or_404(med_id)
+async def refill(med_id: str) -> Dict[str, Any]:
+    store = backend()
+    if store is not None:
+        try:
+            store.refill(med_id)
+            return get_state()
+        except BackendUnavailable:
+            pass
+    med = _med_or_404_soft(med_id)
+    if med is None:
+        return get_state()
     med["pills_left"] = int(med.get("pills_left") or 0) + int(med.get("quantity_start") or 0)
     if med.get("refills_remaining") is not None:
         med["refills_remaining"] = max(0, int(med["refills_remaining"]) - 1)
@@ -400,17 +478,29 @@ async def stop_tracking(med_id: int) -> Dict[str, Any]:
     return get_state()
 
 
-def _med_or_404(med_id: int) -> Dict[str, Any]:
+def _med_or_404(med_id: Any) -> Dict[str, Any]:
     for med in STATE.get("medications", []):
-        if int(med["id"]) == int(med_id):
+        if str(med["id"]) == str(med_id):
             return med
     raise HTTPException(status_code=404, detail=f"medication {med_id} not found")
 
 
+def _med_or_404_soft(med_id: Any) -> Optional[Dict[str, Any]]:
+    for med in STATE.get("medications", []):
+        if str(med["id"]) == str(med_id):
+            return med
+    return None
+
+
 @app.get("/adherence")
 def adherence(month: Optional[str] = None) -> Dict[str, Any]:
-    fixture = json.loads((ROOT / "frontend" / "docs" / "fixtures" / "adherence.json").read_text())
-    return fixture
+    store = backend()
+    if store is not None:
+        try:
+            return store.adherence(month)
+        except BackendUnavailable:
+            pass
+    return json.loads((ROOT / "frontend" / "docs" / "fixtures" / "adherence.json").read_text())
 
 
 @app.put("/settings")
