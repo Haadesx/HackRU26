@@ -64,6 +64,27 @@ def test_accepts_string_strength_and_normalizes_output_unit():
     assert results[0].score == pytest.approx(1.0)
 
 
+def test_accepts_canonical_flat_field_dict_shape():
+    """API-style fields dict {name, strength_value, strength_unit, form, ...}."""
+    fields = {
+        "name": "Metformin",
+        "strength_value": 500,
+        "strength_unit": "mg",
+        "form": "tablet",
+        "manufacturer": None,
+        "instructions": {"raw_text": "Take 1 tablet", "parsed": []},
+    }
+    results = match_candidates(fields, [_cand("Metformin", 500, "mg")])
+    assert len(results) == 1
+    assert results[0].score == pytest.approx(1.0)
+    # "strength" key wins when explicitly present; flat keys are the fallback.
+    explicit = match_candidates(
+        {"name": "Metformin", "strength": {"value": 250, "unit": "mg"}, "strength_value": 500, "strength_unit": "mg"},
+        [_cand("Metformin", 500, "mg")],
+    )
+    assert explicit == []
+
+
 # --------------------------------------------------------------------------- #
 # OCR noise
 # --------------------------------------------------------------------------- #
@@ -222,6 +243,18 @@ def test_scores_are_within_unit_interval_for_a_matrix_of_inputs():
             for candidate in results:
                 assert 0.0 <= candidate.score <= 1.0
                 assert candidate.source == "registry"
+
+
+def test_accepts_direct_extraction_style_field_objects():
+    from services.ocr.types import FieldString, FieldStrength
+
+    fields = {
+        "name": FieldString(value="Lisinopril", confidence=0.95, source="ocr"),
+        "strength": FieldStrength(value=10, unit="mg", confidence=0.9, source="ocr"),
+    }
+    results = match_candidates(fields, [_cand("Lisinopril", 10, "mg")])
+    assert len(results) == 1
+    assert results[0].score == pytest.approx(1.0)
 
 
 def test_default_threshold_value_is_frozen_interface():

@@ -113,7 +113,10 @@ def _coerce_fields(fields: Any) -> _Query:
         return _Query(fields.name.value, value, unit)
     if isinstance(fields, Mapping):
         name = _coerce_name(fields.get("name"))
-        value, unit = _coerce_strength(fields.get("strength"))
+        strength_raw = fields.get("strength")
+        if strength_raw is None and ("strength_value" in fields or "strength_unit" in fields):
+            strength_raw = {"value": fields.get("strength_value"), "unit": fields.get("strength_unit")}
+        value, unit = _coerce_strength(strength_raw)
         return _Query(name, value, unit)
     name = _coerce_name(getattr(fields, "name", None))
     value, unit = _coerce_strength(getattr(fields, "strength", None))

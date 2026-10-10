@@ -88,6 +88,9 @@ returns `services.common.contract.Candidate` models, best first, `source="regist
   otherwise exact name below the default threshold.
 - Candidates are only ever the input list; the matcher never invents or looks up
   a name. Below-threshold candidates are omitted.
+- `fields` coercion accepts an `Extraction`, `{"name", "strength": {"value","unit"}}`,
+  or the flat API shape `{"name", "strength_value", "strength_unit", ...}` (explicit
+  `strength` wins when both are present).
 
 ### Safety behavior
 
