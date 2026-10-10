@@ -167,6 +167,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/live":
             self._handle_live()
             return
+        if parsed.path == "/api/multi":
+            self._handle_multi()
+            return
         if parsed.path != "/api/scan":
             self._json(404, {"error": {"code": "NOT_FOUND", "message": parsed.path}})
             return
@@ -239,6 +242,24 @@ class Handler(BaseHTTPRequestHandler):
         payload = result.model_dump(mode="json")
         payload["timing_ms"] = round(elapsed, 2)
         self._json(200, payload)
+
+    def _handle_multi(self) -> None:
+        """Proxy a multi-frame capture (repeated `images`) to /v1/scan/multi."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_FORWARD_BYTES:
+            self._json(413, {"error": {"code": "BAD_BODY", "message": "empty or over 16 MiB"}})
+            return
+        body = self.rfile.read(length)
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._json(415, {"error": {"code": "UNSUPPORTED_MEDIA_TYPE", "message": ctype}})
+            return
+        code, resp, resp_type = self._forward("/v1/scan/multi", body, ctype)
+        _save_bundle(None, "", {"endpoint": "multi"}, resp, code)
+        self._respond(code, resp, resp_type)
 
     def log_message(self, fmt: str, *args) -> None:  # keep the console quiet
         if os.environ.get("MEDCHECK_TOOL_VERBOSE"):

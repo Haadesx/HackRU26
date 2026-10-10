@@ -59,6 +59,32 @@ scanning at a low rate (1–2 fps) while the user frames the bottle and stopping
 Bottle detection uses ONNX YOLO11n (COCO bottle class) when `MEDCHECK_YOLO_MODEL` is set;
 otherwise a CPU heuristic. Both are best-effort; label OCR works on full frames too.
 
+## 2b. Long labels — rotation-assisted multi-frame capture (v1.2)
+
+When the label is larger than the frame, ask the user to capture **3 overlapping frames**
+while rotating (start → middle → end) and send them together:
+
+```bash
+curl -s -X POST \
+  -F "images=@frame1.png" -F "images=@frame2.png" -F "images=@frame3.png" \
+  -F "mode=real" -F "client=ios" \
+  ${INFERENCE:-http://127.0.0.1:8300}/v1/scan/multi
+```
+
+Rules:
+- 2–6 images, each JPEG/PNG ≤ 12 MiB; **overlap ~30 %** between neighbours.
+- Each frame must pass quality; frames that fail are reported in
+  `capture.per_frame[].status` (`needs_rescan`) and skipped, but the others are still read.
+- `capture.fusion == "multi_frame"`, `capture.frames_used` tells you how many contributed.
+- `capture.per_frame[].clipped == true` means the label ran off that frame — prompt the
+  user to rotate further for the next shot.
+- Fusion is field-level (best confidence wins; instruction lines are unioned; raw text is
+  kept verbatim per frame), so partial reads combine safely and nothing is invented.
+- If `uncertainty.level` is still high after fusion, the gateway may escalate to the VLM
+  with **all frames** (multi-image) before answering.
+- Guidance strings for capture UX come from `frame_quality.guidance` (e.g. “Label is cut
+  off — rotate the bottle or step back, then capture again”).
+
 ## 3. Map the scan to the backend ingest
 
 `POST {backend}/api/v1/scans` (JWT) body:

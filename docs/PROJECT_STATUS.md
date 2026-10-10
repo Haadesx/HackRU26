@@ -6,7 +6,7 @@
 > verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
 > refreshed at every milestone.
 >
-> **Last updated:** 2026-10-10 ~17:20 UTC · **Repo:** https://github.com/Haadesx/HackRU26
+> **Last updated:** 2026-10-10 ~17:35 UTC · **Repo:** https://github.com/Haadesx/HackRU26
 > **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
 
 ---
@@ -105,7 +105,7 @@ Juno `16ca2dd`, Athena `2e53239`.
   domain failures return HTTP 200 with `status:"error"` + `error{code,message}`.
 
 ### 4.2 Contract v1.1 (frozen; additive over v1.0)
-`ScanResponse` fields (all present): `contract_version:"1.1.0"`, `request_id`,
+`ScanResponse` fields (all present): `contract_version:"1.2.0"`, `request_id`,
 `status ∈ ok|needs_rescan|uncertain|no_medication_found|error`, `mode ∈ mock|real`,
 `frame_quality{acceptable,score,blur,exposure,glare,guidance[]}`,
 `bottle{detected,confidence,bbox?}`, `label{detected,confidence,bbox?,text}`,
@@ -115,7 +115,8 @@ dose{quantity>0|null,unit,confidence,source}}` (**v1.1, additive**),
 `candidates[{name,strength?,score,source}]`,
 `interpretation{available,summary?,source:"vlm"?,model?}`,
 `uncertainty{level∈low|medium|high,reasons[],rescan_required}`,
-`timing{total_ms,stages{}}`,
+`timing{total_ms,stages{}}`, `capture{frames_requested,frames_used,fusion,per_frame[]}`
+(v1.2, multi-frame label capture; optional),
 `safety{disclaimer,ingestion_not_inferred:true,backend_authoritative:true}`, `error|null`.
 BBoxes normalized `[0,1]`. JSON schemas: `contracts/v1/*.schema.json`; pydantic mirror:
 `services/common/contract.py`. Versioning: additive → minor bump; breaking → new `vN/`.
@@ -198,9 +199,10 @@ Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (g
    device → Mac/rig traffic beyond local testing.
 3. **Candidate registry source**: inference matcher consumes `hints.known_candidates`;
    long-term the backend/user's medication list should feed it.
-4. **Network readiness (M6, in flight)** — optional bearer auth (`MEDCHECK_API_KEY`),
-   CORS allowlist (`MEDCHECK_CORS_ORIGINS`), device-access guidance (bind 0.0.0.0 /
-   Tailscale, TLS via uvicorn flags or reverse proxy) for iOS/web clients.
+4. **Multi-frame capture (M7, in flight)** — long labels read across rotated frames:
+   contract v1.2 `capture` block + `POST /v1/scan/multi` frozen (`600c52c`); Orion text
+   fusion, Atlas clipped-label guidance, Athena endpoint, Juno multi-image VLM; console
+   long-label UI built (activates when the endpoint lands).
 5. **YOLO recall** — real-photo recall is partial (1 strong, 1 weak, 1 none in the
    sample set); heuristic/flat-label fallbacks stay. Threshold configurable.
 5. **VLM cost**: escalation triggers were tuned in M3 (identity-critical fields only);
@@ -264,8 +266,10 @@ Do not restart rig services or install drivers; one intrusive GPU job at a time.
 8. **Local console** built (daemon, live mode, debug bundles); real-photo testing by
    Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integrated and enabled**
    (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
-9. **M6 dispatched** (network readiness for clients: optional auth + CORS + device/TLS
-   guidance).
+9. **M6 done** (network readiness: optional bearer auth + CORS + bind/TLS docs; suite 355).
+10. **Contract v1.2 + M7 dispatched** (multi-frame label capture: capture block +
+    `/v1/scan/multi`; fusion, clipped-label guidance, endpoint, multi-image VLM; console
+    long-label UI built). Contract `600c52c`; suite 358/358 before M7 merges.
 
 ---
 

@@ -54,6 +54,8 @@ October Bus (agent coordination; see §H).
 | Real-mode end-to-end (Mac→Tailscale→rig vLLM through the API) | ✅ **verified** (2026-10-10): VLM stage 1745 ms, VRAM unchanged | `feat/inference-medcheck` |
 | Full-system acceptance on merged tree | ✅ **349 passed / 0 failed** (M5 merged: ONNX YOLO) | `feat/inference-medcheck` |
 
+| Multi-frame label capture (rotation-assisted, v1.2) | ⏳ **M7 in flight**: contract `600c52c` frozen; Orion fusion, Atlas clipped-label guidance, Athena `/v1/scan/multi`, Juno multi-image VLM | `feat/inference-medcheck` |
+
 ---
 
 ## B. Everything implemented
@@ -248,6 +250,7 @@ Superseded decisions are preserved in §J (chronological log).
 |---|---|---|---|
 | GET | `/health` | — | `200 {"status":"ok","service":"medcheck-inference","version":str,"uptime_s":num}` |
 | GET | `/ready` | — | `200 {"ready":true,"mode":"mock|real","components":{...}}` or `503 {"ready":false,...,"reasons":[...]}` |
+| POST | `/v1/scan/multi` (v1.2) | `multipart/form-data`: repeated `images` (2–6 JPEG/PNG ≤12 MiB each), optional `client`, `mode`, `hints` | `200` `ScanResponse` with `capture:{frames_requested,frames_used,fusion:"multi_frame",per_frame[...]}`; 400 if <2 or >6 images |
 | POST | `/v1/scan` | `multipart/form-data`: `image` (JPEG/PNG, ≤12 MiB, required), `client` (`ios|backend|test|unknown`), `mode` (`auto|mock|real`), `hints` (JSON string) | `200` `ScanResponse` (even for domain errors) ; transport errors: 400/413/415/504 |
 
 `ScanResponse` top level (all fields required unless noted):
@@ -266,6 +269,9 @@ Superseded decisions are preserved in §J (chronological log).
 - `interpretation`: `{available, summary?, source?:"vlm", model?}`
 - `uncertainty`: `{level ∈ low|medium|high, reasons[], rescan_required}`
 - `timing`: `{total_ms, stages{name: ms}}`
+- `capture` (v1.2 optional): `{frames_requested, frames_used, fusion ∈ single|multi_frame,
+  per_frame[{index,status,label_detected?,label_confidence?,clipped?,guidance?}]}` — frame
+  accounting for multi-frame label capture (long labels read across rotated frames)
 - `safety`: `{disclaimer, ingestion_not_inferred=true, backend_authoritative=true}`
 - `error`: `{code, message, detail} | null`
 
@@ -506,6 +512,18 @@ Known bugs / limitations:
 ---
 
 ## J. Chronological change log (append-only)
+
+**2026-10-10** — **Contract v1.2 frozen: multi-frame label capture (`600c52c`).** Real
+labels are often larger than one frame; per-frame OCR reads only part. Added additive
+`capture` block + `POST /v1/scan/multi` (2–6 repeated `images`; per-frame status/clipped
+report; `fusion:"multi_frame"`). Synthetic assets `samples/long_label_{full,left,middle,
+right}.png` (overlapping thirds) generated and verified to produce partial reads
+(left: full name+strength, middle: partial name+fragments, right: fragments only).
+**M7 dispatched**: PI-2 `services/ocr/fuse.py` text fusion (highest-confidence fields,
+deduped instruction union, verbatim per-frame raw text, conflict reasons), PI-1 clipped-
+label detection + rotate guidance, PI-4 `/v1/scan/multi` endpoint (auth/CORS apply),
+PI-3 multi-image VLM `interpret_multi`. Local console gained a 3-frame long-label capture
+flow (`/api/multi` proxy, per-frame + fused rendering). Suite before M7: **358/358**.
 
 **2026-10-10** — Environment identified and validated. Upstream **Pi 1.1.0** running under
 October Desktop (core artifacts `1.0.55-f81a6bd00b7fe8a2`); October's own harness is
