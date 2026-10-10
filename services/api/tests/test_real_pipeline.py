@@ -366,7 +366,12 @@ def test_matched_candidate_does_not_escalate(monkeypatch):
 
 
 def test_missing_optional_field_does_not_escalate(monkeypatch):
-    """(c) missing manufacturer alone must not cost a VLM call."""
+    """(c) missing manufacturer alone must not cost a VLM call.
+
+    PI-3 M3 semantics: optional-field gaps keep level "medium" (usable but
+    incomplete) but medium no longer escalates on its own — only missing/weak
+    escalation fields (name, strength) do.
+    """
     monkeypatch.setenv("MEDCHECK_VLM_ENABLED", "true")
 
     def must_not_be_called():  # pragma: no cover - fails the test if reached
@@ -375,6 +380,7 @@ def test_missing_optional_field_does_not_escalate(monkeypatch):
     _, payload = run_scan(DARK.read_bytes(), vlm_client_factory=must_not_be_called)
     assert payload["interpretation"]["available"] is False
     assert payload["timing"]["stages"]["vlm"] == 0.0
+    assert payload["uncertainty"]["level"] == "medium"
     assert "missing:manufacturer" in payload["uncertainty"]["reasons"]
 
 
