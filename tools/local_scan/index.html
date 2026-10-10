@@ -76,6 +76,11 @@
       <canvas id="overlay" style="display:none"></canvas>
     </div>
     <div class="row" style="margin-top:12px">
+      <button id="liveBtn" disabled>▶ Start live mode</button>
+      <span id="liveState" class="muted"></span>
+    </div>
+    <div id="liveHint" class="muted" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:10px">
       <label>Mode
         <select id="mode">
           <option value="real" selected>real</option>
@@ -99,7 +104,7 @@
 
 <footer>
   Informational only — not medical advice. Inference reads labels; it never infers ingestion and never authorizes dosing.
-  The backend owns schedules, history and prescription authority. Images are forwarded in memory and not stored.
+  The backend owns schedules, history and prescription authority. Scans are saved locally for debugging (~/.medcheck/scans).
 </footer>
 
 <script>
@@ -124,15 +129,16 @@ $("camBtn").onclick = async () => {
     stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}});
     const v=$("video"); v.srcObject=stream; v.style.display="block";
     $("img").style.display="none"; $("ph").style.display="none"; $("overlay").style.display="none";
-    $("shotBtn").disabled=false; $("stopBtn").disabled=false;
+    $("shotBtn").disabled=false; $("stopBtn").disabled=false; $("liveBtn").disabled=false;
     // mirror front camera only
     const s=stream.getVideoTracks()[0].getSettings();
     v.style.transform = s.facingMode==="user" ? "scaleX(-1)" : "none";
   }catch(e){ $("result").innerHTML = `<div class="err">Camera unavailable: ${e.message}\nAllow camera access for localhost, or use the file picker.</div>`; }
 };
-$("stopBtn").onclick = () => { stream?.getTracks().forEach(t=>t.stop()); stream=null;
-  $("video").style.display="none"; $("stopBtn").disabled=true; $("shotBtn").disabled=true; $("camBtn").disabled=false; };
+$("stopBtn").onclick = () => { stopLive(); stream?.getTracks().forEach(t=>t.stop()); stream=null;
+  $("video").style.display="none"; $("stopBtn").disabled=true; $("shotBtn").disabled=true; $("camBtn").disabled=false; $("liveBtn").disabled=true; $("liveHint").textContent=""; };
 $("shotBtn").onclick = () => {
+  stopLive();
   const v=$("video"); const c=document.createElement("canvas");
   c.width=v.videoWidth; c.height=v.videoHeight;
   const flip = stream && stream.getVideoTracks()[0].getSettings().facingMode==="user";
@@ -147,54 +153,130 @@ function showBlob(blob){
   const img=$("img"); img.src=url; img.style.display="block";
   $("ph").style.display="none"; $("video").style.display="none";
   $("scanBtn").disabled=false;
-  img.onload = () => drawOverlay(null);
+  currentBlob = blob;
+  img.onload = () => paintOverlay(null, img.naturalWidth, img.naturalHeight);
   $("stopBtn").disabled=true; $("camBtn").disabled=false;
 }
 
-function bboxToRect(bb, img){
-  return { x: bb.x*img.naturalWidth, y: bb.y*img.naturalHeight, w: bb.w*img.naturalWidth, h: bb.h*img.naturalHeight };
-}
-function drawOverlay(result){
-  const img=$("img"), cv=$("overlay");
-  if(!img.naturalWidth){ cv.style.display="none"; return; }
-  cv.width=img.naturalWidth; cv.height=img.naturalHeight; cv.style.display="block";
-  const ctx=cv.getContext("2d"); ctx.clearRect(0,0,cv.width,cv.height);
+/* ---------- overlay (works over <img> and <video>) ---------- */
+function paintOverlay(result, w, h){
+  const cv=$("overlay");
+  w = w || $("img").naturalWidth || $("video").videoWidth;
+  h = h || $("img").naturalHeight || $("video").videoHeight;
+  if(!w){ cv.style.display="none"; return; }
+  cv.width=w; cv.height=h; cv.style.display="block";
+  const ctx=cv.getContext("2d"); ctx.clearRect(0,0,w,h);
+  if(!result) return;
   const draw=(bb,color,label)=>{
-    const r=bboxToRect(bb,img);
-    ctx.strokeStyle=color; ctx.lineWidth=Math.max(3,cv.width/300);
+    const r={x:bb.x*w,y:bb.y*h,w:bb.w*w,h:bb.h*h};
+    ctx.strokeStyle=color; ctx.lineWidth=Math.max(3,w/300);
     ctx.strokeRect(r.x,r.y,r.w,r.h);
-    ctx.font=`${Math.max(16,cv.width/34)}px -apple-system,sans-serif`;
+    ctx.font=`${Math.max(16,w/34)}px -apple-system,sans-serif`;
     const tw=ctx.measureText(label).width+12;
     ctx.fillStyle=color; ctx.fillRect(r.x,Math.max(0,r.y-24),tw,24);
     ctx.fillStyle="#06101f"; ctx.fillText(label,r.x+6,Math.max(18,r.y-6));
   };
-  if(result?.bottle?.detected && result.bottle.bbox) draw(result.bottle.bbox,"#4c9aff","bottle");
-  if(result?.label?.detected && result.label.bbox) draw(result.label.bbox,"#3fb950","label");
-  if(!result){ // clear on new image
-    ctx.clearRect(0,0,cv.width,cv.height);
-  }
+  if(result.bottle?.detected && result.bottle.bbox) draw(result.bottle.bbox,"#4c9aff","bottle");
+  if(result.label?.detected && result.label.bbox) draw(result.label.bbox,"#3fb950","label");
 }
 
-$("scanBtn").onclick = async () => {
-  if(!currentBlob) return;
+/* ---------- full scan (raw image upload) ---------- */
+let scanning=false;
+async function doScan(blob){
+  if(scanning || !blob) return;
+  scanning=true;
   $("scanBtn").disabled=true; $("scanBtn").textContent="Scanning…";
-  $("result").innerHTML = `<div class="muted">Running vision → OCR → registry → (VLM only if needed) …</div>`;
-  const fd=new FormData();
-  fd.append("image", currentBlob, currentBlob.name || "capture.png");
-  fd.append("mode", $("mode").value);
-  fd.append("client","test");
-  const hints=$("hints").value.trim(); if(hints){ fd.append("hints", hints); }
   try{
+    const q=new URLSearchParams({mode:$("mode").value, client:"test"});
+    const hints=$("hints").value.trim(); if(hints) q.set("hints", hints);
     const t0=performance.now();
-    const r=await fetch("/api/scan",{method:"POST",body:fd});
+    const r=await fetch("/api/scan?"+q.toString(), {
+      method:"POST",
+      headers:{"Content-Type": blob.type || "image/jpeg"},
+      body: blob,
+    });
     const ms=Math.round(performance.now()-t0);
     const body=await r.json();
     if(!r.ok && body?.error){ $("result").innerHTML=`<div class="err">HTTP ${r.status}: ${body.error.message||body.error.code}</div>`; return; }
     render(body, ms);
-    drawOverlay(body);
+    if($("video").style.display!=="none") paintOverlay(body, $("video").videoWidth, $("video").videoHeight);
+    else paintOverlay(body);
   }catch(e){ $("result").innerHTML=`<div class="err">Scan failed: ${e.message}</div>`; }
-  finally{ $("scanBtn").disabled=false; $("scanBtn").textContent="Scan label"; }
-};
+  finally{ scanning=false; $("scanBtn").disabled=false; $("scanBtn").textContent="Scan label"; }
+}
+$("scanBtn").onclick = () => doScan(currentBlob);
+
+/* ---------- live mode: fast vision pass + guidance + auto-scan ---------- */
+let live=false, liveTimer=null, liveBusy=false, liveGood=0, liveLastScan=0;
+
+function grabFrame(maxW=960, quality=0.72){
+  return new Promise((resolve)=>{
+    const v=$("video"); if(!v.videoWidth) return resolve(null);
+    const scale=Math.min(1, maxW/v.videoWidth);
+    const c=document.createElement("canvas");
+    c.width=Math.round(v.videoWidth*scale); c.height=Math.round(v.videoHeight*scale);
+    const ctx=c.getContext("2d");
+    const flip = stream && stream.getVideoTracks()[0].getSettings().facingMode==="user";
+    if(flip){ctx.translate(c.width,0);ctx.scale(-1,1);}
+    ctx.drawImage(v,0,0,c.width,c.height);
+    c.toBlob(b=>resolve(b), "image/jpeg", quality);
+  });
+}
+
+function liveLabel(d){
+  if(d.error) return `vision error: ${d.error.message}`;
+  const q=d.quality?.acceptable, qs=Math.round((d.quality?.score??0)*100);
+  const ls=d.label?.detected, lc=Math.round((d.label?.confidence??0)*100);
+  const bs=d.bottle?.detected, bc=Math.round((d.bottle?.confidence??0)*100);
+  const guidance=(d.guidance||[])[0] || (q && ls ? "ready — hold steady" : "");
+  return `quality ${qs}% ${q?"✓":"✗"} · bottle ${bc}% ${bs?"✓":"✗"} · label ${lc}% ${ls?"✓":"✗"} · ${guidance}`;
+}
+
+async function liveLoop(){
+  if(!live) return;
+  if(!liveBusy && !scanning && $("video").videoWidth){
+    liveBusy=true;
+    const blob=await grabFrame();
+    if(blob){
+      try{
+        const t0=performance.now();
+        const r=await fetch("/api/live",{method:"POST",headers:{"Content-Type":"image/jpeg"},body:blob});
+        const d=await r.json();
+        const ms=Math.round(performance.now()-t0);
+        $("liveState").textContent=`● live · ${ms} ms`;
+        $("liveHint").textContent=liveLabel(d);
+        paintOverlay(d, $("video").videoWidth, $("video").videoHeight);
+        const ready = !d.error && d.quality?.acceptable && d.label?.detected;
+        if(ready && Date.now()-liveLastScan>6000){
+          liveGood++;
+          if(liveGood>=2){
+            liveGood=0; liveLastScan=Date.now();
+            $("liveHint").textContent="label readable — scanning…";
+            await doScan(blob);
+          }
+        } else liveGood=0;
+      }catch(e){ $("liveState").textContent="● live · error"; }
+    }
+    liveBusy=false;
+  }
+  liveTimer=setTimeout(liveLoop, 250);
+}
+
+function startLive(){
+  if(!stream){ $("liveHint").textContent="start the camera first"; return; }
+  if(live) return;
+  live=true; liveGood=0;
+  $("liveBtn").textContent="■ Stop live mode";
+  $("liveBtn").classList.add("primary");
+  liveLoop();
+}
+function stopLive(){
+  live=false; if(liveTimer){ clearTimeout(liveTimer); liveTimer=null; }
+  $("liveBtn").textContent="▶ Start live mode";
+  $("liveBtn").classList.remove("primary");
+  $("liveState").textContent="";
+}
+$("liveBtn").onclick = () => live ? stopLive() : startLive();
 
 const esc=(s)=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function field(f){

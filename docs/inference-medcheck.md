@@ -519,6 +519,18 @@ sequential calls, no restarts).
 All branches scope-clean (only `services/<own>/**`). Reports queued to Apollo via
 `message_peer`; read from transcripts pending inbound-wake verification.
 
+**2026-10-10** — **Local console live mode + scan bundles.** Added `/api/live`
+(vision-only fast pass, **~20 ms** per 960 px frame after warmup; quality + bottle +
+label + guidance) and a UI live mode: continuous boxes/guidance at ~4 fps, auto-scan when
+quality is acceptable and the label is stable for 2 frames (throttled to 1 full scan /
+6 s), live overlay over the video. Scans now saved as debug bundles (image + response
+JSON) in `~/.medcheck/scans/` (last 40, rotatable; `MEDCHECK_SAVE_SCANS=0` disables),
+listable at `/api/scans`. UI switched to raw `image/*` uploads with query params; the
+proxy builds the multipart for the API (multipart passthrough still supported for curl).
+Verified: 5 live calls (277 ms cold, then 19–22 ms), raw scan path 559 ms with matcher
+score 1.0, bundle saved and listed. Media note: Varesh's real bottle scan worked in the
+console; live mode is the next iteration toward the iOS camera experience.
+
 **2026-10-10** — **Local console daemon mode + fix.** Varesh's first attempt found the
 console down (foreground process died with its shell). Added `--daemon` (nohup, PID
 files, logs in `$TMPDIR/medcheck-local-scan/`), `--status`, `--stop`, port-conflict
