@@ -27,6 +27,7 @@ from .types import (
     OcrLine,
     OcrResult,
     OcrWord,
+    has_readable_content,
 )
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "find_name",
     "find_strengths",
     "fuse_extractions",
+    "has_readable_content",
     "is_available",
     "match_candidates",
     "normalize_dose_unit",

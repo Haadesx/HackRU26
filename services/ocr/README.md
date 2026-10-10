@@ -69,9 +69,29 @@ uv pip install -r services/ocr/requirements.txt
 .venv/bin/python -m pytest services/ocr -q
 ```
 
-Latest results: **93 passed**; synthetic-set field accuracy 33/33 for name,
+Latest results: **105 passed**; synthetic-set field accuracy 33/33 for name,
 strength and form (precision = recall = 1.000); end-to-end through rendered
 images 8/8 name, 8/8 strength, 8/8 form.
+
+### Real-photo quality (M8)
+
+Small/distant labels (Varesh's real scan returned a lone `日` at conf 0.90):
+
+- **Bbox-crop upscaling:** when OCR runs on a bbox crop whose long side is
+  < `engine.MIN_CROP_LONG_SIDE` (1000 px), the crop is upscaled with Lanczos
+  (capped at ×4) plus a mild CLAHE contrast lift, then recognized. Line boxes are
+  divided by the actual scale before mapping back to full-frame normalized
+  coordinates. The no-bbox full-frame path is unchanged.
+- **Degenerate-text sanity:** text with no ASCII letters or fewer than three
+  alphabetic characters total (`日`, `||`, punctuation-only) is treated as unread.
+  `OcrResult.raw_text` stays verbatim and `OcrResult.readable` is `False`, but
+  `OcrResult.confidence` returns `0.0` and `extract_fields`/`parse_instructions`
+  return empty results — no junk `other` instruction items.
+
+Verified: a 25 %-downscaled `samples/long_label_full.png` (450×300) run through
+`read_text(..., bbox=full)` still recovers `HYDROCHLOROTHIAZIDE 25 mg` with all
+boxes inside `[0, 1]`; `extract_fields("日")` and `parse_instructions("日")`
+return empty.
 
 ### Multi-frame fusion (contract v1.2)
 

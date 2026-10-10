@@ -21,6 +21,27 @@ def _clamp01(value: float) -> float:
     return float(value)
 
 
+def has_readable_content(text: str | None) -> bool:
+    """True when OCR text has enough alphabetic content to be worth parsing.
+
+    Unreadable text (lone CJK glyphs such as ``日``, ``||``, punctuation-only, or
+    fewer than three alphabetic characters total) is treated as an unread label:
+    the raw text is still preserved verbatim, but confidence collapses to 0 and
+    extraction returns empty fields instead of junk items.
+
+    Requires at least one ASCII letter AND at least three alphabetic characters
+    overall (any script).
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    ascii_letters = sum(1 for ch in stripped if ch.isascii() and ch.isalpha())
+    alphabetic = sum(1 for ch in stripped if ch.isalpha())
+    return ascii_letters > 0 and alphabetic >= 3
+
+
 @dataclass(frozen=True)
 class BBox:
     """Normalized ``[0, 1]`` box relative to the full frame (contract v1)."""
@@ -128,9 +149,16 @@ class OcrResult:
 
     @property
     def confidence(self) -> float:
+        if not has_readable_content(self.raw_text):
+            return 0.0
         if not self.lines:
             return 0.0
         return round(sum(line.confidence for line in self.lines) / len(self.lines), 4)
+
+    @property
+    def readable(self) -> bool:
+        """False for degenerate recognition results (text stays verbatim)."""
+        return has_readable_content(self.raw_text)
 
 
 @dataclass(frozen=True)
