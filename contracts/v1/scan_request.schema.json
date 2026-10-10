@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medcheck.local/contracts/v1/scan_request.schema.json",
+  "title": "MedCheck ScanRequest v1",
+  "description": "multipart/form-data request for POST /v1/scan. image is the only required part. client/hints/mode are optional form fields (strings).",
+  "type": "object",
+  "required": ["image"],
+  "properties": {
+    "image": {
+      "type": "string",
+      "contentEncoding": "binary",
+      "description": "JPEG or PNG photo of a medication bottle label. Max 12 MiB."
+    },
+    "client": {
+      "type": "string",
+      "enum": ["ios", "backend", "test", "unknown"],
+      "default": "unknown"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "mock", "real"],
+      "default": "auto",
+      "description": "auto uses real pipeline when models are available, else mock. mock must never claim real inference."
+    },
+    "hints": {
+      "type": "string",
+      "description": "JSON-encoded object, optional. Example: {\"known_candidates\":[{\"name\":\"Metformin\",\"strength\":{\"value\":500,\"unit\":\"mg\"}}],\"locale\":\"en-US\"}"
+    }
+  }
+}

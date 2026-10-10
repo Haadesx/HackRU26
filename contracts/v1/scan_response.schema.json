@@ -1,0 +1,239 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medcheck.local/contracts/v1/scan_response.schema.json",
+  "title": "MedCheck ScanResponse v1",
+  "description": "Structured result of POST /v1/scan. Every field keeps its source and confidence. Raw source text is preserved. This contract is frozen; changes require orchestrator approval and a version bump.",
+  "type": "object",
+  "required": [
+    "contract_version", "request_id", "status", "mode",
+    "frame_quality", "bottle", "label", "medication", "instructions",
+    "candidates", "interpretation", "uncertainty", "timing", "safety"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": { "type": "string", "const": "1.0.0" },
+    "request_id": { "type": "string", "minLength": 8 },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "needs_rescan", "uncertain", "no_medication_found", "error"]
+    },
+    "mode": { "type": "string", "enum": ["mock", "real"] },
+
+    "frame_quality": {
+      "type": "object",
+      "required": ["acceptable", "score", "guidance"],
+      "additionalProperties": false,
+      "properties": {
+        "acceptable": { "type": "boolean" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "blur": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "is_blurry": { "type": "boolean" }
+          }
+        },
+        "exposure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "too_dark": { "type": "boolean" },
+            "too_bright": { "type": "boolean" }
+          }
+        },
+        "glare": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "has_glare": { "type": "boolean" }
+          }
+        },
+        "guidance": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered, user-facing camera guidance, e.g. 'Move closer to the label'."
+        }
+      }
+    },
+
+    "bottle": {
+      "type": "object",
+      "required": ["detected", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "detected": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "bbox": { "$ref": "#/definitions/bbox" }
+      }
+    },
+
+    "label": {
+      "type": "object",
+      "required": ["detected", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "detected": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "bbox": { "$ref": "#/definitions/bbox" },
+        "text": {
+          "type": ["string", "null"],
+          "description": "Raw OCR text exactly as read; never cleaned to look correct."
+        }
+      }
+    },
+
+    "medication": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/definitions/field_string" },
+        "strength": { "$ref": "#/definitions/field_strength" },
+        "form": { "$ref": "#/definitions/field_string" },
+        "manufacturer": { "$ref": "#/definitions/field_string" }
+      }
+    },
+
+    "instructions": {
+      "type": "object",
+      "required": ["raw_text", "parsed"],
+      "additionalProperties": false,
+      "properties": {
+        "raw_text": { "type": ["string", "null"] },
+        "parsed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["dose", "frequency", "route", "duration", "warning", "other"]
+              },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "candidates": {
+      "type": "array",
+      "description": "Registered candidates matched against the read label, best first.",
+      "items": {
+        "type": "object",
+        "required": ["name", "score", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "strength": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "value": { "type": "number" },
+              "unit": { "type": "string" }
+            }
+          },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "source": { "type": "string", "enum": ["registry", "ocr", "vlm"] }
+        }
+      }
+    },
+
+    "interpretation": {
+      "type": "object",
+      "required": ["available"],
+      "additionalProperties": false,
+      "properties": {
+        "available": { "type": "boolean" },
+        "summary": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"], "enum": ["vlm", null] },
+        "model": { "type": ["string", "null"] }
+      }
+    },
+
+    "uncertainty": {
+      "type": "object",
+      "required": ["level", "reasons", "rescan_required"],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "type": "string", "enum": ["low", "medium", "high"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "rescan_required": { "type": "boolean" }
+      }
+    },
+
+    "timing": {
+      "type": "object",
+      "required": ["total_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "total_ms": { "type": "number", "minimum": 0 },
+        "stages": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+
+    "safety": {
+      "type": "object",
+      "required": ["disclaimer", "ingestion_not_inferred", "backend_authoritative"],
+      "additionalProperties": false,
+      "properties": {
+        "disclaimer": { "type": "string" },
+        "ingestion_not_inferred": { "type": "boolean", "const": true },
+        "backend_authoritative": { "type": "boolean", "const": true }
+      }
+    },
+
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "detail": {}
+      }
+    }
+  },
+  "definitions": {
+    "bbox": {
+      "type": "object",
+      "description": "Normalized [0,1] coordinates relative to the full frame.",
+      "required": ["x", "y", "w", "h"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "w": { "type": "number", "minimum": 0, "maximum": 1 },
+        "h": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "field_string": {
+      "type": "object",
+      "required": ["value", "confidence", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": ["string", "null"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "enum": ["ocr", "vlm", "registry", "none"] }
+      }
+    },
+    "field_strength": {
+      "type": "object",
+      "required": ["value", "unit", "confidence", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": ["number", "null"] },
+        "unit": { "type": ["string", "null"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "enum": ["ocr", "vlm", "registry", "none"] }
+      }
+    }
+  }
+}

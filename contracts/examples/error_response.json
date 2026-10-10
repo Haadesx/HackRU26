@@ -1,0 +1,21 @@
+{
+  "contract_version": "1.0.0",
+  "request_id": "req-bad0c0de",
+  "status": "error",
+  "mode": "mock",
+  "frame_quality": { "acceptable": false, "score": 0.0, "guidance": [] },
+  "bottle": { "detected": false, "confidence": 0.0 },
+  "label": { "detected": false, "confidence": 0.0, "text": null },
+  "medication": { "name": { "value": null, "confidence": 0.0, "source": "none" } },
+  "instructions": { "raw_text": null, "parsed": [] },
+  "candidates": [],
+  "interpretation": { "available": false, "summary": null, "source": null, "model": null },
+  "uncertainty": { "level": "high", "reasons": ["pipeline_error"], "rescan_required": true },
+  "timing": { "total_ms": 3, "stages": {} },
+  "safety": {
+    "disclaimer": "Informational only; not medical advice. Verify with a pharmacist or prescriber.",
+    "ingestion_not_inferred": true,
+    "backend_authoritative": true
+  },
+  "error": { "code": "INVALID_IMAGE", "message": "Could not decode image bytes", "detail": null }
+}

@@ -1,0 +1,23 @@
+"""Shared, orchestrator-owned MedCheck common package (frozen contract models)."""
+from services.common.contract import (  # noqa: F401
+    CONTRACT_VERSION,
+    SAFETY_DISCLAIMER,
+    BBox,
+    Bottle,
+    Candidate,
+    ErrorInfo,
+    FieldStrength,
+    FieldString,
+    FrameQuality,
+    HealthResponse,
+    InstructionItem,
+    Instructions,
+    Interpretation,
+    Label,
+    Medication,
+    ReadyResponse,
+    Safety,
+    ScanResponse,
+    Timing,
+    Uncertainty,
+)

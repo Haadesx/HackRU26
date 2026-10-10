@@ -1,0 +1,34 @@
+{
+  "contract_version": "1.0.0",
+  "request_id": "req-2b8d10ee",
+  "status": "needs_rescan",
+  "mode": "mock",
+  "frame_quality": {
+    "acceptable": false,
+    "score": 0.31,
+    "blur": { "score": 0.22, "is_blurry": true },
+    "exposure": { "score": 0.7, "too_dark": true, "too_bright": false },
+    "glare": { "score": 0.85, "has_glare": false },
+    "guidance": ["Hold the bottle steady", "Move closer so the label fills the frame", "Find more light"]
+  },
+  "bottle": { "detected": true, "confidence": 0.81, "bbox": { "x": 0.3, "y": 0.35, "w": 0.4, "h": 0.45 } },
+  "label": { "detected": false, "confidence": 0.2, "text": null },
+  "medication": {
+    "name": { "value": null, "confidence": 0, "source": "none" }
+  },
+  "instructions": { "raw_text": null, "parsed": [] },
+  "candidates": [],
+  "interpretation": { "available": false, "summary": null, "source": null, "model": null },
+  "uncertainty": {
+    "level": "high",
+    "reasons": ["frame_too_blurry", "label_not_readable"],
+    "rescan_required": true
+  },
+  "timing": { "total_ms": 64, "stages": { "quality": 9, "detect": 41, "ocr": 0, "vlm": 0 } },
+  "safety": {
+    "disclaimer": "Informational only; not medical advice. Verify with a pharmacist or prescriber.",
+    "ingestion_not_inferred": true,
+    "backend_authoritative": true
+  },
+  "error": null
+}

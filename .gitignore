@@ -1,0 +1,37 @@
+# October (generated — context bus / browser MCP)
+.opencode/
+opencode.json
+.october/
+
+# Worktrees (one per worker)
+.worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-*/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+uv.lock
+
+# Model weights & datasets (never commit)
+models/
+data/artifacts/
+data/cache/
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.gguf
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store

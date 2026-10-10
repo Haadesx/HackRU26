@@ -1,0 +1,53 @@
+{
+  "contract_version": "1.0.0",
+  "request_id": "req-7f3a9c21",
+  "status": "ok",
+  "mode": "mock",
+  "frame_quality": {
+    "acceptable": true,
+    "score": 0.91,
+    "blur": { "score": 0.93, "is_blurry": false },
+    "exposure": { "score": 0.9, "too_dark": false, "too_bright": false },
+    "glare": { "score": 0.88, "has_glare": false },
+    "guidance": []
+  },
+  "bottle": { "detected": true, "confidence": 0.95, "bbox": { "x": 0.14, "y": 0.18, "w": 0.52, "h": 0.64 } },
+  "label": {
+    "detected": true,
+    "confidence": 0.89,
+    "bbox": { "x": 0.2, "y": 0.24, "w": 0.42, "h": 0.5 },
+    "text": "METFORMIN HCl 500 mg TABLETS\nTake 1 tablet by mouth twice daily with meals.\nRx only"
+  },
+  "medication": {
+    "name": { "value": "Metformin", "confidence": 0.92, "source": "ocr" },
+    "strength": { "value": 500, "unit": "mg", "confidence": 0.9, "source": "ocr" },
+    "form": { "value": "tablet", "confidence": 0.85, "source": "ocr" },
+    "manufacturer": { "value": null, "confidence": 0, "source": "none" }
+  },
+  "instructions": {
+    "raw_text": "Take 1 tablet by mouth twice daily with meals.",
+    "parsed": [
+      { "kind": "dose", "text": "1 tablet" },
+      { "kind": "route", "text": "by mouth" },
+      { "kind": "frequency", "text": "twice daily" },
+      { "kind": "other", "text": "with meals" }
+    ]
+  },
+  "candidates": [
+    {
+      "name": "Metformin",
+      "strength": { "value": 500, "unit": "mg" },
+      "score": 0.92,
+      "source": "registry"
+    }
+  ],
+  "interpretation": { "available": false, "summary": null, "source": null, "model": null },
+  "uncertainty": { "level": "low", "reasons": [], "rescan_required": false },
+  "timing": { "total_ms": 143, "stages": { "quality": 11, "detect": 47, "ocr": 78, "vlm": 0 } },
+  "safety": {
+    "disclaimer": "Informational only; not medical advice. Verify with a pharmacist or prescriber.",
+    "ingestion_not_inferred": true,
+    "backend_authoritative": true
+  },
+  "error": null
+}
