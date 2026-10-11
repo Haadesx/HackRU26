@@ -248,6 +248,7 @@ labeled real-photo accuracy has been measured yet (P1 item, Hermes).
 | 10 | P2 | `/hub` has no settings persistence beyond adapter? (settings handled by hub tables) | Minor | Backend | — | Confirm `PUT /settings` round-trip in demo |
 | 11 | P2 | `main` is empty; no PR | Repo hygiene | Operator | Branch policy | Open PR from `feat/integration` when approved |
 | 12 | P2 | Alerts/events feed minimal in dashboard | Demo polish | UI/backend | — | Optional if time permits |
+| 13 | P2 | `DELETE /medications/{id}` (hub) leaves the `hub_medications` row and its derived supply alert (“No refills left …”) active for the deleted medication | Confusing/stale alert in demo | Backend `/hub` | — | Skip soft-deleted hub rows when building alerts (or hard-remove the row); demo state was cleaned manually (`delete from hub_medications where id=4`) |
 
 ---
 
@@ -276,8 +277,9 @@ labeled real-photo accuracy has been measured yet (P1 item, Hermes).
 
 **Currently running (local Mac only):** inference `:8300` (real mode, YOLO+VLM enabled, via the
 console daemon `:8400`); backend gunicorn `:8000` with `HUB_ENABLED=true` (localhost-only, single
-master, fork-safety env); TimescaleDB container `:5433`; dashboard dev server `:5199`;
-UI-pass dev server `:5299` (Athena's worktree, when running).
+master, fork-safety env); TimescaleDB container `:5433`; dashboard dev server `:5199` serving the
+merged design; UI-pass dev server `:5299` (Athena's worktree). Demo DB state cleaned: meds
+Metformin/Lisinopril/Atorvastatin, empty alerts, no test artifacts.
 
 **Restrictions respected:**
 - **Linux rig: untouched.** Only read-only SSH probes (`nvidia-smi`, `curl /v1/models`). No
