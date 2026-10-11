@@ -57,6 +57,11 @@ enum DebugLaunch {
     /// Track: start this many days back (0 is today).
     static var trackBack: Int { defaults.integer(forKey: "medcheck.trackBack") }
 
+    /// Open Verify for this scan id, whatever its status (real hubs only list scans that need the caregiver).
+    static var verifyScanID: Int? {
+        defaults.object(forKey: "medcheck.verifyScan") == nil ? nil : defaults.integer(forKey: "medcheck.verifyScan")
+    }
+
     static var openVerify: Bool { defaults.integer(forKey: "medcheck.verify") == 1 }
     static var openPreview: Bool { defaults.integer(forKey: "medcheck.preview") == 1 }
 

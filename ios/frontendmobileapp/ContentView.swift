@@ -51,6 +51,7 @@ struct ContentView: View {
             await store.loadSettings()
             #if DEBUG
             if DebugLaunch.openVerify, let id = store.scansNeedingHelp.first?.id { router.openVerify(scanID: id) }
+            if let id = DebugLaunch.verifyScanID { router.openVerify(scanID: id) }
             if DebugLaunch.offline { store.simulateOffline = true; await store.refresh() }
             if DebugLaunch.skipDays > 0 { await store.skip(days: DebugLaunch.skipDays) }
             if DebugLaunch.selfTest { await DebugSelfTest.run(store: store) }
