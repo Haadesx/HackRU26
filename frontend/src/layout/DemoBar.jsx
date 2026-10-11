@@ -13,7 +13,7 @@ export default function DemoBar() {
   };
   return (
     <div role="region" aria-label="Demo controls" className="fixed inset-x-0 bottom-0 z-40 bg-navy text-mist">
-      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
+      <div className="shell flex flex-wrap items-center justify-between gap-3 py-3">
         <span>Demo mode. Today is <strong aria-live="polite">{fmtDate(data.now)}</strong></span>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="pill pill-secondary" disabled={busy} onClick={go(() => api.advanceDays(1))}>Skip 1 day</button>

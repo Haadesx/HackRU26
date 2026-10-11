@@ -39,9 +39,7 @@ export default function AppShell({ children }) {
         id="main"
         ref={mainRef}
         tabIndex={-1}
-        className={`mx-auto w-full max-w-7xl flex-1 px-4 pt-6 focus:outline-none sm:px-6 sm:pt-8 lg:px-8 xl:px-10 2xl:px-12 ${
-          usingMock ? "pb-32" : "pb-16"
-        }`}
+        className={`shell flex-1 pt-6 focus:outline-none sm:pt-8 ${usingMock ? "pb-32" : "pb-16"}`}
       >
         {data ? children : (
           <p className="rounded-2xl bg-white p-6 text-ink-soft" role="status">

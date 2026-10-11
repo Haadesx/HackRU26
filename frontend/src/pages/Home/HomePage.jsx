@@ -32,7 +32,7 @@ export default function HomePage() {
       </header>
 
       {/* Wide screens: the supply shelf is the main read, today's doses a side panel. */}
-      <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] xl:gap-10">
+      <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] xl:gap-10 min-[1800px]:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] min-[1800px]:gap-12">
         <SupplyShelf meds={meds} now={now} thresholds={t} onOpen={setOpenId} />
         <TodayDoses data={data} />
       </div>

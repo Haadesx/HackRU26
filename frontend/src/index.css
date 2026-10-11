@@ -56,6 +56,14 @@
   }
 
   .card { @apply bg-white border border-line rounded-card; }
+  /* Page shell: wider on very large displays so 1920/2560 screens are not a narrow
+     central column, while text blocks keep their own reading measure. */
+  .shell {
+    @apply mx-auto w-full px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12;
+    max-width: 80rem;
+  }
+  @media (min-width: 1920px) { .shell { max-width: 96rem; } }
+  @media (min-width: 2400px) { .shell { max-width: 112rem; } }
   .field {
     @apply w-full min-h-[44px] rounded-full border-2 border-line bg-white px-4 text-ink
       placeholder:text-ink-muted focus:border-sky focus:outline-none;

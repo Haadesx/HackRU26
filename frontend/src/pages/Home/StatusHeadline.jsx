@@ -28,7 +28,7 @@ export default function StatusHeadline({ summary, patient, now }) {
   return (
     <div className="flex flex-col gap-2">
       <p className="text-ink-soft">{greeting(now)}, {patient.caregiver}. Here's how {patient.name} is doing.</p>
-      <h1 className="max-w-[22ch] text-[34px] font-bold leading-tight sm:text-[42px]">{summary.text}</h1>
+      <h1 className="max-w-[22ch] text-[34px] font-bold leading-tight sm:text-[42px] min-[1800px]:max-w-[26ch] min-[1800px]:text-[48px]">{summary.text}</h1>
       {summary.badge && <StatusBadge tone={summary.tone} className="self-start">{summary.badge}</StatusBadge>}
       {summary.sub && <p className="text-ink-soft">{summary.sub}</p>}
     </div>

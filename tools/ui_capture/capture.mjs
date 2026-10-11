@@ -22,9 +22,11 @@ if (!BASE || !PREFIX) {
   process.exit(2);
 }
 const SIZES = [
-  ["desktop", 1920, 1080],
-  ["laptop", 1440, 900],
   ["mobile", 390, 844],
+  ["tablet", 768, 1024],
+  ["laptop", 1440, 900],
+  ["desktop", 1920, 1080],
+  ["wide", 2560, 1440],
 ];
 const OUT = "docs/screenshots/ui";
 mkdirSync(OUT, { recursive: true });
