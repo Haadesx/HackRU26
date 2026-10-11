@@ -352,6 +352,19 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
   medications (test `test_dose_scan_ignores_doses_of_stopped_medications`; backend 138 pass).
 - **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
 
+### I.10 Demo-names mode (2026-10-11)
+
+For the demo only four medicines are used, and the label reader must never mistake them or take a pharmacy or store
+name ("University Pharmacy", "Amazon Basic Care") as the drug. With `HUB_ENABLED=true HUB_DEMO_NAMES=true` the hub
+(`backend/app/hub/demo_names.py`) only ever names **Fluoxetine HCl, Fexofenadine, Vitamin D3 or Tylenol**, found
+anywhere in the OCR text (aliases: prozac, allegra, cholecalciferol, acetaminophen; long names tolerate OCR noise such
+as "Fexofenainein"). A label without one of them gets no name (the caregiver is asked for another photo). The strength is
+taken from mg/mcg/IU on the label (never "303 G" from an address), preferring the tracked one when the label prints two
+("25 mcg (1000 IU)"); a different strength is kept as printed so a wrong-strength bottle is still caught. Off by default.
+Tests: `test_demo_names_*` (backend 140 pass). Verified on the live hub with synthetic labels of all four plus a decoy.
+The tracked names in the demo database were renamed to match exactly ("D3" -> "Vitamin D3", "Fluoxetine Hcl" ->
+"Fluoxetine HCl").
+
 ## J. Outstanding work
 
 | # | Task | Status |

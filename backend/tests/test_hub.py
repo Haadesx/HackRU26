@@ -913,3 +913,47 @@ def test_dose_scan_ignores_doses_of_stopped_medications(hub, monkeypatch):
     assert code == 200 and r["status"] == "not_scheduled", r
     assert "Metformin" not in r["message"]
     assert not [e for e in hub.state()["events"] if e["type"] == "wrong_bottle"]
+
+
+def test_demo_names_only_the_four_demo_medicines(app):
+    """HUB_DEMO_NAMES: the name is one of the four demo medicines or nothing; never a pharmacy or store."""
+    from app.hub import labels as hub_labels
+
+    def read(label_text, name="WALGREENSPHARMACY", conf=0.3):
+        scan = {"medication": {"name": {"value": name, "confidence": conf},
+                               "strength": {"value": 303, "unit": "g", "confidence": 0.75}},
+                "label": {"text": label_text}, "instructions": {}}
+        with app.app_context():
+            app.config["HUB_DEMO_NAMES"] = True
+            try:
+                return hub_labels.readings_from_inference(scan)
+            finally:
+                app.config["HUB_DEMO_NAMES"] = False
+
+    r = read("UNIVERSITY PHARMACY\n303 George St.\nDESAI, URVI\nGENERIC FOR PROZAC\nFLUOXETINE HCL 20MG CAP")
+    assert r["name"] == ("Fluoxetine HCl", 0.95) and r["strength"][0] == "20 mg"
+    r = read("amazon basic care\nActive ingredient\nFexofenainein HCl 180 mg\nAntihistamine")
+    assert r["name"][0] == "Fexofenadine" and r["strength"][0] == "180 mg"
+    r = read("Nature Made\nVitamin D3\n25 mcg (1000 IU)\nDietary supplement")
+    assert r["name"][0] == "Vitamin D3"
+    r = read("TYLENOL\nExtra Strength\nAcetaminophen 500 mg\nPain reliever")
+    assert r["name"][0] == "Tylenol" and r["strength"][0] == "500 mg"
+    # A label with none of the four: no name at all, never the pharmacy or the store
+    r = read("UNIVERSITY PHARMACY\n303 George St.\nRx# 418432\nAmazon Basic Care")
+    assert "name" not in r
+    # An Rx number with D3 in it is not Vitamin D3
+    assert "name" not in read("UNIVERSITY PHARMACY\nRx#08D3417\nDESAI, URVI")
+    # Off by default: the normal reader is unchanged
+    with app.app_context():
+        scan = {"medication": {"name": {"value": "Lisinopril", "confidence": 0.95}}, "label": {"text": "LISINOPRIL 10 mg"}, "instructions": {}}
+        assert hub_labels.readings_from_inference(scan)["name"] == ("Lisinopril", 0.95)
+
+
+def test_demo_names_prefer_the_tracked_strength():
+    from app.hub import demo_names
+
+    text = "Nature Made\nVitamin D3\n25 mcg (1000 IU)"
+    assert demo_names._strength_near(text, "vitamin d3", "1000 IU") == "1000 IU"
+    assert demo_names._strength_near(text, "vitamin d3", None) == "25 mcg"
+    # A different strength than tracked is returned as printed, so the mismatch is still caught.
+    assert demo_names._strength_near("TYLENOL\nAcetaminophen 500 mg", "tylenol", "325 mg") == "500 mg"
