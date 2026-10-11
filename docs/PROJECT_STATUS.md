@@ -1,306 +1,355 @@
-# HackRU26 · MedCheck — Complete Development Status (LLM Context File)
+# MedCheck (HackRU26) — Complete Development Status & Handoff
 
-> **How to use:** paste this whole file into ChatGPT (or any LLM) as context and say:
-> *"This is the current state of our project. Keep it as ground truth; help me continue from
-> here."* It is written to be self-contained — architecture, contracts, commands,
-> verified numbers, open issues. Maintained by the inference orchestrator (Apollo) and
-> refreshed at every milestone.
+> **For ChatGPT and Hermes:** treat this file as ground truth for the MedCheck project as of
+> the timestamp below. It is written to be self-contained — architecture, contracts,
+> measured results, commands, limitations, and next steps. Ask for `docs/inference-medcheck.md`
+> for the inference-only deep dive, `docs/client-integration.md` for the client flow,
+> `services/api/HANDOFF.md` for API details, `docs/backend-urvi.md` for backend internals.
 >
-> **Last updated:** 2026-10-10 ~18:05 UTC · **Repo:** https://github.com/Haadesx/HackRU26
-> **Integration branch:** `feat/inference-medcheck` (main is intentionally untouched)
+> **Last updated:** 2026-10-10 ~19:15 UTC · **Canonical branch:** `feat/integration`
+> **Repo:** https://github.com/Haadesx/HackRU26 · **Owner/operator:** Varesh
 
 ---
 
-## 1. Product
+## 0. TL;DR
 
-**MedCheck** (HackRU 2026) — scan a medication bottle with a phone/webcam, read the label,
-and manage the medication safely:
-
-1. camera → **inference** reads the label (vision → OCR → optional VLM)
-2. structured result (name, strength, form, instructions, uncertainty) with a safety block
-3. clients pass the result to the **backend**, which owns prescriptions, dose schedules,
-   reminders, inventory, refills, adherence — and only the backend/user can confirm a dose
-4. **iOS app** (camera UI) and **web UI** consume both
-
-**Non-negotiable safety rules (enforced in code + contracts):**
-- A scan **never** records or implies ingestion; carrying/opening a bottle is not proof.
-- Inference never authorizes dosing; the backend owns schedule/dose/inventory authority.
-- Every structured field carries `confidence` + `source` (`ocr|vlm|registry|none`) and raw
-  source text is preserved verbatim. No fabricated drug names/strengths/instructions.
-- Tablet **strength** (e.g. 500 mg) is never confused with **quantity per dose** (e.g. “1 tablet”).
-
----
-
-## 2. Team, branches, repository
-
-| Who | Component | Branch | Status |
-|---|---|---|---|
-| Varesh (owner/operator) | coordination, testing | — | present |
-| Sinchana | Web UI | `feat/frontend-ui` | **merged into `feat/inference-medcheck`** (PR #1): React 18 + Vite + Tailwind, docs + fixtures included |
-| Aparajita | iOS app | `feat/ios-aparajita` | **not pushed yet** (frontend in development) |
-| Urvi | Backend + DB | `feat/backend-urvi` | pushed `85fc33f`; **blocked: missing `app/models` package** (see §7) |
-| Inference subteam | AI inference subsystem | `feat/inference-medcheck` | complete M1–M4, M5 in flight |
-
-**Inference subteam = 5 coding agents** running in October Desktop (Pi harness, October
-Bus for coordination):
-- **Apollo** — orchestrator / integration / docs (terminal `term-mv2rzwwy-f`)
-- **Atlas** — PI-1 Vision (`.worktrees/pi-1-vision`, branch `feat/vision-atlas`)
-- **Orion** — PI-2 OCR (`.worktrees/pi-2-ocr`, `feat/ocr-orion`)
-- **Juno** — PI-3 VLM (`.worktrees/pi-3-vlm`, `feat/vlm-juno`)
-- **Athena** — PI-4 API (`.worktrees/pi-4-api`, `feat/api-athena`)
-
-**Git facts:** one repo, one worktree per worker; only the orchestrator merges into the
-integration branch and pushes. Nothing has been merged into `main`, and no force-push ever.
-Remote currently has exactly two branches: `feat/inference-medcheck` and `feat/backend-urvi`.
-
-**Key commits (integration branch):** contract freeze `51569fd` → real pipeline merges
-`b6bbbef`/`a49afd0`/`5b60648`/`91a5c83` → noise fix `34480c3` → M3 merges `fc5ff80`,
-`4d0d32c` → contract v1.1 `3bdea53` → M4 merges `f284f3b`, `aa3ccd3`.
-Latest push: `362a2b0`-series (M4 docs). Worker tips: Atlas `ae1c3a8`, Orion `cb31f7e`,
-Juno `16ca2dd`, Athena `2e53239`.
-
----
-
-## 3. System architecture (current)
+MedCheck is a medication-label scanner for low-vision older adults. It is **three working
+systems wired together end-to-end**:
 
 ```
-                 ┌────────────────────── iOS (Aparajita) / Web UI (Sinchana) ──────────────────────┐
-                 │  camera frame                                                                     │
-                 ▼                                                                                   │
-   POST :8300/v1/scan (multipart image)                                                              │
-                 │                                                                                   │
-        ┌────────▼─────────┐   services/vision    quality (blur/exposure/glare) + guidance,        │
-        │ Inference gateway│   (PI-1 Atlas)       bottle detect (heuristic | YOLO ONNX |        │
-        │ FastAPI :8300    │                      ultralytics), label bbox, crop_label(),           │
-        │ (PI-4 Athena)    │                      real-time /api/live path (~20 ms)                  │
-        └────────┬─────────┘                                                                         │
-                 │  services/ocr (PI-2 Orion): RapidOCR/ONNX → raw text + boxes →                 │
-                 │  name/strength/form/instructions + v1.1 dose {quantity,unit} +                 │
-                 │  registered-candidate matcher (fuzzy, score in [0,1])                          │
-                 │  services/vlm (PI-3 Juno): Qwen3-VL via existing vLLM on the home rig,          │
-                 │  escalation only when identity-critical fields are weak/mismatched              │
-                 ▼                                                                                   │
-   ScanResponse (contract v1.1, JSON)  ────────────────────────────────────────────────────────────┘
-                 │
-                 ▼  client maps: drug_name ← medication.name.value ; strength ← {value,unit} ;
-                    quantity ← instructions.dose.quantity (fallback 1) ; event_id client-generated
-   POST :<backend>/api/v1/scans   (Urvi: Flask + Postgres/TimescaleDB)
-                 → matches to a due dose (never changes status), returns match/timing/quantity_check
-   POST /api/v1/doses/{id}/confirm  → the ONLY thing that records a dose (tap-to-confirm)
+React dashboard (Sinchana)  →  Flask/TimescaleDB backend + /hub (Urvi)  →  AI inference (Apollo/agents)
+       :5199                          :8000/hub                                  :8300
 ```
+
+- **Scans**: camera photo(s) → YOLO bottle detection → label OCR → structured fields → optional
+  Qwen3-VL verification when identity is weak/mismatched. Long labels are captured across
+  **3 rotated frames and fused**.
+- **Backend** owns all medication authority: prescriptions (versioned), dose schedules/events,
+  confirm/skip, missed-dose jobs, notifications (in-app/SMS/push), inventory, refills, adherence.
+- **Dashboard** shows supply, today's doses, scan/verify/add flow, history, adherence, settings.
+- Verified end-to-end on real photos and real data; **522 inference tests + 76 backend tests green**.
 
 ---
 
-## 4. Inference subsystem (built, tested, live-verified)
+## 1. What MedCheck does (product)
 
-**Layout:** `services/{common,vision,ocr,vlm,api}` + `contracts/v1` + `samples/` +
-`scripts/` + `tools/local_scan/` + `tests/integration/`.
+1. Caregiver opens the dashboard; the patient's medications, stock and today's doses are shown.
+2. **Add medication** → camera → photo of the bottle label (1–3 shots: start → rotate → end).
+3. Inference returns nine fields with per-field confidence: `name, strength, dose_amount,
+   schedule_times, quantity_start, refills_remaining, pharmacy_name, pharmacy_phone, prescriber`.
+4. The caregiver confirms/corrects on the Verify screen → **Add** creates the medication
+   (new prescription version), initializes stock, and generates dose events.
+5. Daily loop: doses are taken and logged; missed doses alert caregivers; supply and refills are
+   tracked; adherence is reported.
 
-### 4.1 HTTP API (port 8300, FastAPI)
-- `GET /health` → `{status, service:"medcheck-inference", version, uptime_s}`
-- `GET /ready` → `200 {ready, mode, components{vision,ocr,pipeline,vlm}}` or `503`
-- `POST /v1/scan` multipart: `image` (JPEG/PNG ≤12 MiB), optional `client`, `mode`
-  (`auto|mock|real`), `hints` (JSON string, e.g. `{"known_candidates":[{"name":"Metformin","strength":{"value":500,"unit":"mg"}}]}`)
-- Errors: 400 bad request envelope, 413 too large, 415 unsupported media, 504 timeout;
-  domain failures return HTTP 200 with `status:"error"` + `error{code,message}`.
+**Safety invariants (enforced in code):** a scan never records or implies ingestion; only an
+explicit confirm records a dose; inference never authorizes dosing; every structured field keeps
+`{value, confidence, source}` and raw text is preserved; strength (500 mg) is never confused with
+quantity per dose (1 tablet); no fabricated names/strengths/instructions.
 
-### 4.2 Contract v1.1 (frozen; additive over v1.0)
-`ScanResponse` fields (all present): `contract_version:"1.2.0"`, `request_id`,
-`status ∈ ok|needs_rescan|uncertain|no_medication_found|error`, `mode ∈ mock|real`,
-`frame_quality{acceptable,score,blur,exposure,glare,guidance[]}`,
-`bottle{detected,confidence,bbox?}`, `label{detected,confidence,bbox?,text}`,
+---
+
+## 2. Architecture (final)
+
+```
+ iOS (Aparajita, not yet built)
+        │
+        ├──────────────────────────────┐
+        ▼                              ▼
+ React dashboard (Sinchana)      backend /api/v1 (JWT)
+ :5199 · VITE_API_URL=:8000/hub   :8000 · prescriptions, doses, inventory,
+        │                          refills, adherence, notifications, worker
+        ▼
+ /hub compatibility layer (Urvi) — dashboard contract, no auth, localhost only
+        │  photo(s)                            ▲  state/read-write
+        ▼                                      │
+ inference gateway :8300 (Apollo/agents)       │
+   vision (quality, YOLO11n ONNX bottle,       │
+   label bbox, clipped detection)              │
+   OCR (RapidOCR/ONNX + field extraction +     │
+   candidate matcher + multi-frame fusion)     │
+   VLM (Qwen3-VL-8B-FP8 via existing vLLM on   │
+   the RTX 5090 rig, escalation only)          │
+ flush── PostgreSQL 17 + TimescaleDB :5433 ────┘
+```
+
+- **Primary hub = backend `/hub`** (persists to Postgres, 15 tests, prefers inference v1.3
+  `label_meta`). **Fallback hub = `tools/hub_adapter` (`:8500`)** — same contract, file-backed,
+  needs no DB (`scripts/run_ui_demo.sh --adapter`).
+- The home rig (`hermes-linux`, RTX 5090) already serves `Qwen/Qwen3-VL-8B-Instruct-FP8` under
+  vLLM (Docker `echo-vllm`, Tailscale `:8100`). It is **shared** — never restarted, never a
+  second VLM launched. GPU snapshot at handoff: **32,607 MiB total / 18,847 used / 13,242 free**.
+
+---
+
+## 3. Repository, branches, worktrees
+
+| Branch | Purpose | Notes |
+|---|---|---|
+| **`feat/integration`** | **canonical** — everything merged | tip `7797c56` (docs) / `ed021d0` (hub merge) |
+| `feat/inference-medcheck` | inference feature branch (Apollo) | M1–M10b, tools, docs |
+| `feat/backend-urvi` | backend (Urvi) | 76 tests incl. `/hub` |
+| `feat/frontend-ui` | dashboard (Sinchana), merged via PR #1 | React 18 + Vite + Tailwind |
+| `feat/{vision-atlas,ocr-orion,vlm-juno,api-athena}` | worker branches (inside repo) | merged into inference branch |
+| `main` | **intentionally untouched** (remote had no main; do not push it) | team decision pending |
+
+One repo, one worktree per worker (`.worktrees/pi-1-vision` …), orchestrator merges and pushes.
+Never force-pushed; no destructive resets. The remote has four branches; `main` is empty.
+
+**Key commits:** contracts frozen `51569fd`; `.gitignore` model-package fix `179c4d6`; contract
+v1.1 `3bdea53`; v1.2 multi-frame `600c52c`; v1.3 label_meta `9ccf613`/`c470a11`; M10/M10b OCR
+spacing `70dac0f`/`615997f`; M5 YOLO `31c3634`; M7 endpoint `db94131`; Urvi's `/hub`
+`35b8e50`/`e770889`; integration docs `7797c56`.
+
+---
+
+## 4. Inference subsystem (deep)
+
+### 4.1 Services
+
+| Service | Owner | What it does |
+|---|---|---|
+| `services/vision` | Atlas (PI-1) | decode/EXIF/resize, quality (blur/exposure/glare), **YOLO11n ONNX bottle detector** (heuristic fallback), label localization, `label_clipped` detection, camera guidance, `crop_label` |
+| `services/ocr` | Orion (PI-2) | RapidOCR (PP-OCRv4 ONNX, no torch), verbatim text + boxes, name/strength/form/manufacturer extraction, instruction parsing, per-dose quantity/unit, pharmacy metadata, fuzzy **candidate matcher**, **multi-frame text fusion** |
+| `services/vlm` | Juno (PI-3) | Qwen3-VL adapter (single + multi-image), reconciliation with source attribution, escalation policy, 24-image eval harness, GPU benchmark |
+| `services/api` | Athena (PI-4) | FastAPI gateway (`:8300`), contract models, mock/real pipelines, `/v1/scan` + `/v1/scan/multi`, optional bearer auth, CORS, validation/timeouts |
+| `services/common` | orchestrator | frozen contract models (pydantic) |
+
+### 4.2 HTTP API (`:8300`)
+
+- `GET /health`, `GET /ready`
+- `POST /v1/scan` — multipart `image`, optional `client`, `mode` (`auto|mock|real`), `hints`
+  (`{"known_candidates":[…]}`)
+- `POST /v1/scan/multi` — 2–6 repeated `images`; per-frame report + **multi_frame** fusion
+- Errors: 400 envelope, 413 oversize (12 MiB/image), 415 type, 504 timeout; domain failures
+  return HTTP 200 with `status:"error"`.
+- Optional `MEDCHECK_API_KEY` → `Authorization: Bearer …` on scans; `MEDCHECK_CORS_ORIGINS`.
+
+### 4.3 Contract v1.3 (`contracts/v1/*.schema.json` + `services/common/contract.py`)
+
+`ScanResponse`: `contract_version:"1.3.0"`, `request_id`, `status ∈ ok|needs_rescan|uncertain|
+no_medication_found|error`, `mode ∈ mock|real`, `frame_quality{acceptable,score,blur,exposure,
+glare,guidance[]}`, `bottle{detected,confidence,bbox?}`, `label{detected,confidence,bbox?,text}`,
 `medication{name,strength,form,manufacturer}` each `{value,confidence,source}`,
-`instructions{raw_text, parsed[{kind∈dose|frequency|route|duration|warning|other,text}],
-dose{quantity>0|null,unit,confidence,source}}` (**v1.1, additive**),
-`candidates[{name,strength?,score,source}]`,
-`interpretation{available,summary?,source:"vlm"?,model?}`,
-`uncertainty{level∈low|medium|high,reasons[],rescan_required}`,
-`timing{total_ms,stages{}}`, `capture{frames_requested,frames_used,fusion,per_frame[]}`
-(v1.2, multi-frame label capture; optional),
-`safety{disclaimer,ingestion_not_inferred:true,backend_authoritative:true}`, `error|null`.
-BBoxes normalized `[0,1]`. JSON schemas: `contracts/v1/*.schema.json`; pydantic mirror:
-`services/common/contract.py`. Versioning: additive → minor bump; breaking → new `vN/`.
+`instructions{raw_text, parsed[], dose{quantity,unit,confidence,source}}` (v1.1),
+`label_meta{quantity_start,refills_remaining,pharmacy_name,pharmacy_phone,prescriber,
+schedule_times}` (v1.3), `candidates[]`, `interpretation{available,summary,source,model}`,
+`uncertainty{level,reasons[],rescan_required}`, `timing{total_ms,stages{}}`,
+`capture{frames_requested,frames_used,fusion,per_frame[]}` (v1.2),
+`safety{disclaimer,ingestion_not_inferred:true,backend_authoritative:true}`, `error`.
 
-### 4.3 Measured results (all verified, not reported by others)
-- Unit/integration tests on merged tree: **425 passed / 0 failed** (vision 112 · ocr 93 ·
-  vlm 125 · api 91 · integration 4 + backend-fit).
-- OCR accuracy on synthetic set: extraction 33/33 name/strength/form; end-to-end rendered
-  images 8/8; macro F1 OCR-only **0.99**; 24-image eval: VLM-only 1.0, hybrid 0.99.
-- Latency (Mac CPU, real mode): clean scan **~0.54 s** (OCR dominant ~0.4 s, **zero VLM
-  calls**); candidate-mismatch scan → VLM **~1.7 s** (Qwen/Qwen3-VL-8B-Instruct-FP8);
-  blurry → `needs_rescan` in **~20 ms**; live vision-only pass **~20 ms** after warmup.
-- Concurrency: 8 simultaneous real scans ≈ **2.1 s wall** (~3.8 scans/s), no errors.
-- GPU: existing rig vLLM **18,383 MiB used / 13,706 MiB free — unchanged** across every
-  call; the service was never restarted. Rig also runs Ollama, Postgres, Mongo, echo services.
-- Wake/bus: worker agents receive October-bus wakes end-to-end; the orchestrator terminal
-  is a `user-shell` terminal and is refused at October's hook-admission layer
-  (`{"ok":false,"stale":true}`) — orchestrator outbound uses `octoberctl terminal input`
-  and inbound reads worker transcripts (works reliably).
+Versioning: additive fields bump minor; breaking changes need `vN/`. v1 consumers ignore unknown
+optional fields. All bboxes normalized `[0,1]`.
 
-### 4.4 Local test console (works without iOS)
-`scripts/local_scan.sh --daemon` → UI at **http://127.0.0.1:8400** (real engine; `--no-vlm`,
-`--mock`, `--stop`, `--status`). Features: upload/webcam capture, **live mode** (continuous
-~4 fps quality+bottle+label guidance with boxes, auto-scan when readable, 6 s throttle),
-raw JSON, debug bundles saved to `~/.medcheck/scans/` (image+response, last 40; never
-committed). Also `scripts/scan_demo.sh`, `scripts/gpu_probe.sh`,
-`scripts/validate_contract.py`, `scripts/setup_full_env.sh` (builds `.venv-full`).
+### 4.4 Multi-frame capture (long labels)
 
-### 4.5 Real-photo findings (important)
-Testing with real medication photos (kept local, not committed) showed:
-- the CPU color/edge bottle heuristic **fails on real photos** (0/3 detections);
-- OCR/label detection still works (full-frame), VLM rescues weak fields;
-- **YOLO11n ONNX (COCO class `bottle`)** detected a real bottle at conf 0.485 where the
-  heuristic found nothing, at ~60 ms CPU — **M5 integrated it** as the default detector
-  backend (`MEDCHECK_YOLO_MODEL=models/yolo11n.onnx`, onnxruntime, no torch, heuristic
-  fallback; `MEDCHECK_YOLO_CONF` threshold). The local console auto-enables it when
-  `models/yolo11n.onnx` exists (`scripts/download_models.sh`, sha256 `634279b4…`);
-  verified through `/api/live` and full scans (bottle 0.51, warm live pass 145–160 ms).
+The client captures 2–6 overlapping frames while rotating. Each frame runs the full pipeline;
+frames failing quality are reported (`needs_rescan`) and skipped. Fusion is **text-level**:
+highest-confidence non-null fields, unioned instruction lines deduped, per-frame raw text kept
+verbatim (`--- frame N ---`), conflicts surfaced as reasons (never silently averaged). Clipped
+labels produce the prompt *“Label is cut off — rotate the bottle or step back, then capture
+again.”* If identity stays weak/mismatched, the **VLM sees all frames at once**.
 
----
+### 4.5 Models & config (env names only; secrets never in git)
 
-## 5. Backend (Urvi) — integration contract
+- `MEDCHECK_YOLO_MODEL=models/yolo11n.onnx` (COCO bottle class; ONNX Runtime, cached session,
+  no torch), `MEDCHECK_YOLO_CONF` (threshold)
+- OCR: RapidOCR/ONNX, in-wheel PP-OCRv4; small crops are upscaled before recognition; degenerate
+  text (e.g. `日`) is treated as unread
+- `MEDCHECK_API_MODE`, `MEDCHECK_VLM_ENABLED`, `MEDCHECK_VLM_BASE_URL`, `MEDCHECK_VLM_MODEL`,
+  `MEDCHECK_VLM_API_KEY` (in `~/.medcheck/vllm.env`, mode 600), `MEDCHECK_SCAN_TIMEOUT_S`,
+  `MEDCHECK_SAVE_SCANS`
+- Model weights live in `/models` (gitignored): `scripts/download_models.sh` (yolo11n.onnx,
+  sha256 `634279b4…`)
 
-`feat/backend-urvi` @ `85fc33f`: Flask 3.1 + flask-smorest, `/api/v1`, JWT/argon2,
-PostgreSQL 17 + **TimescaleDB** (hypertables `vision_observations`, `dose_outcomes`;
-adherence aggregate), 17 tables + Alembic migrations, prescriptions (draft→active,
-versioned), dose schedules/windows, dose events, scan ingest with fuzzy matching,
-tap-to-confirm, missed-dose jobs, notifications (in-app/SMS/web-push), inventory, refills,
-adherence. Docs: `docs/backend-urvi.md`, `db.md`.
+### 4.6 Measured results (all executed, not estimates)
 
-**Scan ingest:** `POST /api/v1/scans` (JWT) body
-`{event_id, user_id, drug_name, strength?{value,unit}, quantity, timestamp}` → response
-`{match_status, dose_event, timing, quantity_check, candidates, safety{ingestion_not_inferred:true,...}}`.
-Idempotent on `event_id`; a scan never changes dose status.
-**Client mapping from inference:** `drug_name ← medication.name.value`,
-`strength ← medication.strength`, `quantity ← instructions.dose.quantity` (v1.1) with
-fallback 1 only when the label states none, `timestamp` client-side, `event_id` UUID.
-Orchestrator test `tests/integration/test_backend_fit.py` proves this mapping (green).
+| Metric | Value |
+|---|---|
+| Inference tests (final) | **522 passed** (vision 118 · ocr 164 · vlm 134 · api 102 · integration 4) |
+| OCR extraction (synthetic) | 33/33 name/strength/form; e2e rendered images 8/8 |
+| 24-image eval | OCR-only macro F1 **0.99**, VLM-only **1.0**, hybrid **0.99**; escalation ~0 % on the clean set under M3 defaults |
+| Clean real scan (OCR-first) | **541 ms** total (OCR ~423 ms), **zero VLM calls** |
+| Escalated scan | VLM stage **~1.70 s** (2.4 s on a large real photo) |
+| Blurry frame | `needs_rescan` in **19.5 ms** with guidance |
+| Live vision pass | **~20 ms** warm (up to ~145–160 ms with YOLO on a real photo frame) |
+| Real-photo bottle (YOLO) | heuristic 0/3 detections → **YOLO 0.51** on the clearest real photo |
+| Concurrency (VLM off) | 8 simultaneous scans ≈ **2.1 s wall** (~3.8/s), no errors |
+| VRAM across real calls | 18,383 used / 13,706 free — **unchanged**; rig vLLM never restarted |
+| Contract validation | 4/4 examples (schema + pydantic) |
+| Backend tests | **76 passed** (incl. 15 `/hub`) |
 
 ---
 
-## 6. Web UI / iOS status
+## 5. Backend (Urvi) — what exists and the integration
 
-- **Web UI (Sinchana) is merged into the integration branch** (`frontend/`, React 18 + Vite +
-  Tailwind) and the Python suite stays green (**452/452**).
-- The UI expects a **hub** at `VITE_API_URL` (default `:8000`) with `GET /state`,
-  `POST /scans` (multipart `photo`), `POST /scans/{id}/photos` (extra photos merged),
-  `POST /scans/{id}/complete`, `GET /adherence`, `PUT /settings` (see
-  `frontend/docs/api-contract.md`). Its nine scan fields map to our contract v1.3 — table +
-  the open decision in `docs/client-integration.md` §3b.
-- **iOS (Aparajita)** has no branch on the remote yet (frontend in development per Varesh).
-- **Decision needed:** does the hub (backend) proxy inference server-to-server (Sinchana’s
-  model; recommended) or do clients call inference directly (Urvi’s current model)?
+**Stack:** Flask 3.1 + flask-smorest, JWT/argon2, SQLAlchemy 2 + Alembic, PostgreSQL 17 +
+TimescaleDB 2.30.2 (Docker, `:5433`), APScheduler worker, Twilio/FCM channels, OpenFDA NDC
+lookup. 17 domain tables + `hub_*` tables (migration `0003`).
 
----
+**Features:** auth, caregiver links, prescriptions (draft → scheduled → active, versioned,
+supersede), dose windows/schedules (DST-safe, idempotent generation), dose events with
+confirm/skip/late rules, missed-dose job + alerts, notifications (in-app/SMS/push), inventory +
+refills, adherence (local-day buckets), vision observation ingest with fuzzy matching.
 
-## 7. Current blockers / open decisions
+**`/hub` compatibility layer** (Sinchana's contract, no auth, `HUB_ENABLED=true`, localhost only):
+`GET /health`, `GET /state`, `POST /medications/{id}/doses|remind|counts|refill`, `PATCH|DELETE
+/medications/{id}`, `POST /scans` (photo), `POST /scans/{id}/photos`, `GET|DELETE /scans/{id}`,
+`POST /scans/{id}/complete`, `GET /adherence`, `PUT /settings`, `GET /export`, `DELETE /data`,
+`POST /demo/advance|reset`. It calls inference with the patient's tracked meds as hints and
+prefers `label_meta` over its own regex fallback.
 
-1. **Urvi's branch is missing `backend/app/models/`** — silently excluded by an
-   over-broad `.gitignore` rule (`models/`, meant for ML weights) from an earlier
-   inference commit. Fresh checkout → `ModuleNotFoundError: app.models`; her tests can't
-   run. **Fixed on our side** (`179c4d6`: `/models/` anchored). She must:
-   `git fetch && git merge origin/feat/inference-medcheck && git add backend/app/models && commit && push`.
-2. **Auth/TLS** for the inference gateway: none yet (localhost only). Needed before iOS
-   device → Mac/rig traffic beyond local testing.
-3. **Candidate registry source**: inference matcher consumes `hints.known_candidates`;
-   long-term the backend/user's medication list should feed it.
-4. **Multi-frame capture (M7) — done + live-verified** — long labels read across rotated
-   frames: contract v1.2 `capture` block + `POST /v1/scan/multi`; text-level fusion
-   (best-confidence fields, deduped instruction union, verbatim per-frame raw text),
-   clipped-label rotate guidance, multi-image VLM support, console “Long label” 3-frame
-   mode. Verified on overlapping crops: fused Hydrochlorothiazide 25 mg + full
-   instructions, 3/3 frames, no fabrication.
-5. **YOLO recall** — real-photo recall is partial (1 strong, 1 weak, 1 none in the
-   sample set); heuristic/flat-label fallbacks stay. Threshold configurable.
-5. **VLM cost**: escalation triggers were tuned in M3 (identity-critical fields only);
-   registry-mismatch still escalates by design (~1.7 s).
+**Verified live by the orchestrator:** migrate + her 15 hub tests pass; photo → **9/9 fields**
+from real inference; second photo → multi-frame; complete → new medication persisted (+ duplicate
+refusal “already being tracked”); UI pointed at `/hub` with CORS from `:5199`.
 
 ---
 
-## 8. How to run (verified commands)
+## 6. Web dashboard (Sinchana)
+
+React 18 + Vite 5 + Tailwind + React Router. Pages: Home (supply bottles, today's doses,
+caregiver texts), Scan (camera + verify + added), History, Settings. Contract docs:
+`frontend/docs/api-contract.md` + `frontend/docs/inference-contract.md` + fixtures.
+Run: `cd frontend && npm install && npm run dev` with `VITE_API_URL` (or `.env.local`).
+Headless-Chrome verification: Home renders patient “Ada”, caregiver “Cara”, three medications
+with live stock and today's doses, badge “Connected to Ada's hub”.
+
+---
+
+## 7. Local test console (no iOS needed)
+
+`scripts/local_scan.sh --daemon` → **http://127.0.0.1:8400**
+- upload / webcam capture; **live mode** (~4 fps quality+bottle+label guidance with boxes and
+  auto-scan); **Long label (3-frame rotation)** mode with thumbnails and fused result;
+  raw JSON; scan bundles saved to `~/.medcheck/scans/` (single + all multi frames) for debugging.
+- `MEDCHECK_YOLO_MODEL` is auto-enabled when `models/yolo11n.onnx` exists.
+
+## 8. Voice (ElevenLabs)
+
+Root `.env` (mode 600, gitignored) holds `ELEVENLABS_API_KEY` (verified: 21 voices) +
+`ELEVENLABS_VOICE_ID`/`_MODEL_ID`; `.env.example` files document names.
+`scripts/tts_smoke.py` synthesises real cloud audio (sample: “Rosa, it's time for your
+Metformin. Take one tablet with breakfast.” → 71.5 KiB in **1.29 s**, voice *Sarah*).
+Planned: Twilio `<Say>`/`<Play>` for reminders (backend).
+
+---
+
+## 9. How to run everything (verified)
 
 ```bash
-# 1. Full environment + test suite
-scripts/setup_full_env.sh                       # creates .venv-full (Python 3.11)
-.venv-full/bin/python -m pytest services tests/integration -q     # → 349 passed
-scripts/download_models.sh                      # YOLO11n ONNX (gitignored weights)
-scripts/local_scan.sh --daemon                  # console auto-enables YOLO when present
+# One command, whole stack (backend /hub + inference + UI):
+scripts/run_ui_demo.sh                  # UI http://127.0.0.1:5199
+scripts/run_ui_demo.sh --adapter        # use the file-backed fallback hub instead
+scripts/run_ui_demo.sh --stop
 
-# 2. Local camera/label test console (no iOS needed)
-scripts/local_scan.sh --daemon                  # → http://127.0.0.1:8400
-scripts/local_scan.sh --status | --stop
-
-# 3. API only
+# Inference only
+scripts/setup_full_env.sh               # .venv-full (Python 3.11)
+.venv-full/bin/python -m pytest services tests/integration -q      # 522 passed
 MEDCHECK_API_MODE=real .venv-full/bin/uvicorn services.api.main:app --port 8300
-curl -s -F "image=@samples/label_metformin.png" -F "mode=real" localhost:8300/v1/scan
 
-# 4. Contract check
-.venv-full/bin/python scripts/validate_contract.py
+# Local camera console (live + long-label)
+scripts/local_scan.sh --daemon          # :8400
 
-# 5. Rig / GPU probe (read-only; Tailscale host `ai-rig`)
-scripts/gpu_probe.sh
+# Backend alone
+cd backend && docker compose up -d db && FLASK_APP=wsgi:app python -m flask db upgrade
+SEED_PASSWORD=… python scripts/seed.py
+HUB_ENABLED=true CORS_ORIGINS='*' gunicorn -b 127.0.0.1:8000 wsgi:app
+
+# Rig / GPU (read-only)
+scripts/gpu_probe.sh ; scripts/download_models.sh ; scripts/tts_smoke.py --play
 ```
 
-Environment names (values live in `~/.medcheck/vllm.env`, mode 600 — never committed):
-`MEDCHECK_API_MODE`, `MEDCHECK_VLM_ENABLED`, `MEDCHECK_VLM_BASE_URL`,
-`MEDCHECK_VLM_MODEL`, `MEDCHECK_VLM_API_KEY`, `MEDCHECK_YOLO_MODEL`,
-`MEDCHECK_YOLO_CONF`, `MEDCHECK_SCAN_TIMEOUT_S`, `MEDCHECK_SAVE_SCANS`.
-Hardware: dev = Apple-silicon Mac (CPU inference); rig = Ubuntu + RTX 5090 (32 GB, ~14 GB
-free) at `hermes-linux` (Tailscale `ai-rig.tail6d5242.ts.net`), serving the existing
-`Qwen/Qwen3-VL-8B-Instruct-FP8` (vLLM, Docker container `echo-vllm`, tailnet :8100).
-Do not restart rig services or install drivers; one intrusive GPU job at a time.
+**Demo data:** patient `demo.patient@example.com`, password from `SEED_PASSWORD`
+(`medcheck-demo-password` locally), caregiver `demo.caregiver@example.com`. To reset demo state,
+use the scoped API `DELETE /hub/data` (demo patient only) — **do not** delete Docker volumes
+(`docker compose down -v` destroys the preserved database and must not be used).
 
 ---
 
-## 9. Condensed development log
+## 10. Verification ledger (who proved what)
 
-1. **Env identified**: upstream Pi 1.1.0 under October Desktop (October Bus extension +
-   `october-bus-static` MCP); 5 agent terminals; workers activated, orchestrator terminal
-   restricted by October's hook admission (documented workaround).
-2. **Repo + contracts** frozen (`51569fd`), 4 worktrees, AGENTS.md rules (ownership,
-   safety, GPU, reporting, docs).
-3. **M1**: vision (quality/detect/label), OCR (RapidOCR + extraction), VLM (adapter +
-   eval + benchmark), API (mock gateway) — all merged + independently re-verified.
-4. **M2**: real OCR-first pipeline in the API, candidate matcher, vision-OCR handoff,
-   escalation triggers; cross-service noise regression found by the merged suite and
-   fixed (vision false-positive on Gaussian noise).
-5. **M3**: escalation efficiency (clean scans no longer call the VLM), reconcile
-   normalization, HANDOFF; live verification: 541 ms clean / 1696 ms VLM-on-mismatch.
-6. **Contract v1.1** (additive `instructions.dose`) + **M4** (Orion extraction, Athena
-   bridge) → backend-fit test green; suite 326/326.
-7. **Cross-team**: verified Urvi's backend (clean merge, contract-aligned, TimescaleDB
-   healthy) and caught the `.gitignore` models-package blocker; fixed on our side.
-8. **Local console** built (daemon, live mode, debug bundles); real-photo testing by
-   Varesh exposed the bottle-detection gap → **M5 YOLO ONNX integrated and enabled**
-   (real bottle 0.51 via `analyze_frame`/`/api/live`; suite 349/349).
-9. **M6 done** (network readiness: optional bearer auth + CORS + bind/TLS docs; suite 355).
-10. **Contract v1.2 + M7 done** (multi-frame label capture): fusion `63cec7e`,
-    clipping `2634807`, multi-image VLM `4032711`, endpoint `db94131`; live-verified on
-    overlapping long-label crops; suite 425/425.
-11. **M8 done** (real-photo quality): OCR small-crop upscaling + degenerate-text sanity
-    (`6d2caa2`), reconcile degenerate-OCR → VLM (`b50a659`), clipped false-positive guard
-    (`1be1854`) — all verified on real photos; suite **452/452**.
-12. **Contract v1.3 + M9** (label_meta): QTY/refills/pharmacy/phone/prescriber/schedule
-    extraction so the web hub gets the UI’s nine fields. Samples regenerated via
-    `scripts/make_samples.py`. Multi-frame debug bundles now save all frames.
-13. **Sinchana’s web UI merged** into the integration branch (PR #1) → hub/UI contract
-    mapping documented; integration-model decision pending (§6).
-14. **Full-stack hookup demonstrated**: `tools/hub_adapter/` serves Sinchana’s hub contract
-    from real inference (single + multi-frame, nine fields with confidence states);
-    `scripts/run_ui_demo.sh` starts UI (:5199) ← adapter (:8500) ← inference (:8300).
-    Urvi pushed the missing `backend/app/models` package (`4a01a5b`) and opened
-    `feat/integration` (backend + UI merged). Remaining: M10 OCR spacing fix (fills
-    `schedule_times` through the crop path) and the production hub decision.
+- **Contracts:** 4/4 examples schema+pydantic; version bumps keep old tests green.
+- **Vision:** 118 tests; noise regression found by the merged suite and fixed; real-photo
+  clipped-guard + YOLO checks on Varesh's own scans.
+- **OCR:** 164 tests; crop-path spacing + degenerate-text fixes; label_meta extraction; fusion
+  verified on overlapping long-label crops.
+- **VLM:** 134 tests; 24-image eval; live escalation 541 ms → 1.7 s only when needed; VRAM flat.
+- **API:** 102 tests; mock + real; multi-frame endpoint; auth/CORS; live smoke.
+- **Integration:** 4 orchestrator tests incl. backend-fit; 522 total.
+- **Backend:** 76 tests (15 hub) run independently by the orchestrator; live flows verified.
+- **Dashboard:** headless render with real data; CORS verified from its origin.
+- **Console/tools:** live + long-label flows exercised on synthetic crops and real photos.
 
 ---
 
-## 10. Glossary
+## 11. Known limitations & gaps (honest)
 
-- **October Desktop / October Bus / `octoberctl`** — the multi-agent environment; bus
-  messages, tasks, terminals; `octoberctl terminal input --id … --epoch … --data …` is
-  used by the orchestrator to dispatch work into worker terminals.
-- **PI-1…PI-4** — the four worker agents and their service ownership.
-- **OCR-first** — read the label with OCR, only escalate to the VLM when identity is weak
-  or mismatched (cost/latency control).
-- **Escalation** — the VLM (Qwen3-VL) is invoked only for weak/mismatched identity fields.
-- **Debug bundle** — saved local scan (image + response JSON) used to debug real photos.
+1. **Real-photo accuracy is not yet measured** against a labeled real dataset (tests/eval are
+   synthetic). Real labels exposed OCR word-spacing and glyph issues that were fixed, but label
+   diversity (curved, low light, glare) is untested at scale.
+2. **`/hub` has no authentication** and is localhost-only by design; it must never be exposed.
+   iOS over the LAN/Tailscale would need token auth and HTTPS (browser camera requires
+   `localhost` or HTTPS).
+3. **iOS app** does not exist yet (Aparajita still building); contracts are ready for it.
+4. **Bottle detection** is COCO “bottle” (YOLO11n); a medication-specific detector would improve
+   recall (some real photos still yield no bottle box; label OCR still works).
+5. **VLM latency on large photos** (≈2.4 s) — no downscale before sending.
+6. **Alerts/events/reminders** are served by the backend, but the dashboard's event feed is
+   minimal; wearable integration is future.
+7. **No deployment/hosting**; everything is local demo (Mac + home rig).
+8. `main` is still empty on the remote; no PR from `feat/integration` yet.
+
+---
+
+## 12. Next capabilities (recommended, prioritized)
+
+1. **Real-photo accuracy harness** — collect ~50–100 consenting/redacted real labels, measure
+   per-field precision/recall and latency, tune OCR/VLM thresholds and prompts. Highest value:
+   it converts our synthetic numbers into defensible accuracy.
+2. **Real-time guidance in the product UI** — a light endpoint (`/v1/frame-quality`) or
+   WebSocket using the ~20 ms vision path so the dashboard/iOS shows live “hold steady / move
+   closer / rotate” before capture (the console already proves the UX).
+3. **Guided multi-frame capture in the product UI** — step 1/2/3 prompts + clipped-label hints
+   (inference already returns them) so long labels work without the console.
+4. **Auth/TLS for `/hub` (or `/api/v1` bridging)** — token in the hub + HTTPS via reverse proxy
+   or uvicorn certs, so a phone on Tailscale can use it safely.
+5. **VLM efficiency** — downscale images before the VLM call (target <1 s), and cache the ONNX
+   sessions/prefix; optionally run OCR/YOLO on the rig GPU when the Mac is slow.
+6. **Voice reminders** — wire ElevenLabs into the backend reminder job (Twilio `<Say>`/`<Play>`),
+   finishing the low-vision loop.
+7. **Medication-specific detection** — fine-tune/replace the YOLO bottle class with a
+   medication-bottle model; add a tray/pill-counter capability if the wearable needs it.
+8. **Metrics/observability** — expose latency percentiles, escalation rate and per-stage timing
+   (we already emit `timing.stages`) for the demo dashboard and error triage.
+9. **Demo resilience** — precomputed scan fallbacks for no-network demos; health badges in the
+   UI; deterministic seed reset button.
+10. **`main` + PR hygiene** — once the team agrees, open a PR from `feat/integration` and make it
+    the default branch; tag a demo release.
+
+---
+
+## 13. Condensed timeline
+
+1. Environment identified (upstream Pi 1.1.0 + October Bus; 5 agent terminals; orchestrator
+   terminal bus-restricted → `octoberctl` dispatch + transcript-inbound).
+2. Repo + contracts frozen; four worker worktrees; AGENTS.md ownership/safety rules.
+3. M1 mock API → M2 real OCR-first pipeline + matcher + vision/OCR handoff → M3 escalation
+   efficiency + reconciliation → M4 contract v1.1 `dose` + backend fit → M5 ONNX YOLO → M6
+   auth/CORS → M7 multi-frame capture (v1.2) → M8 real-photo quality fixes → M9 label_meta
+   (v1.3) → M10/M10b crop spacing + display normalization.
+4. Local console built (daemon, live mode, long-label rotation, debug bundles, TTS).
+5. Cross-team: verified Urvi's backend, found & fixed the `.gitignore` models blocker; her
+   `/hub` layer merged; UI pointed at it; full stack verified with a headless render.
+6. All 9 original gates complete; 522 inference + 76 backend tests green.
+
+---
+
+## 14. Glossary
+
+- **Hub** — the API the dashboard talks to (`/hub` on the backend; or the fallback adapter).
+- **OCR-first** — read with OCR, escalate to the VLM only on weak/mismatched identity.
+- **Escalation** — invoking Qwen3-VL when identity fields are weak or registry-mismatched.
+- **Multi-frame fusion** — fusing text from 2–6 rotated frames into one result (v1.2).
+- **label_meta** — pharmacy-label fields (QTY, refills, pharmacy, prescriber, schedule) (v1.3).
+- **Clipped** — label runs off the frame edge → “rotate the bottle” guidance.
+- **Gateway / console / adapter** — inference `:8300` / dev console `:8400` / fallback hub `:8500`.

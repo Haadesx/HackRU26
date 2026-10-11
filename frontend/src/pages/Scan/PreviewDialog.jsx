@@ -2,15 +2,17 @@ import Dialog from "../../components/Dialog";
 import Button from "../../components/Button";
 import StatusBadge from "../../components/StatusBadge";
 import { fmtSlot } from "../../lib/format";
+import { formLabel, formNoun } from "../../lib/dosageForm";
 
 /** Read-only check before saving. Edit closes it; Add sends the data once. */
-export default function PreviewDialog({ open, values, changed, onEdit, onAdd, adding, error }) {
+export default function PreviewDialog({ open, values, changed, onEdit, onAdd, adding, error, form }) {
   const times = String(values.schedule_times || "").split(",").map((t) => t.trim()).filter(Boolean);
   const perDay = times.length * (Number(values.dose_amount) || 1);
   const days = perDay ? Math.floor(Number(values.quantity_start) / perDay) : 0;
+  const amount = Number(values.dose_amount) || 1;
   const tag = (k) => changed[k] && <StatusBadge tone="info">{changed[k] === "added" ? "Added by you" : "Corrected by you"}</StatusBadge>;
   const rows = [
-    ["Tablets in bottle", values.quantity_start, "quantity_start"],
+    [`${formLabel(form)} in bottle`, values.quantity_start, "quantity_start"],
     ["Refills left", values.refills_remaining || "None", "refills_remaining"],
     ["Prescriber", values.prescriber || "None", "prescriber"],
     ["Pharmacy", [values.pharmacy_name, values.pharmacy_phone].filter(Boolean).join(", ") || "None", "pharmacy_name"],
@@ -26,7 +28,7 @@ export default function PreviewDialog({ open, values, changed, onEdit, onAdd, ad
         </div>
         <div className="flex items-center gap-4 rounded-2xl bg-mist px-5 py-4">
           <span aria-hidden="true" className="h-11 w-[18px] flex-none rounded-full bg-gradient-to-b from-sky to-ice" />
-          <div><strong className="text-[22px]">{values.name} {values.strength}</strong><div>{values.dose_amount || 1} tablet at {times.map(fmtSlot).join(" and ")}</div></div>
+          <div><strong className="text-[22px]">{values.name} {values.strength}</strong><div>{amount} {formNoun(form, amount !== 1)} at {times.map(fmtSlot).join(" and ")}</div></div>
         </div>
         <dl>
           {rows.map(([k, v, key]) => (
@@ -38,7 +40,7 @@ export default function PreviewDialog({ open, values, changed, onEdit, onAdd, ad
         </dl>
         <div className="rounded-2xl bg-ok-tint px-5 py-4">
           <strong>After you add it</strong>
-          <p>Rosa gets her first reminder at {fmtSlot(times[0] || "08:00")}. You'll get a text when about a week of tablets is left.</p>
+          <p>Rosa gets her first reminder at {fmtSlot(times[0] || "08:00")}. You'll get a text when about a week of {formNoun(form, true)} is left.</p>
         </div>
         {error && <p role="alert" className="rounded-2xl bg-urgent-tint px-4 py-3 font-bold text-urgent">Couldn't add {values.name}. {error} Your details are kept, so try again.</p>}
         <div className="flex flex-wrap justify-end gap-3">

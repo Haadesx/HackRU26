@@ -13,14 +13,20 @@ async function http(path, { method = "GET", body, raw } = {}) {
   });
   if (!res.ok) {
     // FastAPI sends {"detail": "..."}; validation errors send {"detail": [{ "msg": "..." }]}.
-    let message = "";
+    let payload = null;
     try {
-      const body = await res.json();
-      message = Array.isArray(body.detail) ? body.detail.map((d) => d.msg).join(" ") : body.detail || body.message || "";
+      payload = await res.json();
     } catch {
       /* not JSON */
     }
-    throw new Error(message || `The MedCheck hub returned ${res.status} for ${method} ${path}.`);
+    const detail = payload?.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d) => d.msg).join(" ")
+      : detail || payload?.message || "";
+    const error = new Error(message || `The MedCheck hub returned ${res.status} for ${method} ${path}.`);
+    error.status = res.status; // let callers branch on 422/409 without parsing text
+    error.code = typeof payload?.code === "string" ? payload.code : null;
+    throw error;
   }
   return raw ? res.blob() : res.json();
 }
@@ -34,7 +40,10 @@ const photoForm = (blob) => {
 const real = {
   health: () => http("/health"),
   getState: () => http("/state"),
-  logDose: (id, slot) => http(`/medications/${id}/doses`, { method: "POST", body: { method: "dashboard", slot } }),
+  logDose: (id, slot, method = "dashboard") => http(`/medications/${id}/doses`, { method: "POST", body: { method, slot } }),
+  skipDose: (id, slot) => http(`/medications/${id}/skip`, { method: "POST", body: { slot } }),
+  // The hub identifies the bottle in the photo and compares it with what's due now.
+  matchDose: (blob) => http("/doses/scan", { method: "POST", body: photoForm(blob) }),
   remind: (id, slot) => http(`/medications/${id}/remind`, { method: "POST", body: { slot } }),
   recordCount: (id, count) => http(`/medications/${id}/counts`, { method: "POST", body: { count } }),
   markRefilled: (id) => http(`/medications/${id}/refill`, { method: "POST" }),

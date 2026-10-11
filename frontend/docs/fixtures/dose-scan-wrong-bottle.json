@@ -1,0 +1,11 @@
+{
+  "medication_id": 2,
+  "name": "Metformin",
+  "strength": "500 mg",
+  "status": "wrong_bottle",
+  "expected": {
+    "medication_id": 5,
+    "name": "Vitamin D3",
+    "slot": "08:00"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "medcheck-ui-capture",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Headless screenshot + DOM verification via Brave (playwright-core, no bundled browsers).",
+  "dependencies": { "playwright-core": "^1.47.0" }
+}

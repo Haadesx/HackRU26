@@ -169,6 +169,7 @@
     }
   ],
   "reminders": [],
+  "skips": [],
   "alerts": [
     {
       "id": 1054,

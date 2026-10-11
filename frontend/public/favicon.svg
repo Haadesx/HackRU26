@@ -1,1 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="3" y="11" width="26" height="10" rx="5" fill="#9CC3EC"/><rect x="16" y="11" width="13" height="10" rx="5" fill="#D2E7FB"/><rect x="16" y="11" width="5" height="10" fill="#D2E7FB"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs>
+<linearGradient id="pbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFF2F6"/><stop offset="1" stop-color="#F7CFDF"/></linearGradient>
+<linearGradient id="psh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5A1A38" stop-opacity=".14"/><stop offset=".38" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#5A1A38" stop-opacity=".16"/></linearGradient>
+<filter id="psd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="1.2" dy="1.2" stdDeviation="1.4" flood-color="#5A1A38" flood-opacity=".25"/></filter>
+</defs><rect width="100" height="100" rx="22.5" fill="url(#pbg)"/><g transform="translate(50 50) scale(1.14) translate(-50 -56)"><g fill="none" stroke="#8E2F5C" stroke-opacity=".32" stroke-width="2"><g transform="rotate(45 50 63)"><rect x="34.0" y="25.0" width="32" height="54" rx="16.0"/></g><g transform="rotate(-45 50 63)"><rect x="34.0" y="25.0" width="32" height="54" rx="16.0"/></g></g><g transform="rotate(45 50 63)" >
+<clipPath id="pcb"><rect x="34.0" y="25.0" width="32" height="54" rx="16.0"/></clipPath>
+<g clip-path="url(#pcb)">
+<rect x="34.0" y="25.0" width="32" height="54" fill="#FFFFFF"/>
+<rect x="34.0" y="25.0" width="32" height="27.0" fill="#F6B3CC"/>
+<rect x="34.0" y="51.4" width="32" height="1.2" fill="#000" opacity=".08"/>
+<rect x="34.0" y="25.0" width="32" height="54" fill="url(#psh)"/>
+<rect x="39.0" y="31.0" width="5" height="15.0" rx="2.5" fill="#fff" opacity=".5"/>
+</g></g><g transform="rotate(-45 50 63)" filter="url(#psd)">
+<clipPath id="pcf"><rect x="34.0" y="25.0" width="32" height="54" rx="16.0"/></clipPath>
+<g clip-path="url(#pcf)">
+<rect x="34.0" y="25.0" width="32" height="54" fill="#FFFFFF"/>
+<rect x="34.0" y="25.0" width="32" height="27.0" fill="#C2457A"/>
+<rect x="34.0" y="51.4" width="32" height="1.2" fill="#000" opacity=".08"/>
+<rect x="34.0" y="25.0" width="32" height="54" fill="url(#psh)"/>
+<rect x="56.0" y="31.0" width="5" height="15.0" rx="2.5" fill="#fff" opacity=".5"/>
+</g></g></g></svg>

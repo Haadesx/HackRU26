@@ -255,6 +255,11 @@ class TestReconcileFields:
         result = reconcile_fields({}, {"name": field("Metformin", 0.8, "vlm")})
         assert result.fields["name"]["source"] == "vlm"
 
+    def test_zero_confidence_vlm_guess_is_dropped(self):
+        """VLM defaults like form="tablet" at confidence 0 are not evidence."""
+        result = reconcile_fields({}, {"form": field("tablet", 0.0, "vlm")})
+        assert "form" not in result.fields
+
     def test_agreement_keeps_ocr_boosts_confidence(self):
         result = reconcile_fields(
             {"name": field("Metformin", 0.6)},
