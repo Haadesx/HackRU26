@@ -142,19 +142,25 @@ struct InfoBox: View {
 struct HubStatusChip: View {
     let connected: Bool
 
+    @Environment(AppStore.self) private var store
+
     var body: some View {
+        // Built-in demo data answers every scan with scripted results, so it must never look like a real hub.
+        let demo = store.isDemo
+        let ok = connected || demo
         HStack(spacing: 8) {
             Circle()
-                .fill(connected ? MC.mintDot : MC.coralDot)
+                .fill(demo ? MC.sky : (connected ? MC.mintDot : MC.coralDot))
                 .frame(width: 10, height: 10)
-            Text(connected ? "Connected to Rosa's hub" : "Can't reach the hub. Retrying.")
+            Text(demo ? "Demo data. No hub connected."
+                      : (connected ? "Connected to Rosa's hub" : "Can't reach the hub. Retrying."))
                 .font(MCFont.bold(14, relativeTo: .footnote))
-                .foregroundStyle(connected ? SupplyStatus.onTrack.text : SupplyStatus.urgent.text)
+                .foregroundStyle(demo ? MC.navy : (ok ? SupplyStatus.onTrack.text : SupplyStatus.urgent.text))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(Capsule().fill(connected ? SupplyStatus.onTrack.fill : SupplyStatus.urgent.fill))
+        .background(Capsule().fill(demo ? MC.mist : (ok ? SupplyStatus.onTrack.fill : SupplyStatus.urgent.fill)))
         .accessibilityElement(children: .combine)
     }
 }

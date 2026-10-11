@@ -241,7 +241,14 @@ enum DebugContractTest {
         {"medication":{"id":9,"name":"Losartan","strength":"25 mg","dose_amount":1,"doses_per_day":1,
          "schedule_times":["08:00"],"quantity_start":30,"pills_left":30},"warnings":["Check the strength with a pharmacist."]}
         """, as: HubContract.CompleteDTO.self) {
-            check("shape: complete warnings", done.warnings == ["Check the strength with a pharmacist."])
+            check("shape: complete warnings (strings)", done.warnings?.compactMap(\.text) == ["Check the strength with a pharmacist."])
+        }
+        // The real hub sends objects: {code, prescription_item_id, medication, message}.
+        if let done = decode("""
+        {"medication":{"id":9,"name":"Fluoxetine"},"warnings":[{"code":"MEDICATION_UNVERIFIED","medication":"X",
+         "message":"X could not be verified against OpenFDA."}]}
+        """, as: HubContract.CompleteDTO.self) {
+            check("shape: complete warnings (objects)", done.warnings?.compactMap(\.text) == ["X could not be verified against OpenFDA."])
         }
 
         return failures - before

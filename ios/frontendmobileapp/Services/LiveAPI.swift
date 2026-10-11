@@ -292,7 +292,7 @@ final class LiveAPI: MedCheckAPI {
         let data = try await request("POST", "scans/\(id)/complete", body: try jsonBody(body))
         cached = nil
         return (try? decoder.decode(HubContract.CompleteDTO.self, from: data))?.warnings?
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
+            .compactMap { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
     }
 
     // MARK: History, settings, privacy

@@ -5,8 +5,8 @@ import PhotosUI
 /// **A scan alone never records a dose.** Only "Rosa took it" does, and it calls the same endpoint as
 /// "Mark as taken", with `method: "scan"`.
 ///
-/// On iPhone the card stays compact: a line about what is due and a button that opens the camera in a sheet.
-/// On iPad the camera sits inline. Results replace the camera in the card.
+/// The live camera sits in the card on every device, as on the web's Track page: hold the bottle up, press
+/// "Scan this dose", and the result replaces the camera in the card.
 struct DoseScannerCard: View {
     private enum Phase: Equatable {
         case ready
@@ -16,10 +16,8 @@ struct DoseScannerCard: View {
     }
 
     @Environment(AppStore.self) private var store
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     @State private var phase: Phase = .ready
-    @State private var showCamera = false
     @State private var errorMessage: String?
     @State private var isConfirming = false
     /// Demo hub only: which bottle the photo "shows". nil is the dose that is due.
@@ -61,12 +59,6 @@ struct DoseScannerCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 18).fill(MC.card))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(MC.sky, lineWidth: 1))
-        .sheet(isPresented: $showCamera) {
-            DoseCameraSheet { photo in
-                showCamera = false
-                Task { await check(photo) }
-            }
-        }
         .sensoryFeedback(.success, trigger: confirmations)
         .sensoryFeedback(.warning, trigger: warnings)
         #if DEBUG
@@ -111,13 +103,8 @@ struct DoseScannerCard: View {
 
     // MARK: Capture
 
-    @ViewBuilder private var capture: some View {
-        if sizeClass == .regular {
-            DoseCameraPanel(aspectRatio: 1.4, onPhoto: { photo in Task { await check(photo) } })
-        } else {
-            Button("Scan this dose") { showCamera = true }
-                .buttonStyle(.capsule(.primary, size: .large, fillWidth: true))
-        }
+    private var capture: some View {
+        DoseCameraPanel(aspectRatio: 1.33, onPhoto: { photo in Task { await check(photo) } })
     }
 
     #if DEBUG
@@ -312,43 +299,5 @@ private struct DoseCameraPanel: View {
         } catch {
             store.showToast("Couldn't take the photo. Try again.", isError: true)
         }
-    }
-}
-
-/// iPhone: the camera in a sheet, so the card on the page stays short.
-private struct DoseCameraSheet: View {
-    let onPhoto: (Data) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Scan this dose")
-                        .font(MCFont.sheetTitle)
-                        .foregroundStyle(MC.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Spacer()
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(MC.navy)
-                            .frame(width: 44, height: 44)
-                            .background(Circle().fill(MC.track))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
-                }
-                Text("Scanning only checks the bottle. It never records a dose.")
-                    .font(MCFont.body)
-                    .foregroundStyle(MC.inkSoft)
-                DoseCameraPanel(onPhoto: onPhoto)
-            }
-            .padding(20)
-        }
-        .background(MC.card.ignoresSafeArea())
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
 }
