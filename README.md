@@ -108,7 +108,6 @@ flowchart TB
 
 ### 1. Explore the web UI — no database required
 
-This is the quickest way to inspect the interface. When `VITE_API_URL` is unset, the web app uses built-in sample data.
 
 ```bash
 
