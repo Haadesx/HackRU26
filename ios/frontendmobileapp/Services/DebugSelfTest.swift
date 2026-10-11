@@ -121,6 +121,22 @@ enum DebugSelfTest {
             check("double dose: rejected", false, "\(error)")
         }
 
+        // A bottle held up well before its time is a red "Don't take this yet", not a calm "Nothing due".
+        if case .doNotTake(let advice)? = try? await store.matchDose(photo: Data([1]), demoMedicationID: 3) {
+            check("scanner: a bottle before its time says don't take it yet",
+                  advice.kind == .notDueYet && advice.name == "Metformin" && advice.title == "Don't take this yet"
+                    && advice.message.contains("isn't due yet"), "\(advice)")
+        } else {
+            check("scanner: a bottle before its time says don't take it yet", false)
+        }
+        // An unknown medicine: with nothing due it is a red "not a medication you're tracking" advisory.
+        if case .doNotTake(let advice)? = try? await store.matchDose(
+            photo: Data([1]), demoMedicationID: MockHub.untrackedBottle) {
+            check("scanner: an untracked bottle is a red advisory", advice.kind == .notTracked && advice.name == "Ibuprofen")
+        } else {
+            check("scanner: an untracked bottle is a red advisory", false)
+        }
+
         if let evening = store.today.first(where: { $0.medicationId == 3 && $0.slot == "20:00" }) {
             _ = await store.skip(evening)
             let skipped = store.today.first { $0.medicationId == 3 && $0.slot == "20:00" }

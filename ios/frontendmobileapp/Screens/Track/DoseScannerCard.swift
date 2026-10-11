@@ -174,6 +174,8 @@ struct DoseScannerCard: View {
             NoticeBanner(tone: .info, title: "Nothing due", message: message) {
                 Button("Scan again") { reset() }.buttonStyle(.capsule(.secondary))
             }
+        case .doNotTake(let advice):
+            doNotTake(advice)
         }
     }
 
@@ -190,6 +192,40 @@ struct DoseScannerCard: View {
         return text
     }
 
+    /// A red advisory, in the same words and look as a wrong bottle: this is a "do not take it" answer, not "Nothing due".
+    private func doNotTake(_ advice: DoseMatch.Advice) -> some View {
+        let seen = [advice.name, advice.strength].compactMap { $0 }.joined(separator: " ")
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(SupplyStatus.urgent.text)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(advice.title)
+                        .font(MCFont.bold(20, relativeTo: .title3))
+                        .foregroundStyle(SupplyStatus.urgent.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    if !seen.isEmpty {
+                        Text(seen).font(MCFont.bodyBold).foregroundStyle(MC.ink)
+                    }
+                    Text(advice.message)
+                        .font(MCFont.body)
+                        .foregroundStyle(MC.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Button("Scan again") { reset() }.buttonStyle(.capsule(.secondary))
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16).fill(SupplyStatus.urgent.tint))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(SupplyStatus.urgent.text, lineWidth: 2))
+        .accessibilityElement(children: .contain)
+    }
+
     // MARK: Actions
 
     private func check(_ photo: Data) async {
@@ -198,7 +234,10 @@ struct DoseScannerCard: View {
         do {
             let match = try await store.matchDose(photo: photo, demoMedicationID: demoMedicationID)
             phase = .result(match)
-            if case .wrongBottle = match { warnings += 1 }
+            switch match {
+            case .wrongBottle, .doNotTake: warnings += 1
+            default: break
+            }
         } catch {
             phase = .ready
             errorMessage = "Couldn't check that bottle. \(Self.message(for: error))"

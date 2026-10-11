@@ -218,12 +218,32 @@ enum DebugContractTest {
         } else {
             check("scanner: already taken decodes", false)
         }
-        if case .notScheduled(let message)? = match("""
+        if case .doNotTake(let advice)? = match("""
         {"status":"not_scheduled","name":"Ibuprofen","strength":"200 mg","reason":"wrong_medication","message":"Nothing is due."}
         """) {
-            check("scanner: not_scheduled with extras", message == "Nothing is due.")
+            check("scanner: an untracked bottle with nothing due is a red advisory",
+                  advice.kind == .notTracked && advice.name == "Ibuprofen" && advice.message == "Nothing is due.")
         } else {
-            check("scanner: not_scheduled with extras decodes", false)
+            check("scanner: untracked not_scheduled is a do-not-take advisory", false)
+        }
+        // The exact answer the real hub gave for a tracked medicine scanned before its time.
+        if case .doNotTake(let advice)? = match("""
+        {"medication_id":4,"name":"Fluoxetine","strength":"20 mg","status":"not_scheduled",
+         "message":"Fluoxetine 20 mg isn't due yet. Next dose at 11:00 (you can log it from 10:30)."}
+        """) {
+            check("scanner: not due yet is Don't take this yet",
+                  advice.kind == .notDueYet && advice.title == "Don't take this yet"
+                    && advice.message.contains("Next dose at 11:00"))
+        } else {
+            check("scanner: not due yet is a do-not-take advisory", false)
+        }
+        if case .doNotTake(let advice)? = match("""
+        {"medication_id":4,"name":"Fluoxetine","strength":"20 mg","status":"not_scheduled",
+         "message":"No more Fluoxetine 20 mg doses are scheduled today."}
+        """) {
+            check("scanner: no more doses today", advice.kind == .noMoreToday)
+        } else {
+            check("scanner: no more doses today decodes", false)
         }
 
         // Adherence: a missed dose whose medication the dashboard doesn't track has no id.

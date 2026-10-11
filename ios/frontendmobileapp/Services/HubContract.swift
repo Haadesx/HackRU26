@@ -408,10 +408,30 @@ enum HubContract {
             guard let bottle = bottle(dto) else { throw APIError.badResponse }
             return .alreadyTaken(bottle, slot: dto.slot, takenAt: dto.takenAt)
         case "not_scheduled":
-            return .notScheduled(message: clean(dto.message) ?? "No doses are due right now.")
+            return notScheduled(dto)
         default:
             throw APIError.badResponse
         }
+    }
+
+    /// `not_scheduled` covers three different things. A tracked medicine that is not due yet, or has no doses left
+    /// today, is something the caregiver should be told not to take; so is an untracked bottle (`reason`).
+    /// Only an answer with none of those is a plain "Nothing due".
+    private static func notScheduled(_ dto: DoseMatchDTO) -> DoseMatch {
+        let message = clean(dto.message) ?? "No doses are due right now."
+        let kind: DoseMatch.Advice.Kind?
+        if dto.medicationId != nil {
+            kind = message.localizedCaseInsensitiveContains("no more") ? .noMoreToday : .notDueYet
+        } else {
+            switch dto.reason {
+            case "wrong_medication": kind = .notTracked
+            case "strength_mismatch": kind = .strengthMismatch
+            default: kind = nil
+            }
+        }
+        guard let kind else { return .notScheduled(message: message) }
+        return .doNotTake(DoseMatch.Advice(kind: kind, name: clean(dto.name), strength: clean(dto.strength),
+                                           message: message))
     }
 
     /// A bottle the hub identified as one it tracks. `match` and `already_taken` always have an id.
