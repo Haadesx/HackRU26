@@ -6,6 +6,7 @@ import ScanSteps from "./ScanSteps";
 import SourcePicker from "./SourcePicker";
 import CameraView from "./CameraView";
 import FoundSoFar from "./FoundSoFar";
+import { rememberVerification } from "../../lib/verificationCache";
 
 export default function ScanPage() {
   const navigate = useNavigate();
@@ -21,6 +22,7 @@ export default function ScanPage() {
     setBusy(true); setError(null);
     try {
       const next = scan ? await api.addPhoto(scan.id, blob) : await api.startScan(blob);
+      rememberVerification(next);
       setScan(next);
       setPhotos((p) => [...p, URL.createObjectURL(blob)]);
     } catch (e) {
