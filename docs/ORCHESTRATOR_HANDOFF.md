@@ -424,7 +424,11 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
   with the explicit log action; adapter parity (+15 tests); real-photo evidence; VLM QA.
 - Final rehearsal **10/10** on the DB-backed hub; merged suite **538 passed**; UI build clean; verification
   screenshots captured at 5 widths with zero console errors/overflow.
-- Integration tip `7535b29` (worker merges `0f811b4`, `2f3de90`, `c7db25a`, `7535b29`).
+- Integration tip `7535b29` + Urvi's **fork-safe outbound HTTP fix** (`ff5840a`, merged `283ca47`): the real
+  root cause of the macOS gunicorn worker crashes was the fork-unsafe macOS proxy lookup in `requests`;
+  `app/utils/http.py` disables `trust_env` platform lookup while honoring proxy env vars, with
+  `test_http_fork_safety.py`. The historical `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` env workaround in the demo
+  launcher is now redundant but harmless; no startup scripts were changed further.
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
