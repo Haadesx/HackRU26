@@ -262,3 +262,49 @@ MEDCHECK_GPU_WINDOW_OK=1 .venv/bin/python -m services.vlm.benchmarks.gpu_bench \
 - n = 24 images, single run, one rig state; latency includes narrow network
   variance (Mac → Tailscale → rig).
 - Sequential requests only; no batching or concurrency was explored.
+
+## Verification-flow QA (2026-10-10)
+
+QA of the hub verification flow: are any zero-confidence inference defaults
+reaching scan responses? Six synthetic labels were scanned sequentially through
+the running gateway on `:8300` in `mode=real` with hub-style hints
+(`{"known_candidates": [tracked med], "locale": "en-US"}`, `client=test`).
+No VLM was invoked on these six: identity was confident and matched the tracked
+candidate, and optional fields (form, manufacturer) do not escalate under the M3
+policy.
+
+| Sample | status | `medication.form` (value/conf/source) | dose (conf/source) | interp.available | wall | VLM |
+|---|---|---|---|---|---|---|
+| `label_metformin.png` | uncertain | tablet / 0.75 / ocr | 0.9 / ocr | false | 924.1 ms | 0 ms |
+| `label_lisinopril.png` | uncertain | tablet / 0.75 / ocr | 0.9 / ocr | false | 855.9 ms | 0 ms |
+| `label_furosemide_noform.png` | uncertain | **absent (None)** | 0.0 / none | false | 733.1 ms | 0 ms |
+| `label_amoxicillin_interval.png` | uncertain | capsule / 0.9 / ocr | 0.9 / ocr | false | 879.5 ms | 0 ms |
+| `label_pantoprazole.png` | uncertain | tablet / 0.75 / ocr | 0.9 / ocr | false | 654.0 ms | 0 ms |
+| `label_metformin_blurry.png` | needs_rescan | absent (None) | none | false | 171.2 ms | — |
+
+Result: **no zero-confidence form or name reached any response**; the formless
+label returned `form: None` (not `tablet @ 0.0`); the blurry frame short-circuited
+to `needs_rescan` before OCR/VLM.
+
+**Guard probe.** Because none of the six invoked the VLM, the reconcile guard was
+exercised with a deliberate mismatch: scanning the formless furosemide label with
+`known_candidates` for a different medication forces `candidate_mismatch` → VLM.
+On the shared `:8300` process the response still contained
+`form: {value: "tablet", confidence: 0.0, source: "vlm"}`. Root cause: the
+gateway process started 20:50, while the guard landed in `3369b10` at 21:40 — the
+running interpreter predates the fix. A throwaway instance of this branch
+(`:8310`, same vLLM, stopped afterwards) with the same forced-VLM probe returned
+`form: None`, `interpretation.available: true`, `vlm 1675.7 ms`, and no
+zero-confidence non-null value anywhere in the response. VRAM stayed at
+18,847–18,895 / 32,607 MiB used; `echo-vllm` was never touched.
+
+**Guard rationale.** A zero-confidence VLM value is not evidence: the model often
+emits a schema default (e.g. `form="tablet"`) for a field the label never
+states. `reconcile_fields` drops VLM-only values with `confidence <= 0`, so the
+gateway never presents a guess as a read; real conflicts between readable values
+still resolve through the margin rule with source attribution.
+
+**Action for the shared gateway:** restart `:8300` so it loads `3369b10`+, then
+re-run the forced-VLM probe. Mocked suites on this branch: `pytest services/vlm`
+→ 135 passed; the guard does not change `should_use_vlm`/`should_use_vlm_multi`
+behaviour (`escalation_fields` and fusion triggers untouched).
