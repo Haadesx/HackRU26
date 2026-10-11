@@ -193,11 +193,20 @@ struct TopBar: View {
         }
     }
 
+    /// The app icon beside the name, as the web's top bar has its heart logo.
     private var wordmark: some View {
-        Text("MedCheck")
-            .font(MCFont.bold(20, relativeTo: .title3))
-            .foregroundStyle(MC.navy)
-            .accessibilityAddTraits(.isHeader)
+        HStack(spacing: 8) {
+            Image("BrandIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .accessibilityHidden(true)
+            Text("MedCheck")
+                .font(MCFont.bold(20, relativeTo: .title3))
+                .foregroundStyle(MC.navy)
+                .accessibilityAddTraits(.isHeader)
+        }
     }
 }
 
