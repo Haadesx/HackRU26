@@ -335,6 +335,16 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
   answers "not clearly enough to be sure" until the medication is **tracked**: after that the hub passes it as
   `known_candidates` and the scan matches ("Fluoxetine 20 mg", then `not_scheduled`/`match` by the clock).
   The durable fix is more names in the OCR lexicon (the OCR owner's file; not changed here).
+- **Update (2026-10-11, same day): the OCR word list had only 41 drugs.** That was the cause of "reads the pharmacy name
+  instead of the medicine": with the drug missing from `DRUG_NAMES`, the extractor's name field fell back to the biggest
+  word on the label ("WALGREENSPHARMACY", 0.3) and, because the strength is only trusted at 0.9 when it sits beside a
+  *recognized* name, the strength dropped to 0.75 = unsure as well. 151 common generics and brands were added to
+  `services/ocr/lexicon.py` (OCR owner's file, changed on `feat/integrate-ios` only; the 164 OCR tests and 519 inference
+  tests pass). A label that previously gave `WALGREENSPHARMACY` / 0.3 now gives `Fluoxetine` 0.95 and `20 mg` 0.9.
+- **Name consistency matters.** The hub only accepts an exact name match (`test_17`: "Metformin HCl" is *not* the tracked
+  "Metformin", by the backend owner's design, and unsure names or strengths are never identity, `test_02`/`test_04`).
+  A medication added earlier as "Fluoxetine Hcl" will therefore not match a bottle that now reads "Fluoxetine": stop
+  tracking it and add it again. Whether salt suffixes should count as the same medicine is the backend owner's call.
 - **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
 
 ## J. Outstanding work
