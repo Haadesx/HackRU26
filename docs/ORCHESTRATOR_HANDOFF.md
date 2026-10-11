@@ -3,9 +3,9 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~05:10 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal).
-> **Code freeze:** `7f93e60afb915f037d8127787fe1e02bbe8a5ec6` · **final tip** `a1e1f266dc14cd82ec3d02e78a1a7454d43e3e65` (docs-only delta) on `feat/integration` —
-> submission URL: https://github.com/Haadesx/HackRU26/tree/feat/integration.
+> **Last updated:** 2026-10-11 ~05:30 UTC — **post-freeze review done** (Urvi's name-fallback commits), walkthrough recorded, submission frozen.
+> **Code freeze:** `a1b535a0844ea5f6f4a01d67f924851958c4876e` on `feat/integration` (reviewed + verified below; docs/evidence commit adds the walkthrough).
+> submission URL: https://github.com/Haadesx/HackRU26/tree/feat/integration — **do not** submit the repository default branch (it is `feat/inference-medcheck`, not this work).
 > **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
@@ -86,6 +86,21 @@ frontend build clean.
 
 Open items: Sinchana's new UI is still not on the remote; iOS has no branch; bad-image still returns 502
 instead of 4xx.
+
+**Post-freeze review (Urvi's name-fallback commits, `ab737c1` → `a1b535a`):** the first commit recovered weak
+OCR names via OpenFDA lookups (up to 6 network calls per photo); the second **supersedes it** — `name_from_label()`
+takes the words printed just before the first strength on a label line (e.g. `FLUOXETINE 20 mg` → “Fluoxetine”),
+title-cased, at confidence **0.60 (`unsure`)**. Implications reviewed and verified: (a) the scan path no longer
+imports or calls OpenFDA at all (`grep openfda app/hub/labels.py` → 0), so OpenFDA status cannot affect scans;
+(b) `unsure` means the verification gate still returns `uncertain` — a weak OCR name can never produce
+`due_now/can_log=true`; (c) no new network dependency or latency. Evidence: backend **125 passed**; live scans
+with OpenFDA **enabled / disabled / unreachable** (HTTPS-only dead proxy; inference plain-HTTP stays direct):
+identical statuses (`not_due`/`not_due`/`uncertain`) and **0.75–1.04 s** worst observed, OpenFDA itself degrades
+to `available=False` without raising (service-level check + `test_name_taken_from_label_when_ocr_name_is_weak`
+asserting no network call); weak-name live scan through real inference 2.32 s; TimescaleDB 2.30.2 healthy.
+Observation (pre-existing, not changed during freeze): `app/utils/http.py` copies proxy env into `Session.proxies`
+without translating `no_proxy` → when proxy vars are set, `NO_PROXY` bypasses are not honored. Demo runs with no
+proxy vars, so it is unaffected.
 
 ---
 
@@ -411,7 +426,9 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
    “state changes: none”). To also rehearse the write path on a disposable fixture:
    `scripts/demo_rehearsal.sh --with-writes` (15 passed; fixture `Rehearsal-*` auto-removed, state restored).
 4. Evidence: screenshots in `docs/screenshots/ui/` (incl. `due-final-*` banner + chooser and
-   `capsule-final-*`); `services/ocr/EVAL-REAL.md`, `services/vlm/EVAL.md` (QA section).
+   `capsule-final-*`); **final recorded walkthrough** in `docs/screenshots/walkthrough/`
+   (`demo-walkthrough.mp4`, 8 step screenshots, 0 console errors); `services/ocr/EVAL-REAL.md`,
+   `services/vlm/EVAL.md` (QA section).
 5. Reset demo data if needed — **never** `docker compose down -v` (destroys the preserved Timescale
    volume). Safe scoped reset: `DELETE /hub/data` clears only the demo patient's meds, doses, stock,
    scans, alerts and events (settings/caregivers stay), then re-run the demo seed if needed;
