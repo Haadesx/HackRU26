@@ -322,6 +322,21 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
    branch is built on. `feat/ios-aparajita` is canonical.
 7. **No overlap with other components:** this branch only adds `ios/` and `docs/ios-aparajita.md`.
 
+### I.8 OCR, OpenFDA and why a scan can read "the wrong medicine" (found 2026-10-11, real stack run locally)
+
+- **Demo data answers scans without reading the photo.** The built-in demo hub returns scripted results (a "Lisinopril"
+  scan, and "the dose that is due", Vitamin D3, on Track). Check the chip: it must not say "Demo data".
+- **Gateway mode matters.** `MEDCHECK_API_MODE=mock` returns canned fixtures chosen by a hash of the image (Metformin,
+  Amoxicillin, Ibuprofen "uncertain"). Real reading needs `.venv-full` (RapidOCR + ONNX Runtime, `scripts/setup_full_env.sh`)
+  and `MEDCHECK_API_MODE=real`. Verified: real OCR reads a synthetic "FLUOXETINE 20 mg CAPSULES" label perfectly.
+- **Fluoxetine is not in `services/ocr/lexicon.py`** (Metformin and Sertraline are), so the gateway's name field falls
+  back to a wrong word ("Pharmacy", 0.3). With `OPENFDA_ENABLED=true` the hub recovers "Fluoxetine" from OpenFDA, but
+  only at confidence 0.80 = **unsure**, by design. `hub/verify.py` fails closed on an unsure name, so the Track scanner
+  answers "not clearly enough to be sure" until the medication is **tracked**: after that the hub passes it as
+  `known_candidates` and the scan matches ("Fluoxetine 20 mg", then `not_scheduled`/`match` by the clock).
+  The durable fix is more names in the OCR lexicon (the OCR owner's file; not changed here).
+- **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
+
 ## J. Outstanding work
 
 | # | Task | Status |
@@ -356,6 +371,8 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 | 2026-10-11 | **Parity with `feat/integrate-track-tab`**: `VerificationCard` + "Log this dose now"; dosage-form chooser and form-aware copy; `schedule_times` in Edit details; `dosage_form` in `complete`, `warnings` shown; `medication_id: null` on a wrong bottle; null `pills_left` and fractional `dose_amount` no longer drop a medication; tolerant settings decoding; names from `state.patient`; alerts capped at 5 with empty text; settings validation before autosave; Hub connection card in all builds with `/hub` discovery; `NSAllowsLocalNetworking`; scan GET asks the hub like web; demo hub applies the real hub's completion rules | the app had been built from the shared contract only; the integrated hub sends more and is stricter | see "Pushed SHAs" |
+
+| 2026-10-11 | **Track shows the live camera in the card** (no "open camera" sheet), and on iPhone the scanner comes right after the progress card; the status chip says **"Demo data. No hub connected."** in demo mode (it used to say "Connected to Rosa's hub", which hid that scans were scripted); hub `warnings` (objects `{code, medication, message}`) are decoded and shown | a tester on the phone was still on demo data and saw "Vitamin D3" for every bottle | see "Pushed SHAs" |
 
 ### Pushed SHAs
 

@@ -277,7 +277,18 @@ enum HubContract {
     /// `warnings` is an extra the real /hub adds; the shared contract has only `medication`.
     struct CompleteDTO: Decodable {
         var medication: MedicationDTO
-        var warnings: [String]?
+        var warnings: [WarningDTO]?
+    }
+
+    /// A warning is a sentence, or the real hub's `{code, medication, message}`.
+    struct WarningDTO: Decodable {
+        let text: String?
+
+        init(from decoder: Decoder) throws {
+            struct Object: Decodable { var message: String? }
+            let c = try decoder.singleValueContainer()
+            text = (try? c.decode(String.self)) ?? (try? c.decode(Object.self))?.message
+        }
     }
 
     // MARK: Basic mapping

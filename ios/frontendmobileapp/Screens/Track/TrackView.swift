@@ -43,8 +43,9 @@ struct TrackView: View {
                         sideCards(rows).frame(width: 360)
                     }
                 } else {
+                    // On a phone the camera is the point of this tab, so it comes before the list.
+                    sideCards(rows, scannerFirst: true)
                     groups(rows)
-                    sideCards(rows)
                 }
             }
         }
@@ -236,14 +237,17 @@ struct TrackView: View {
 
     // MARK: Side cards
 
-    @ViewBuilder private func sideCards(_ rows: [DoseSlot]) -> some View {
+    /// With `scannerFirst` (iPhone) only the scanner and "Coming up next" are returned; `groups` follows, then the logs.
+    @ViewBuilder private func sideCards(_ rows: [DoseSlot], scannerFirst: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             if isToday {
                 DoseScannerCard()
                 comingUpNext(rows)
             }
-            takenLog(rows)
-            howDecided
+            if !scannerFirst {
+                takenLog(rows)
+                howDecided
+            }
         }
     }
 
