@@ -159,7 +159,9 @@ bottle, and sends the SMS.
 { "id": 1, "type": "wrong_bottle", "message": "Rosa picked up Metformin when Lisinopril was due. MedCheck stopped her before she took it.", "at": "..." }
 ```
 
-`type` is `wrong_bottle` or `double_dose`. `message` is shown as written.
+`type` is `wrong_bottle` or `double_dose` (what the wearable posts to `POST /events`), or, set by the hub itself,
+`skipped` (someone pressed Skip, from any device) or `missed` (the worker marked the dose missed). `message` is shown
+as written. Clients should show an unknown `type` as a generic heads-up rather than hide it.
 
 ### Scan — see [`fixtures/scan-after-photo-1.json`](fixtures/scan-after-photo-1.json) and [`fixtures/scan-needs-caregiver.json`](fixtures/scan-needs-caregiver.json)
 

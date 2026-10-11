@@ -30,7 +30,9 @@ from app.models.base import created_at_col, in_list, tstz
 from app.utils.time import utcnow
 
 SCAN_STATUSES = ("reading", "asking_patient", "needs_caregiver", "complete")
-EVENT_TYPES = ("wrong_bottle", "double_dose")
+# Mistakes the wearable catches, plus what the caregiver should hear about a dose that did not happen.
+MISTAKE_TYPES = ("wrong_bottle", "double_dose")
+EVENT_TYPES = (*MISTAKE_TYPES, "skipped", "missed")
 ALERT_TYPES = ("low_7", "low_5", "low_3", "no_refills")
 HUB_METHODS = ("voice", "button", "dashboard", "scan")  # scan = confirmed after a Track-tab dose scan
 
@@ -111,7 +113,8 @@ class HubScan(db.Model):
 
 
 class HubEvent(db.Model):
-    """Something the wearable caught (wrong bottle, double dose)."""
+    """Something the dashboard should show: a mistake the wearable caught (wrong bottle, double dose), or a dose that
+    was skipped or missed."""
 
     __tablename__ = "hub_events"
     __table_args__ = (CheckConstraint(in_list("type", EVENT_TYPES), name="type"),)

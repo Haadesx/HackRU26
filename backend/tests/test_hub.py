@@ -870,3 +870,34 @@ def test_complete_scan_rejects_unsupported_form_choice(hub, monkeypatch):
     r = hub.post(f"/scans/{sid}/complete", {**SCAN_BODY, "dosage_form": "liquid"})
     assert r.status_code == 422
     assert "tablets and capsules" in r.get_json()["detail"]
+
+
+def test_skip_is_saved_as_an_event_and_not_texted_as_a_mistake(hub, ctx, monkeypatch):
+    from app.services.channels import sms as sms_channel
+
+    texts = []
+    monkeypatch.setattr(sms_channel, "configured", lambda: True)
+    monkeypatch.setattr(sms_channel, "send", lambda to, body: texts.append(body) or "SM")
+    # alert_wrong_bottle must not turn every skip into a "wrong bottle" text.
+    hub.put("/settings", {**hub.state()["settings"], "alert_wrong_bottle": True,
+                          "caregivers": [{"name": "Elena", "phone": "(732) 555-0187", "scope": "all"}]})
+    med = hub.med()
+    state = hub.post(f"/medications/{med['id']}/skip", {"slot": "19:00"}).get_json()
+    assert [(e["type"], e["message"]) for e in state["events"]] == [("skipped", "Rosa skipped the 19:00 dose of Metformin 500 mg.")]
+    assert texts == []
+
+
+def test_missed_dose_is_saved_even_when_texts_are_off(hub, ctx, monkeypatch):
+    hub.put("/settings", {**hub.state()["settings"], "alert_missed": False})
+    at = T0 + timedelta(hours=3, minutes=1)
+    set_now(at)
+    tasks.mark_missed_doses(at)
+    events = hub.state()["events"]
+    assert [(e["type"], e["message"]) for e in events] == [("missed", "Rosa hasn't taken the 08:00 dose of Metformin 500 mg.")]
+
+
+def test_events_endpoint_accepts_only_mistakes(hub):
+    assert hub.post("/events", {"type": "double_dose", "message": "Took it twice."}).status_code == 200
+    for kind in ("skipped", "missed", "nonsense"):
+        r = hub.post("/events", {"type": kind, "message": "x"})
+        assert r.status_code == 422 and "wrong_bottle or double_dose" in r.get_json()["detail"]

@@ -153,7 +153,7 @@ struct HubStatusChip: View {
                 .fill(demo ? MC.sky : (connected ? MC.mintDot : MC.coralDot))
                 .frame(width: 10, height: 10)
             Text(demo ? "Demo data. No hub connected."
-                      : (connected ? "Connected to Rosa's hub" : "Can't reach the hub. Retrying."))
+                      : (connected ? "Connected to \(store.patientName)'s hub" : "Can't reach the hub. Retrying."))
                 .font(MCFont.bold(14, relativeTo: .footnote))
                 .foregroundStyle(demo ? MC.navy : (ok ? SupplyStatus.onTrack.text : SupplyStatus.urgent.text))
                 .fixedSize(horizontal: false, vertical: true)

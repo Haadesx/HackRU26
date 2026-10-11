@@ -35,7 +35,7 @@ from app.models import (
     HubSettings,
     RefillRequest,
 )
-from app.models.hub import EVENT_TYPES, HUB_METHODS
+from app.models.hub import HUB_METHODS, MISTAKE_TYPES
 from app.services import doses as dose_service
 from app.services import inventory as inv_service
 from app.services import notifications
@@ -160,6 +160,8 @@ def skip_dose(med_id: int):
     if event.status == "skipped":
         raise ApiError(409, "ALREADY_SKIPPED", f"The {slot} dose of {item.medication.name} is already skipped.")
     dose_service.skip(event, allow_missed=True)
+    # The caregiver should hear about it even when someone else pressed Skip (e.g. the patient's device).
+    record_event(patient, "skipped", f"{patient.name.split()[0]} skipped the {slot} dose of {notifications.med_label(item)}.")
     db.session.commit()
     return state_response()
 
@@ -664,11 +666,13 @@ def delete_all():
 
 
 def record_event(patient, type_: str, message: str, at=None) -> None:
-    """Add a 'Mistakes caught' event and text contacts when alert_wrong_bottle is on."""
+    """Add an event to the dashboard. Mistakes (wrong bottle, double dose) are also texted to contacts when
+    alert_wrong_bottle is on; skipped and missed doses are not (missed doses have their own text setting)."""
     db.session.add(HubEvent(patient_id=patient.id, type=type_, message=message[:500], at=at or utcnow()))
-    settings = get_settings(patient)
-    if settings.get("alert_wrong_bottle"):
-        contacts.text_contacts(settings, f"MedCheck: {message}")
+    if type_ in MISTAKE_TYPES:
+        settings = get_settings(patient)
+        if settings.get("alert_wrong_bottle"):
+            contacts.text_contacts(settings, f"MedCheck: {message}")
 
 
 @hub_bp.post("/events")
@@ -676,7 +680,7 @@ def add_event():
     """Wearable mistake: {"type": "wrong_bottle"|"double_dose", "message": "...", "at"?: ISO}."""
     patient = hub_patient()
     data = body()
-    if data.get("type") not in EVENT_TYPES:
+    if data.get("type") not in MISTAKE_TYPES:
         raise unprocessable("type must be wrong_bottle or double_dose.")
     message = str(data.get("message", "")).strip()
     if not message:
@@ -695,13 +699,16 @@ def add_event():
 
 
 def on_missed(event: DoseEvent) -> None:
-    """Worker hook: text the dashboard contacts about a missed dose when alert_missed is on."""
-    settings_row = db.session.get(HubSettings, event.patient_id)
-    if settings_row is None or not settings_row.settings.get("alert_missed", True):
-        return
+    """Worker hook: record the missed dose on the dashboard, and text the contacts when alert_missed is on."""
     from app.models import User
 
     patient = db.session.get(User, event.patient_id)
+    first = patient.name.split()[0]
     at = event.scheduled_at.astimezone(get_zone(patient.timezone)).strftime("%H:%M")
     label = notifications.med_label(event.item)
-    contacts.text_contacts(settings_row.settings, f"MedCheck: {patient.name.split()[0]} hasn't taken the {at} dose of {label}.")
+    # Always recorded: the dashboard's "Mistakes caught" list is the log, the text setting only controls SMS.
+    db.session.add(HubEvent(patient_id=patient.id, type="missed", message=f"{first} hasn't taken the {at} dose of {label}.", at=utcnow()))
+    settings_row = db.session.get(HubSettings, event.patient_id)
+    if settings_row is None or not settings_row.settings.get("alert_missed", True):
+        return
+    contacts.text_contacts(settings_row.settings, f"MedCheck: {first} hasn't taken the {at} dose of {label}.")
