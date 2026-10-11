@@ -123,23 +123,35 @@ interaction → performance → style → layout …) and the `search.py` query 
 guidelines chosen as the review checklist (keyboard/focus/hit-targets/motion/async
 announcements). Both verified installed (the search tool returns results; see §G).
 
-### Design pass (in progress at time of writing)
-- Branch `feat/ui-design-pass`, worktree `.worktrees/ui-design`, agent **Athena**, dev server
-  `:5299` against the live `/hub`.
-- Brief: fix full-screen desktop composition (max-width containers, multi-column/grid layouts at
-  ≥1280 px, consistent page shell); apply the skills' priority order (accessibility, touch
-  targets, mobile-first responsiveness 390/768/1440/1920, typography scale, spacing rhythm,
-  reduced motion, no horizontal scroll); preserve every route/API call/behavior; evidence =
-  `npm run build` + before/after screenshots at 1920×1080, 1440×900, 390×844 for Home/Scan/
-  Settings.
-- **Before** screenshots captured by the orchestrator and committed:
-  `docs/screenshots/ui/before-{home,scan,settings,history}-desktop.png`,
-  `before-home-mobile.png`.
-- **After** screenshots + commit SHA: **pending Athena's report**; this document will be updated
-  with the verified screenshots and design decisions before the final handoff.
-- Portability: because Sinchana's new UI will replace `frontend/`, the pass is deliberately
-  scoped to layout/tokens/accessibility (no behavior change) so it can be ported or re-run with
-  the same skills when the new UI lands.
+### Design pass — COMPLETED and independently verified
+
+- Branch **`feat/ui-design-pass` @ `1a739c3`** (13 files, `frontend/` only, no behavior/API/text
+  changes), merged into `feat/integration`.
+- **What changed:**
+  - **Page shell:** consistent `max-w-7xl` container with adaptive gutters (`px-4 → 2xl:px-12`)
+    in AppShell/TopNav/DemoBar; `min-h-dvh` column layout — fixes the “hugs the center / unused
+    desktop space” problem.
+  - **Wide-screen layouts (≥1280 px):** Home supply shelf ↔ Today's doses side panel
+    (1.3fr/1fr) + 3-up alerts grid; Scan camera 1.8fr + sticky right rail; Verify fields 3-up;
+    History calendar with sticky aside; Settings full-width 2-column grid (DOM order preserved).
+  - **Accessibility (skills' priority #1):** per-route `document.title`; focus moves to `<main>`
+    on route change; skip link; semantic landmarks + `aria-labelledby`; `aria-live` on the dose
+    summary and demo date; contextual `aria-label` on repeated “Remind” buttons; `.field`
+    focus-visible rings; dialog `overscroll-contain`; ≥44 px touch targets; reduced-motion kept.
+  - **Tokens/typography:** 17 px body at 1.5 line-height; 70–75ch reading measure; `text-wrap:
+    balance` headings; explicit transitions (no `transition: all`); intentional tap highlight.
+- **Verification (orchestrator, on the merged tree, Brave via playwright-core):**
+  - `npm run build` clean (CSS 25.81 kB / JS 236.83 kB, gzip 6.06 / 74.65).
+  - 9 captures (/, /scan, /settings × 1920/1440/390): **no horizontal scroll, skip link present,
+    correct per-page titles/h1, 0 console errors** for every combination.
+  - Contrast measured by the UI agent: **4.74–15.06:1** for all main text pairs (AA+).
+  - Before/after screenshots committed: `docs/screenshots/ui/before-*.png`,
+    `docs/screenshots/ui/after-*.png` (desktop/laptop/mobile).
+- **Portability note:** Sinchana's new UI will replace `frontend/`; the changes are layout/token/
+  a11y-only and the skills are installed, so the pass can be re-run quickly on the new UI.
+- **Capture tooling:** `scripts/ui_screenshots.sh` → `tools/ui_capture/capture.mjs`
+  (playwright-core driving the installed **Brave** browser — no Chrome, no browser download;
+  emits screenshots plus JSON with console errors, overflow and skip-link checks).
 
 ---
 
@@ -147,7 +159,8 @@ announcements). Both verified installed (the search tool returns results; see §
 
 - Remote branches: `feat/integration` (canonical, tip **`7e42ae1`** before this pass's commits),
   `feat/inference-medcheck`, `feat/backend-urvi`, `feat/frontend-ui`; `main` intentionally empty.
-- New this pass: branch **`feat/ui-design-pass`** (worktree `.worktrees/ui-design`) — UI pass.
+- New this pass: branch **`feat/ui-design-pass`** (worktree `.worktrees/ui-design`) — UI pass,
+  merged into `feat/integration` as commit **`<pending final commit>`** (branch tip `1a739c3`).
 - Files changed this pass (before Athena's work): `.agents/skills/ui-ux-pro-max/**` (new),
   `.agents/skills/web-interface-guidelines/**` (new), `scripts/run_ui_demo.sh` (macOS fork
   workaround), `docs/screenshots/ui/before-*.png` (new), this file.
@@ -198,6 +211,10 @@ announcements). Both verified installed (the search tool returns results; see §
   values → **422** `{"detail":"Add the medication name."}` (validation, no silent defaults).
 - **Baseline frontend build** (current UI, main worktree): `npm run build` → OK
   (`index.html` 0.72 kB, CSS 24.37 kB, JS 235.73 kB / 74.32 kB gzip, built in ~1 s).
+- **UI design pass verified on the merged tree**: build clean (CSS 25.81 kB / JS 236.83 kB);
+  9 Brave/playwright captures across `/`, `/scan`, `/settings` × 1920/1440/390 → no horizontal
+  scroll, skip link on every page, per-page titles, **0 console errors**; contrast ratios
+  4.74–15.06:1 (agent-measured).
 - Earlier this pass: `/hub/health` 200 after the gunicorn fix; UI Home rendered real data
   (headless DOM contained Ada/Metformin/Lisinopril/Atorvastatin).
 
@@ -340,10 +357,13 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 - Installed UI UX Pro Max v2.13.0 and Vercel Web Interface Guidelines project-locally
   (`.agents/skills/…`), committed with provenance.
 - Fixed the demo backend crash (macOS gunicorn fork) and restored the whole stack.
-- Dispatched the UI/UX design pass on `feat/ui-design-pass` (isolated worktree) with before
-  screenshots captured; after-shots pending.
+- **Delivered the UI/UX design pass** (`feat/ui-design-pass` `1a739c3` → merged): wide-screen
+  composition, page shell, a11y/token polish; verified by build + 9 Brave/Playwright captures
+  (no overflow, skip links, zero console errors) with before/after screenshots committed.
+- Switched the screenshot/verification tooling to **Brave via playwright-core** (operator
+  instruction; no Chrome).
 - Ran the complete-chain verification (success + failure paths) and re-ran both suites.
-- Created this document.
+- Created and maintain this document.
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
