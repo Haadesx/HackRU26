@@ -77,7 +77,6 @@ A separate **SwiftUI iOS prototype** brings the same calm, readable design to iP
 - **Verify:** confidence-aware fields to review or correct before saving.
 - **History & Settings:** adherence views, caregiver preferences, and reminder settings.
 
-The iOS app runs with sample data by default. Its live backend connection is **still being reconciled and tested**; the stable, end-to-end demonstration is the web application. Browse the [iOS source and setup guide](https://github.com/Haadesx/HackRU26/tree/feat/frontend-ios/ios).
 
 <!-- If the team later publishes an iOS screenshot gallery on Devpost or another approved host, link it here. Screenshots and recordings are intentionally not stored in this repository. -->
 
