@@ -266,11 +266,12 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | Pushed to `feat/frontend-ios`; PR #2 merged into `feat/inference-medcheck` carrying the first commit | | `3783248` (superseded) |
 | 2026-10-11 | History of `feat/inference-medcheck` rewritten to remove a co-author trailer (see I.5) | owner request | `d03fada` |
 | 2026-10-11 | Created `feat/ios-aparajita`; added this handoff; read the shared hub contract and recorded the mismatches | team handoff process | `b503d96`, `1f83520` |
-| 2026-10-11 | **Conformed the client to the shared hub contract**: new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
+| 2026-10-11 | **Conformed the client to the shared hub contract** (commit `b42266c`): new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs
 
 - `feat/ios-aparajita`: `b503d96` (handoff), `1f83520` (records that SHA), both docs-only on top of `d5e922e`.
-- Contract-conformance milestone: recorded in the next docs-only commit after the push is verified on GitHub.
+- Contract-conformance milestone (code + docs): `b42266c`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
+- The docs-only commit that records this line has its own SHA; `git log` is authoritative.
 - `git log feat/ios-aparajita` is authoritative.
