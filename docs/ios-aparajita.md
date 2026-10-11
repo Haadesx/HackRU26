@@ -335,6 +335,16 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
   answers "not clearly enough to be sure" until the medication is **tracked**: after that the hub passes it as
   `known_candidates` and the scan matches ("Fluoxetine 20 mg", then `not_scheduled`/`match` by the clock).
   The durable fix is more names in the OCR lexicon (the OCR owner's file; not changed here).
+- **Update (2026-10-11, same day): the OCR word list had only 41 drugs.** That was the cause of "reads the pharmacy name
+  instead of the medicine": with the drug missing from `DRUG_NAMES`, the extractor's name field fell back to the biggest
+  word on the label ("WALGREENSPHARMACY", 0.3) and, because the strength is only trusted at 0.9 when it sits beside a
+  *recognized* name, the strength dropped to 0.75 = unsure as well. 151 common generics and brands were added to
+  `services/ocr/lexicon.py` (OCR owner's file, changed on `feat/integrate-ios` only; the 164 OCR tests and 519 inference
+  tests pass). A label that previously gave `WALGREENSPHARMACY` / 0.3 now gives `Fluoxetine` 0.95 and `20 mg` 0.9.
+- **Name consistency matters.** The hub only accepts an exact name match (`test_17`: "Metformin HCl" is *not* the tracked
+  "Metformin", by the backend owner's design, and unsure names or strengths are never identity, `test_02`/`test_04`).
+  A medication added earlier as "Fluoxetine Hcl" will therefore not match a bottle that now reads "Fluoxetine": stop
+  tracking it and add it again. Whether salt suffixes should count as the same medicine is the backend owner's call.
 - **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
 
 ## J. Outstanding work
@@ -375,6 +385,7 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | **Track shows the live camera in the card** (no "open camera" sheet), and on iPhone the scanner comes right after the progress card; the status chip says **"Demo data. No hub connected."** in demo mode (it used to say "Connected to Rosa's hub", which hid that scans were scripted); hub `warnings` (objects `{code, medication, message}`) are decoded and shown | a tester on the phone was still on demo data and saw "Vitamin D3" for every bottle | see "Pushed SHAs" |
 | 2026-10-11 | **Red "Don't take this yet" advisory** in the dose scanner: a tracked medicine scanned before its time (hub `not_scheduled` with a `medication_id`), one with no doses left today, and an unknown or wrong-strength bottle with nothing due now show a red tile with the hub's own sentence, a warning haptic and a hand icon, instead of the calm blue "Nothing due". Demo hub now uses the real hub's half-hour due window; self-test 108/108 | a caregiver scanned fluoxetine at 5 a.m. (due 8:30) and got a neutral "Nothing due" | see "Pushed SHAs" |
 | 2026-10-11 | **App icon**: `AppIcon-1024.png` (the web's pink heart-pill) as the app icon (`Assets.xcassets/AppIcon`, `ASSETCATALOG_COMPILER_APPICON_NAME`) and as a 30 pt logo beside "MedCheck" in the top bar (`BrandIcon`, 192 px copy) | match the web app's branding | see "Pushed SHAs" |
+| 2026-10-11 | **Reverted the patient/caregiver mode and live pop-ups** at the owner's request (the iOS app is back to the single caregiver dashboard). The backend still saves skipped and missed doses as hub events (migration `0006_hub_event_types`), and the web labels them; the iOS Home lists them under "Mistakes caught". The reverted work is commit `49c2efd` on this branch (`2029aab` on `feat/ios-aparajita`) and can be restored with `git revert` of the revert | the owner reported that adding a prescription stopped working after the change | see "Pushed SHAs" |
 
 ### Pushed SHAs
 
