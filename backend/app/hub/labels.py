@@ -8,7 +8,7 @@ Mapping (frontend/docs/inference-contract.md):
                                    (confidence capped at 0.7) and regex over the raw OCR label
                                    text (0.7-0.75, so the caregiver is asked to check).
                                    Nothing is filled unless it is literally present on the label.
-Confidence -> state: >= 0.85 filled, >= 0.50 unsure, otherwise missing (value cleared).
+Confidence -> state: >= 0.85 filled, any other value read -> unsure (value kept), nothing read -> missing.
 """
 
 import json
@@ -69,7 +69,12 @@ def empty_fields() -> dict:
 
 
 def state_for(confidence: float, value: str) -> str:
-    if not value or confidence < UNSURE:
+    """filled (>= 0.85) | unsure (anything read, however low) | missing (nothing read).
+
+    Low-confidence readings are kept and shown as "unsure" so the caregiver sees what was
+    read and confirms or corrects it, instead of retyping it from scratch.
+    """
+    if not value:
         return "missing"
     return "filled" if confidence >= FILLED else "unsure"
 
@@ -181,17 +186,22 @@ def name_from_label(label_text: str) -> str | None:
     No drug list is consulted: medicines can have any name and source. Returns text that is
     on the label (title-cased) or None. Used only when inference's own name is low-confidence.
     """
-    for line in label_text.splitlines():
+    def clean(text: str) -> str:
+        words = [w for w in _NAME_WORD.findall(text) if w.lower() not in _NOT_A_NAME][-4:]
+        name = " ".join(words).strip(" -")
+        return name.title() if len(name.replace(" ", "")) >= 3 else ""
+
+    lines = [ln.strip() for ln in label_text.splitlines() if ln.strip()]
+    for i, line in enumerate(lines):
         m = _STRENGTH_IN_LINE.search(line)
         if not m:
             continue
-        words = _NAME_WORD.findall(line[: m.start()])
-        while words and words[0].lower() in _NOT_A_NAME:
-            words.pop(0)
-        words = [w for w in words if w.lower() not in _NOT_A_NAME][-4:]
-        name = " ".join(words).strip(" -")
-        if len(name.replace(" ", "")) >= 3:
-            return name.title()
+        name = clean(line[: m.start()])
+        # Strength on its own line ("Aspirin" / "81mg ..."): use the short line just above it.
+        if not name and i > 0 and not _STRENGTH_IN_LINE.search(lines[i - 1]) and len(lines[i - 1].split()) <= 4:
+            name = clean(lines[i - 1])
+        if name:
+            return name
     return None
 
 

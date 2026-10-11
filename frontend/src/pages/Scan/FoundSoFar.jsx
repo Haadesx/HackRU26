@@ -30,7 +30,13 @@ export default function FoundSoFar({ scan }) {
                 <li key={f.key} className="flex items-center justify-between gap-3">
                   <span>{labels[f.key]}</span>
                   {v.state === "filled" && <StatusBadge tone="ok">{v.value}</StatusBadge>}
-                  {v.state === "unsure" && <StatusBadge tone="low">Unclear</StatusBadge>}
+                  {v.state === "unsure" && (
+                    // Show what was read; the tag (and the Verify step) asks the caregiver to confirm it.
+                    <StatusBadge tone="low" className="min-w-0 max-w-[65%]">
+                      <span className="truncate">{v.value || "Unclear"}</span>
+                      <span className="ml-1 shrink-0 font-normal">· check</span>
+                    </StatusBadge>
+                  )}
                   {v.state === "missing" && <StatusBadge tone="urgent">Not found yet</StatusBadge>}
                 </li>
               );

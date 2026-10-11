@@ -321,8 +321,18 @@ def test_name_taken_from_label_when_ocr_name_is_weak(hub, monkeypatch):
 def test_name_from_label_rules():
     assert labels.name_from_label("Take 1 tablet\nLISINOPRIL 10 mg TABLETS") == "Lisinopril"
     assert labels.name_from_label("Each tablet contains Mefenamic Acid 250mg") == "Mefenamic Acid"
-    assert labels.name_from_label("QTY 30\n250mg") is None  # nothing before the strength
+    assert labels.name_from_label("Low Dose\nAspirin\n81mg Delayed-Release Tablets") == "Aspirin"  # line above
+    assert labels.name_from_label("Take 1 tablet each day for pain relief\n250mg") is None  # long line above: not a name
     assert labels.name_from_label("") is None
+
+
+def test_low_confidence_values_are_kept_as_unsure(hub, monkeypatch):
+    """A value read at any confidence is shown (unsure) so the caregiver can confirm it; only nothing-read is missing."""
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Aspirin", name_conf=0.3, strength=(81, "mg"), text="Aspirin\nLow Dose")]
+    f = hub.photo("/scans").get_json()["fields"]
+    assert f["name"] == {"value": "Aspirin", "state": "unsure"}
+    assert labels.state_for(0.2, "x") == "unsure" and labels.state_for(0.9, "x") == "filled" and labels.state_for(0.9, "") == "missing"
 
 
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
