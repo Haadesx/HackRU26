@@ -192,10 +192,4 @@ samples/        Synthetic label images used by automated tests
 scripts/        Environment setup, demo launch, and rehearsal
 ```
 
-## Built for a hackathon. Designed with care.
 
-MedCheck was built for **HackRU 2026** as a team project exploring more accessible medication management. The web demo has been exercised across successful scans, mismatch warnings, uncertainty, explicit confirmation, persistence, and responsive screen sizes.
-
-**Current boundaries:** it is a research and hackathon prototype, not a clinically validated medical device. Real-world label accuracy has not been established on a large, representative dataset. Real SMS/push delivery and public deployment are not part of the verified demo, and the iOS live-hub experience remains in progress.
-
-**The important part isn't making every scan look confident. It's knowing when to ask for another look.**
