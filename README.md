@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/medcheck-logo.webp" alt="MedCheck logo — pink capsule heart" width="160" />
+
 # 💊 MedCheck
 
 ### The right bottle. The right details. A clearer next step.
