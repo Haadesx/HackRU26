@@ -374,6 +374,7 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 
 | 2026-10-11 | **Track shows the live camera in the card** (no "open camera" sheet), and on iPhone the scanner comes right after the progress card; the status chip says **"Demo data. No hub connected."** in demo mode (it used to say "Connected to Rosa's hub", which hid that scans were scripted); hub `warnings` (objects `{code, medication, message}`) are decoded and shown | a tester on the phone was still on demo data and saw "Vitamin D3" for every bottle | see "Pushed SHAs" |
 | 2026-10-11 | **Red "Don't take this yet" advisory** in the dose scanner: a tracked medicine scanned before its time (hub `not_scheduled` with a `medication_id`), one with no doses left today, and an unknown or wrong-strength bottle with nothing due now show a red tile with the hub's own sentence, a warning haptic and a hand icon, instead of the calm blue "Nothing due". Demo hub now uses the real hub's half-hour due window; self-test 108/108 | a caregiver scanned fluoxetine at 5 a.m. (due 8:30) and got a neutral "Nothing due" | see "Pushed SHAs" |
+| 2026-10-11 | **App icon**: `AppIcon-1024.png` (the web's pink heart-pill) as the app icon (`Assets.xcassets/AppIcon`, `ASSETCATALOG_COMPILER_APPICON_NAME`) and as a 30 pt logo beside "MedCheck" in the top bar (`BrandIcon`, 192 px copy) | match the web app's branding | see "Pushed SHAs" |
 
 ### Pushed SHAs
 

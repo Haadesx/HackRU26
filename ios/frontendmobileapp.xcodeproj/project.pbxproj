@@ -258,6 +258,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MedCheck;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_FILE = Config/MedCheck-Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "MedCheck uses the camera to read pill bottle labels. Photos are sent only to your MedCheck hub and deleted after the medication is added.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "MedCheck connects to the hub in Rosa's home on your local network.";
@@ -301,6 +302,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MedCheck;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_FILE = Config/MedCheck-Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "MedCheck uses the camera to read pill bottle labels. Photos are sent only to your MedCheck hub and deleted after the medication is added.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "MedCheck connects to the hub in Rosa's home on your local network.";
