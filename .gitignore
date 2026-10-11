@@ -40,3 +40,6 @@ uv.lock
 
 # Agent tooling state (not project artifacts)
 .codex/
+
+# Generated screenshots and recorded demonstrations (keep outside Git)
+/docs/screenshots/
