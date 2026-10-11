@@ -408,3 +408,74 @@ def test_hub_disabled_returns_404(app):
 def test_hub_patient_missing_is_readable(client):
     r = client.get("/hub/state")
     assert r.status_code == 503 and "Run `python -m scripts.seed`" in r.get_json()["detail"]
+
+
+# ---------- scan-vs-prescription verification ----------
+
+METFORMIN_SCAN = dict(name="Metformin", strength=(500, "mg"))
+
+
+def test_verification_due_now_offers_explicit_log(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))  # 08:00 local — breakfast window is open
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "due_now" and v["can_log"] is True
+    assert v["medication"]["name"] == "Metformin" and v["dose_event_id"]
+    assert "never records a dose" in v["message"]
+
+
+def test_verification_already_taken_blocks_second_log(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    med = hub.med("Metformin")
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "already_taken" and v["can_log"] is False
+    assert v["taken_local"]
+
+
+def test_verification_not_due_when_window_closed(hub, monkeypatch):
+    set_now(T0 - timedelta(hours=2))  # 05:00 local — before the breakfast window
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "not_due" and v["can_log"] is False
+    assert v["due_local"] == "08:00"
+
+
+def test_verification_wrong_medication(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference()]  # Losartan 25 mg — not tracked
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "wrong_medication" and v["can_log"] is False
+
+
+def test_verification_strength_mismatch(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(1000, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "strength_mismatch" and v["can_log"] is False
+    assert "1000 mg" in v["message"]
+
+
+def test_verification_uncertain_without_readable_name(hub):
+    scan = hub.post("/scans", {"manual": True}).get_json()
+    assert scan["verification"]["status"] == "uncertain"
+    assert scan["verification"]["can_log"] is False
+
+
+def test_verification_morning_taken_evening_upcoming_is_not_due(hub, monkeypatch):
+    """A dose taken hours ago must not hide the next scheduled dose."""
+    set_now(T0 + timedelta(hours=1))  # 08:00 — breakfast taken now
+    med = hub.med("Metformin")
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    set_now(T0 + timedelta(hours=9))  # 16:00 — before the 19:00 dinner window
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "not_due" and v["can_log"] is False
+    assert v["due_local"] == "19:00"

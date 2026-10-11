@@ -11,7 +11,7 @@ from werkzeug.exceptions import HTTPException
 
 from app.errors import ApiError
 from app.extensions import db
-from app.hub import contacts, labels, rx
+from app.hub import contacts, labels, rx, verify as hub_verify
 from app.hub.defaults import DEFAULT_SETTINGS
 from app.hub.state import (
     build_state,
@@ -330,6 +330,18 @@ def _strength_obj(strength: str) -> dict:
         return {}
 
 
+def _scan_payload(scan) -> dict:
+    """Scan JSON plus the read-only medication-verification block (never records a dose)."""
+    payload = scan_json(scan)
+    try:
+        verification = hub_verify.scan_verification(hub_patient(), scan)
+    except Exception:  # noqa: BLE001 - verification must never break a scan
+        verification = None
+    if verification:
+        payload["verification"] = verification
+    return payload
+
+
 @hub_bp.post("/scans")
 def start_scan():
     patient = hub_patient()
@@ -337,13 +349,13 @@ def start_scan():
         scan = HubScan(patient_id=patient.id, status="reading", photos=0, manual=True, fields=labels.empty_fields(), confidence={}, history=[], guidance=[])
         db.session.add(scan)
         db.session.commit()
-        return jsonify(scan_json(scan))
+        return jsonify(_scan_payload(scan))
     scan = HubScan(patient_id=patient.id, status="reading", photos=0, manual=False, fields=labels.empty_fields(), confidence={}, history=[], guidance=[])
     db.session.add(scan)
     db.session.flush()
     _read_photo(scan)
     db.session.commit()
-    return jsonify(scan_json(scan))
+    return jsonify(_scan_payload(scan))
 
 
 @hub_bp.post("/scans/<int:scan_id>/photos")
@@ -353,7 +365,7 @@ def add_photo(scan_id: int):
         raise ApiError(409, "SCAN_COMPLETE", "This medication was already added.")
     _read_photo(scan)
     db.session.commit()
-    return jsonify(scan_json(scan))
+    return jsonify(_scan_payload(scan))
 
 
 @hub_bp.get("/scans/<int:scan_id>")
