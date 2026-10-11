@@ -3,7 +3,7 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~02:10 UTC (safety P0 pass + wide-screen UI + fallback demo)
+> **Last updated:** 2026-10-11 ~03:20 UTC — Docker recovered, DB-backed app restored, **scan-vs-prescription verification slice live**, rehearsal 10/10.
 > **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
@@ -45,17 +45,21 @@ integration) and backend **81/81** (incl. 20 `/hub` tests). Frontend build clean
    `reconcile_fields` too). Verified live: capsule label → `capsule`; unknown label → `NULL` +
    warning; zero-confidence guess → ignored.
 
-**Blocker introduced late in this pass (operator action likely needed):** the local Docker
-Desktop engine became unresponsive while recreating the TimescaleDB volume
-(`error while creating mount source path '/host_mnt/Volumes/Auxilary/...': mkdir ...: file
-exists`), and a full quit/relaunch of Docker Desktop did not recover it (API returns 500s). The
-demo is therefore currently served by the **DB-less fallback adapter** (`tools/hub_adapter`,
-`:8500`) which implements the same hub contract and uses the same real inference; scan→add is
-verified on it. The DB-backed `/hub` path is unchanged in code and only needs the Docker
-recovery (see §J).
+**Docker recovered (operator restart) and the DB-backed app is restored:** daemon 29.8.2 → the existing
+TimescaleDB container started (no recreate), migrations applied through **`0004_hub_scan_form`**, demo data
+seeded (Ada/Cara; Metformin 46, Lisinopril 23, Pantoprazole 40 mg), `/hub/health` 200, and the UI is back on
+`VITE_API_URL=http://localhost:8000/hub`. The file-backed adapter remains available (`--adapter`) and is
+being brought to feature parity in parallel.
 
-Other open items: Sinchana's new UI is still not on the remote; iOS has no branch; the full
-identity-verification slice remains owned by Hermes's mission §8; bad-image still returns 502
+**New this pass — medication verification (the “more than reading a label” flow):** every scan response
+now carries a read-only `verification` block computed against tracked prescriptions and today's dose
+events: `due_now` (explicit log offered) · `already_taken` (recent confirm, no action) · `not_due` (next
+time) · `wrong_medication` · `strength_mismatch` · `uncertain`. A scan never records a dose; `can_log` is
+true only for `due_now`; a morning dose taken hours ago no longer hides an evening dose. Live spread on the
+real backend: Metformin `not_due`, Lisinopril 10 `not_due`, Lisinopril 20 vs 10 mg `strength_mismatch`,
+Furosemide `wrong_medication`, Pantoprazole `due_now (can_log)`, blurry `uncertain`.
+
+Open items: Sinchana's new UI is still not on the remote; iOS has no branch; bad-image still returns 502
 instead of 4xx.
 
 ---
@@ -295,13 +299,14 @@ labeled real-photo accuracy has been measured yet (P1 item, Hermes).
 
 ## J. Operational state and restrictions
 
-**Currently running (local Mac only):** inference `:8300` (real mode, YOLO+VLM enabled, via the
-console daemon `:8400`); **fallback hub adapter `:8500` serving the UI contract with real
-inference** (`HUB_MODE=demo`, fixture state); dashboard dev server `:5199` (now `VITE_API_URL=
-http://localhost:8500` so the demo works without the DB). The DB-backed backend `:8000` is
-**down**: Docker Desktop's engine stopped responding while recreating the TimescaleDB volume
-(`error while creating mount source path '/host_mnt/Volumes/Auxilary/...': mkdir ...: file
-exists`), and quit/relaunch did not recover it (daemon API 500s).
+**Currently running (local Mac only):** DB-backed backend `:8000` with `HUB_ENABLED=true` (localhost-only,
+TimescaleDB `:5433`, single gunicorn master with the macOS fork-safety env); inference `:8300` (real mode,
+YOLO+VLM enabled, console daemon `:8400`); fallback adapter `:8500` (optional); dashboard dev server `:5199`
+on the real `/hub`; worker dev servers as they run (e.g. `:5399`).
+
+**Docker recovery record (operator action, no data reset):** the operator restarted Docker Desktop; the
+existing container was started with `docker compose up -d --no-recreate db`; migrations and the demo seed
+were applied. No volumes/persistent data were deleted in this pass.
 
 **Operator recovery for the DB-backed path (no code changes needed):**
 1. Open Docker Desktop → Settings → Troubleshoot → “Restart” (or “Reset to factory defaults”
@@ -369,44 +374,31 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 
 ## WHAT IS WORKING NOW
 
-- Full chain: photo → real inference (YOLO11n + RapidOCR + optional Qwen3-VL) → hub → dashboard;
-  verified live on the DB-backed backend earlier and re-verified end-to-end on the **DB-less
-  fallback adapter** now (9 fields → complete → medication visible).
-- **Safety (new this pass):** interval cadences never become fixed times (caregiver must set
-  them); dosage form/unit preserved from inference and never assumed (evidence floor 0.50);
-  zero-confidence VLM guesses dropped; scans never record ingestion; duplicate adds refused;
-  dose confirm only when due; double-log blocked; blurry/unreadable → 422 with a clear message.
-- Test suites: **523 inference + 81 backend**, contract examples 4/4, frontend build clean.
-- UI: responsive shell (80/96/112 rem) using real width at 1920/2560; verified at 390/768/1440/
-  1920/2560 with no overflow, skip links, and zero console errors; before/after screenshots
-  committed.
-- Local console (live guidance + long-label rotation), ElevenLabs TTS sample, design skills
-  installed project-locally.
+- **DB-backed end-to-end** (restored this pass): photo → real inference → `/hub` → Postgres → dashboard;
+  migrations through `0004`; scan-added medications persist.
+- **Medication verification** on every scan: `due_now` (with explicit log), `already_taken`, `not_due`,
+  `wrong_medication`, `strength_mismatch`, `uncertain` — live-verified with real inference; a scan never
+  records a dose.
+- Safety: interval cadences never become fixed times; dosage form/unit preserved with an evidence floor;
+  duplicate add and double-log refused; blurry → clear correction message.
+- **Demo rehearsal script** (`scripts/demo_rehearsal.sh`): **10 passed / 0 failed** on the DB-backed hub.
+- Suites: **523 inference + 87 backend** (incl. 27 hub tests); frontend build clean; UI responsive at
+  390/768/1440/1920/2560.
 
 ## WHAT IS STILL MISSING OR BROKEN
 
-- **Local Docker Desktop engine is stuck** (`host_mnt` volume-recreate bug) → the Postgres/
-  TimescaleDB `/hub` path is offline until the operator recovers it (adapter covers the demo).
-- **Full medication-identity verification slice** (wrong bottle / strength mismatch / due-state
-  verification as a first-class product flow) is not implemented; today the product refuses
-  duplicates, enforces due-window rules, and surfaces uncertainty — Hermes's mission §8 owns it.
-- Real-photo measurement is small-sample only (6 local photos: 1×8/8, 2×uncertain, 4×correctly
-  `needs_rescan`); no labeled real-world corpus yet.
-- Sinchana's new UI not on the remote; iOS has no branch; bad-image returns 502 not 4xx; alerts/
-  events feed minimal; no auth/TLS (deliberate, localhost-only).
+- Verification **banner in the product UI** — in flight (`feat/ui-verification`); until it lands the block is
+  API-only (visible in curl/JSON).
+- Fallback adapter parity (verification + form/unit) — in flight (`feat/adapter-verify`).
+- Real-photo evidence doc + VLM QA — in flight (Orion/Juno tasks).
+- Sinchana's new UI not pushed; iOS absent; bad-image returns 502 not 4xx; no auth/TLS (localhost-only).
 
 ## WHAT CHANGED IN THIS PASS
 
-- **P0 safety fixes** (`3369b10`): interval-safe schedule fallback; form/dose-unit preservation
-  with a real source+confidence floor (migration `0004`); zero-confidence VLM field guard in
-  `reconcile_fields`; dynamic copy (“amount in the bottle” when the form is unknown); +6 tests.
-- **Wide-screen UI pass** (`f5dcd24`): `.shell` container 80→96→112 rem, Home grid 1.7fr/1fr at
-  ≥1800 px, display-scale headline; verified across 5 viewport sizes; screenshots committed.
-- **Demo fallback activated**: UI now runs against `tools/hub_adapter` (`:8500`) with real
-  inference because Docker Desktop is stuck; scan→add verified; recovery steps documented (§J).
-- Teammate sync: fetched all remote branches — **no new pushes** from Sinchana/Urvi; no iOS
-  branch exists; nothing to integrate this pass.
-- Handoff (this document) updated with all evidence and the blocker.
+- Recovered Docker/DB and restored the DB-backed app (no data reset).
+- Added `app/hub/verify.py` + 7 tests + 2 samples; wired into scan responses; live-verified all six states.
+- Committed `fd4026f`; added `scripts/demo_rehearsal.sh` (10/10).
+- Dispatched four parallel worker tasks (UI banner, adapter parity, real-photo evidence, VLM QA).
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
