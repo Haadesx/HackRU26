@@ -1,5 +1,4 @@
 import SwiftUI
-import UserNotifications
 
 @main struct MyApp: App {
     @State private var store = AppStore()
@@ -7,7 +6,6 @@ import UserNotifications
 
     init() {
         MCFont.registerFonts()
-        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
     }
 
     var body: some Scene {

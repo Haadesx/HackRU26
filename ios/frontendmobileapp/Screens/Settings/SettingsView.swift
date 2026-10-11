@@ -34,7 +34,6 @@ struct SettingsView: View {
                 }
                 .animation(.easeOut(duration: 0.2), value: store.settingsJustSaved)
 
-                RolePickerCard()
                 caregivers
                 thresholds(store: $store)
                 reminders(store: $store)
@@ -331,7 +330,7 @@ nonisolated struct RosaDataExport: Transferable {
 
 /// Choose demo data or a real hub. A real hub is the team's backend under `/hub` (port 8000) or the reference
 /// adapter (port 8500), reached over the local network or Tailscale; it has no login, so keep it off the internet.
-struct HubConnectionCard: View {
+private struct HubConnectionCard: View {
     @Environment(AppStore.self) private var store
     @State private var useDemo = AppConfig.useDemoData
     @State private var address = AppConfig.savedBaseURL

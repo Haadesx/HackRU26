@@ -19,14 +19,6 @@ enum AppConfig {
         set { UserDefaults.standard.set(newValue, forKey: demoKey) }
     }
 
-    private static let roleKey = "medcheck.role"
-
-    /// Who uses this phone. nil until they choose, the first time the app opens.
-    static var role: AppRole? {
-        get { UserDefaults.standard.string(forKey: roleKey).flatMap(AppRole.init(rawValue:)) }
-        set { UserDefaults.standard.set(newValue?.rawValue, forKey: roleKey) }
-    }
-
     /// Environment override, for scheme-based setups.
     static var environmentURL: URL? {
         ProcessInfo.processInfo.environment["MEDCHECK_API_URL"].flatMap { normalizedURL(from: $0) }

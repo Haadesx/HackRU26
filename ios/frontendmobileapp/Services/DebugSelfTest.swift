@@ -338,60 +338,6 @@ enum DebugSelfTest {
         // What the real hub sends that the shared fixtures don't show.
         check("real hub shapes decode and map", DebugContractTest.runRealHubShapes() == 0)
 
-        // The caregiver's live feed: the first look is only a baseline, then each new fact is announced once.
-        do {
-            let med = Medication(id: 1, name: "Metformin", strength: "500 mg", doseAmount: 1, dosesPerDay: 1,
-                                 scheduleTimes: ["08:00"], quantityStart: 30, pillsLeft: 30)
-            let day = MockHub.date(2026, 10, 11, 7, 0)
-            var watcher = ActivityWatcher()
-            func look(_ at: Date, doses: [DoseRecord] = [], skips: [SkipRecord] = [], alerts: [Alert] = [],
-                      events: [SafetyEvent] = []) -> [ActivityNotice] {
-                watcher.notices(patient: "Ada", medications: [med], doses: doses, skips: skips, reminders: [],
-                                alerts: alerts, events: events, now: at)
-            }
-            check("feed: the first look announces nothing", look(day).isEmpty)
-            let taken = DoseRecord(id: 7, medicationId: 1, slot: "08:00", takenAt: MockHub.date(2026, 10, 11, 8, 5), method: "voice")
-            let tookIt = look(MockHub.date(2026, 10, 11, 8, 6), doses: [taken])
-            check("feed: a dose taken by voice", tookIt.map(\.title) == ["Ada took Metformin"]
-                  && tookIt.first?.message == "8:05 AM, by voice.", "\(tookIt)")
-            check("feed: the same dose is not announced twice", look(MockHub.date(2026, 10, 11, 8, 7), doses: [taken]).isEmpty)
-            let skipped = look(MockHub.date(2026, 10, 11, 8, 8), doses: [taken],
-                               skips: [SkipRecord(medicationId: 1, slot: "20:00", at: MockHub.date(2026, 10, 11, 8, 8))])
-            check("feed: a skipped dose", skipped.map(\.kind) == [.skipped] && skipped.first?.title == "Ada skipped Metformin")
-            let supply = Alert(id: 3, medicationId: 1, type: "low_3", message: "Ada has about 2 days of Metformin left.",
-                               sentAt: MockHub.date(2026, 10, 11, 8, 9))
-            let low = look(MockHub.date(2026, 10, 11, 8, 10), doses: [taken], alerts: [supply])
-            check("feed: pills running low", low.map(\.kind) == [.supply] && low.first?.title == "Refill now"
-                  && low.first?.tone == .urgent)
-            let wrong = SafetyEvent(id: 4, type: "wrong_bottle", message: "Ada picked up X when Y was due.",
-                                    occurredAt: MockHub.date(2026, 10, 11, 8, 11))
-            let missed = SafetyEvent(id: 5, type: "missed", message: "Ada hasn't taken the 20:00 dose of Metformin 500 mg.",
-                                     occurredAt: MockHub.date(2026, 10, 11, 8, 12))
-            let hubSkip = SafetyEvent(id: 6, type: "skipped", message: "Ada skipped the 20:00 dose.", occurredAt: MockHub.date(2026, 10, 11, 8, 12))
-            let events = look(MockHub.date(2026, 10, 11, 8, 13), doses: [taken], alerts: [supply], events: [wrong, missed, hubSkip])
-            check("feed: wrong bottle and missed, but the hub's skipped event is the same news as the skip",
-                  Set(events.map(\.kind)) == [.mistake, .missed] && events.count == 2, "\(events.map(\.title))")
-        }
-        do {
-            // A dose still untaken half an hour after its time is announced once, before the hub calls it missed.
-            let med = Medication(id: 2, name: "Lisinopril", strength: "10 mg", doseAmount: 1, dosesPerDay: 1,
-                                 scheduleTimes: ["08:00"], quantityStart: 30, pillsLeft: 30)
-            var watcher = ActivityWatcher()
-            func look(_ at: Date) -> [ActivityNotice] {
-                watcher.notices(patient: "Ada", medications: [med], doses: [], skips: [], reminders: [], alerts: [], events: [], now: at)
-            }
-            _ = look(MockHub.date(2026, 10, 11, 7, 0))
-            check("feed: 10 minutes late is not yet news", look(MockHub.date(2026, 10, 11, 8, 10)).isEmpty)
-            let late = look(MockHub.date(2026, 10, 11, 8, 31))
-            check("feed: 30 minutes late is announced", late.map(\.kind) == [.late]
-                  && late.first?.title == "Ada hasn't taken Lisinopril yet", "\(late)")
-            check("feed: and only once", look(MockHub.date(2026, 10, 11, 9, 5)).isEmpty)
-            watcher.reset()
-            check("feed: after a reset the next look is a baseline again", look(MockHub.date(2026, 10, 11, 9, 6)).isEmpty)
-        }
-        check("roles: patient and caregiver", AppRole.allCases == [.patient, .caregiver]
-              && AppRole(rawValue: "caregiver") == .caregiver && AppRole(rawValue: "nonsense") == nil)
-
         // A name the hub knows, a name the web shows.
         check("patient names default to Rosa and Elena", store.patientName == "Rosa" && store.caregiverName == "Elena")
 
