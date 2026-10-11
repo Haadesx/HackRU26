@@ -15,8 +15,9 @@ On a physical iPhone: choose your own Team and, if needed, a unique bundle ID in
 enable Developer Mode on the phone; Run; then trust the developer profile under Settings, General,
 VPN & Device Management. The Team ID and bundle ID committed in the project are Aparajita's.
 
-To use a real hub set `MEDCHECK_API_URL` in the scheme (see the handoff, sections E and J, before relying
-on this: the client does not yet match the shared contract).
+To use a real hub set `MEDCHECK_API_URL` in the scheme to the hub's base URL: `http://<host>:8000/hub`
+(backend `/hub`) or `http://<host>:8500` (`tools/hub_adapter`). The client speaks the shared contract in
+`frontend/docs/api-contract.md`; see the handoff, sections E, H and I.
 
 ## Debug builds only
 
@@ -38,6 +39,11 @@ xcrun simctl launch booted <bundle id> \
 
 - `-medcheck.selfTest 1` runs 40 checks of the store and demo hub and prints `SELFTEST PASS/FAIL` lines
   (read them with `xcrun simctl launch --console-pty`).
+- `-medcheck.fixtures <path to frontend/docs/fixtures>` decodes the shared contract fixtures through the
+  real mapper (`CONTRACT PASS/FAIL`).
+- `-medcheck.liveTest 1` with `SIMCTL_CHILD_MEDCHECK_API_URL=http://127.0.0.1:8500` drives the live client
+  against a running hub (start the reference one with `HUB_MODE=demo python -m uvicorn
+  tools.hub_adapter.app:app --port 8500` from a checkout that has `tools/hub_adapter`).
 
 ## Layout
 

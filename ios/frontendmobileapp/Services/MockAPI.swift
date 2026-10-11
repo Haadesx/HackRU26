@@ -3,6 +3,7 @@ import Foundation
 /// Demo hub: same contract as `LiveAPI`, answered from `MockHub` with a little latency.
 final class MockAPI: MedCheckAPI {
     let isDemo = true
+    let supportsRescan = true
 
     /// Set from the debug section in Settings to exercise the offline and error states.
     var simulateOffline = false
@@ -36,7 +37,7 @@ final class MockAPI: MedCheckAPI {
 
     func medication(id: Int) async throws -> MedicationDetail {
         try await gate()
-        guard let med = hub.medications.first(where: { $0.id == id }) else { throw APIError.http(404) }
+        guard let med = hub.medications.first(where: { $0.id == id }) else { throw APIError.notFound }
         let week = hub.weekText(for: id)
         return MedicationDetail(medication: med, labelFields: hub.labels[id] ?? [],
                                 weekTaken: week.taken, weekDue: week.due)
@@ -59,7 +60,7 @@ final class MockAPI: MedCheckAPI {
 
     func correctCount(medicationID: Int, count: Int) async throws {
         try await gate()
-        guard let index = hub.medications.firstIndex(where: { $0.id == medicationID }) else { throw APIError.http(404) }
+        guard let index = hub.medications.firstIndex(where: { $0.id == medicationID }) else { throw APIError.notFound }
         hub.medications[index].pillsLeft = Double(max(0, count))
     }
 
@@ -68,13 +69,14 @@ final class MockAPI: MedCheckAPI {
         hub.markRefillPickedUp(medicationID: medicationID)
     }
 
-    func remindRosa(medicationID _: Int) async throws {
+    func remindRosa(medicationID: Int, slot: String) async throws {
         try await gate()
+        hub.remind(medicationID: medicationID, slot: slot)
     }
 
     func updateMedication(_ medication: Medication) async throws {
         try await gate()
-        guard let index = hub.medications.firstIndex(where: { $0.id == medication.id }) else { throw APIError.http(404) }
+        guard let index = hub.medications.firstIndex(where: { $0.id == medication.id }) else { throw APIError.notFound }
         hub.medications[index] = medication
     }
 
@@ -94,13 +96,13 @@ final class MockAPI: MedCheckAPI {
 
     func addPhoto(scanID: Int, photo _: Data) async throws -> Scan {
         try await gate()
-        guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.http(404) }
+        guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.notFound }
         return scan
     }
 
     func scan(id: Int) async throws -> Scan {
         try await gate()
-        guard let scan = hub.scans.first(where: { $0.id == id }) else { throw APIError.http(404) }
+        guard let scan = hub.scans.first(where: { $0.id == id }) else { throw APIError.notFound }
         return scan
     }
 
@@ -136,9 +138,9 @@ final class MockAPI: MedCheckAPI {
         return settings
     }
 
-    func pauseCamera() async throws {
+    func setCameraPaused(_ paused: Bool) async throws {
         try await gate()
-        hub.cameraPaused = true
+        hub.settings.cameraPaused = paused
     }
 
     func exportData() async throws -> Data {

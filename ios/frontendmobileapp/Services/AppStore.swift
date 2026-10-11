@@ -46,7 +46,6 @@ final class AppStore {
     var toast: Toast?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     var scanSession = ScanSession()
-    var cameraPaused = false
 
     init(api: any MedCheckAPI = AppConfig.makeAPI()) {
         self.api = api
@@ -55,6 +54,9 @@ final class AppStore {
     // MARK: Connection
 
     var isDemo: Bool { api.isDemo }
+
+    /// Hides "Ask Rosa to scan again" on hubs that have no such endpoint (the shared contract has none).
+    var supportsRescan: Bool { api.supportsRescan }
 
     /// Debug only: point the app at a real hub, or back to demo data.
     func configureHub(useDemo: Bool, baseURL: String) async {
@@ -179,7 +181,7 @@ final class AppStore {
     /// Scans Rosa handed over for the caregiver to finish. The scan the caregiver is working on
     /// from the Scan tab is theirs already, so it doesn't show up as "Needs your help".
     var scansNeedingHelp: [Scan] {
-        pendingScans.filter { $0.status != .complete && $0.id != scanSession.scan?.id }
+        pendingScans.filter { $0.status == .needsCaregiver && $0.id != scanSession.scan?.id }
     }
 
     // MARK: Derived dose data
@@ -265,9 +267,12 @@ final class AppStore {
     func remindRosa(_ slot: DoseSlot) async {
         let name = label(for: slot).name
         let ok = await perform(failure: "Couldn't send the reminder. The hub didn't respond.") {
-            try await api.remindRosa(medicationID: slot.medicationId)
+            try await api.remindRosa(medicationID: slot.medicationId, slot: Fmt.slotKey(slot.scheduledAt))
         }
-        if ok { showToast("Rosa will hear a reminder for \(name).") }
+        if ok {
+            showToast("Rosa will hear a reminder for \(name).")
+            await refresh()
+        }
     }
 
     func updateMedication(_ med: Medication) async -> Bool {
@@ -324,10 +329,11 @@ final class AppStore {
         }
     }
 
-    func loadScan(id: Int) async -> Scan? {
+    /// The scan for Verify: the one in progress, one the hub handed over, or fetched by id.
+    func loadScan(id: Int) async throws -> Scan {
         if let local = scanSession.scan, local.id == id { return local }
         if let pending = pendingScans.first(where: { $0.id == id }) { return pending }
-        return try? await api.scan(id: id)
+        return try await api.scan(id: id)
     }
 
     func requestRescan(_ scan: Scan) async {
@@ -408,13 +414,15 @@ final class AppStore {
 
     // MARK: Privacy
 
-    func pauseCamera() async {
-        let ok = await perform(failure: "Couldn't pause the camera. The hub didn't respond.") {
-            try await api.pauseCamera()
+    /// Pause or resume the hub's camera. The hub stores this in settings (`camera_paused`).
+    func setCameraPaused(_ paused: Bool) async {
+        let ok = await perform(failure: "Couldn't change the camera. The hub didn't respond.") {
+            try await api.setCameraPaused(paused)
         }
         if ok {
-            cameraPaused = true
-            showToast("The camera is paused.")
+            settings.cameraPaused = paused
+            await loadSettings()
+            showToast(paused ? "The camera is paused." : "The camera is on again.")
         }
     }
 
@@ -448,9 +456,9 @@ final class AppStore {
             try await api.resetDemo()
         }
         if ok {
-            cameraPaused = false
             scanSession = ScanSession()
             await refresh()
+            await loadSettings()
         }
     }
 }

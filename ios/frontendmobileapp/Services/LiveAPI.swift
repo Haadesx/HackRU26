@@ -1,12 +1,19 @@
 import Foundation
 
-/// Talks to the FastAPI hub over HTTP. The base URL is the hub's address on the local network.
+/// Talks to the hub over HTTP using the shared contract in `frontend/docs/api-contract.md`: the same
+/// endpoints, bodies and `{ "detail": ... }` errors the web app uses. Point it at `/hub` on the backend
+/// (port 8000) or at the reference `tools/hub_adapter` (port 8500).
 final class LiveAPI: MedCheckAPI {
     let isDemo = false
+    let supportsRescan = false
+
     private let baseURL: URL
     private let session: URLSession
     private let decoder = APICoding.makeDecoder()
     private let encoder = APICoding.makeEncoder()
+
+    /// Most recent `GET /state` (or the State a write returned), so derived reads need no extra request.
+    private var cached: (state: HubContract.StateDTO, fetchedAt: Date)?
 
     init(baseURL: URL, session: URLSession? = nil) {
         self.baseURL = baseURL
@@ -44,138 +51,221 @@ final class LiveAPI: MedCheckAPI {
             throw APIError.unreachable
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
-        guard (200..<300).contains(http.statusCode) else { throw APIError.http(http.statusCode) }
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.server(status: http.statusCode, message: Self.readableDetail(in: data, status: http.statusCode))
+        }
         return data
     }
 
-    private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        let data = try await request("GET", path, query: query)
-        return try decode(T.self, from: data)
+    /// FastAPI sends `{"detail": "..."}`; validation errors send `{"detail": [{"msg": "..."}]}`.
+    /// Same rule as the web client, so the caregiver sees the hub's own sentence.
+    static func readableDetail(in data: Data, status: Int) -> String {
+        struct Entry: Decodable { var msg: String? }
+        struct Payload: Decodable {
+            var detail: Detail?
+            var message: String?
+            enum Detail: Decodable {
+                case text(String)
+                case list([Entry])
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.singleValueContainer()
+                    if let text = try? c.decode(String.self) { self = .text(text) } else { self = .list((try? c.decode([Entry].self)) ?? []) }
+                }
+            }
+        }
+        if let payload = try? JSONDecoder().decode(Payload.self, from: data) {
+            switch payload.detail {
+            case .text(let text) where !text.isEmpty: return text
+            case .list(let entries):
+                let joined = entries.compactMap(\.msg).joined(separator: " ")
+                if !joined.isEmpty { return joined }
+            default: break
+            }
+            if let message = payload.message, !message.isEmpty { return message }
+        }
+        return "The MedCheck hub returned an error (\(status))."
     }
 
     private func decode<T: Decodable>(_: T.Type, from data: Data) throws -> T {
         do { return try decoder.decode(T.self, from: data) } catch { throw APIError.badResponse }
     }
 
-    private func json(_ value: some Encodable) throws -> Data {
-        try encoder.encode(value)
+    private func jsonBody(_ object: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object)
     }
 
-    private func multipart(photo: Data, boundary: String) -> Data {
+    /// Multipart with the contract's field name, `photo`.
+    private func upload(_ path: String, photo: Data) async throws -> Data {
+        let boundary = "medcheck-\(UUID().uuidString)"
         var body = Data()
         func add(_ string: String) { body.append(Data(string.utf8)) }
         add("--\(boundary)\r\n")
-        add("Content-Disposition: form-data; name=\"image\"; filename=\"label.jpg\"\r\n")
+        add("Content-Disposition: form-data; name=\"photo\"; filename=\"label.jpg\"\r\n")
         add("Content-Type: image/jpeg\r\n\r\n")
         body.append(photo)
         add("\r\n--\(boundary)--\r\n")
-        return body
+        return try await request("POST", path, body: body, contentType: "multipart/form-data; boundary=\(boundary)")
     }
 
-    private func upload(_ path: String, photo: Data) async throws -> Data {
-        let boundary = "medcheck-\(UUID().uuidString)"
-        return try await request("POST", path, body: multipart(photo: photo, boundary: boundary),
-                                 contentType: "multipart/form-data; boundary=\(boundary)")
+    // MARK: State
+
+    private func fetchState(maxAge: TimeInterval = 0) async throws -> HubContract.StateDTO {
+        if maxAge > 0, let cached, Date().timeIntervalSince(cached.fetchedAt) < maxAge { return cached.state }
+        let state = try decode(HubContract.StateDTO.self, from: try await request("GET", "state"))
+        cached = (state, Date())
+        return state
     }
 
-    /// `/doses` may answer with a bare array or `{ "doses": [...] }`.
-    private func decodeDoses(_ data: Data) throws -> [DoseSlot] {
-        if let list = try? decoder.decode([DoseSlot].self, from: data) { return list }
-        struct Wrapper: Decodable { var doses: [DoseSlot] }
-        return try decode(Wrapper.self, from: data).doses
+    /// Writes answer with the new State; keep it so the next derived read is current.
+    private func absorbState(_ data: Data) {
+        if let state = try? decoder.decode(HubContract.StateDTO.self, from: data) {
+            cached = (state, Date())
+        } else {
+            cached = nil
+        }
+    }
+
+    private func write(_ method: String, _ path: String, body: [String: Any]? = nil) async throws {
+        let payload = try body.map { try jsonBody($0) }
+        absorbState(try await request(method, path, body: payload))
+    }
+
+    private func currentSettings() async throws -> AppSettings {
+        guard let dto = try await fetchState().settings else { return .standard }
+        return HubContract.settings(dto)
+    }
+
+    private func requireMedication(_ id: Int, in state: HubContract.StateDTO) throws -> Medication {
+        guard let dto = state.medications.first(where: { $0.id.value == id }) else {
+            throw APIError.server(status: 404, message: "This medication is no longer tracked.")
+        }
+        return HubContract.medication(dto)
     }
 
     // MARK: Status
 
-    func health() async throws -> HubHealth { try await get("health") }
-    func state() async throws -> HubState { try await get("state") }
+    func health() async throws -> HubHealth {
+        try decode(HubHealth.self, from: try await request("GET", "health"))
+    }
+
+    func state() async throws -> HubState {
+        HubContract.hubState(try await fetchState())
+    }
 
     // MARK: Medications
 
     func medication(id: Int) async throws -> MedicationDetail {
-        try await get("medications/\(id)")
+        let state = try await fetchState(maxAge: 3)
+        let med = try requireMedication(id, in: state)
+        return HubContract.detail(for: med, doses: state.doses, now: state.now)
     }
 
     func doses(medicationID: Int) async throws -> [DoseSlot] {
-        let data = try await request("GET", "doses", query: [.init(name: "medication_id", value: String(medicationID))])
-        return try decodeDoses(data)
+        let state = try await fetchState(maxAge: 3)
+        let med = try requireMedication(medicationID, in: state)
+        return HubContract.recentSlots(for: med, doses: state.doses, now: state.now)
     }
 
     func doses(on date: Date) async throws -> [DoseSlot] {
-        let data = try await request("GET", "doses", query: [.init(name: "date", value: Fmt.dateKey(date))])
-        return try decodeDoses(data)
+        let state = try await fetchState(maxAge: 3)
+        return HubContract.daySlots(on: date, medications: state.medications.map(HubContract.medication),
+                                    doses: state.doses, now: state.now)
     }
 
     func logDose(medicationID: Int) async throws {
-        _ = try await request("POST", "medications/\(medicationID)/doses", body: Data("{}".utf8))
+        // No slot: the hub logs the next untaken slot today.
+        try await write("POST", "medications/\(medicationID)/doses", body: ["method": "dashboard"])
     }
 
     func correctCount(medicationID: Int, count: Int) async throws {
-        struct Body: Encodable { var count: Int }
-        _ = try await request("POST", "medications/\(medicationID)/counts", body: try json(Body(count: count)))
+        try await write("POST", "medications/\(medicationID)/counts", body: ["count": count])
     }
 
     func markRefillPickedUp(medicationID: Int) async throws {
-        _ = try await request("POST", "medications/\(medicationID)/refill", body: Data("{}".utf8))
+        try await write("POST", "medications/\(medicationID)/refill")
     }
 
-    func remindRosa(medicationID: Int) async throws {
-        _ = try await request("POST", "medications/\(medicationID)/remind", body: Data("{}".utf8))
+    func remindRosa(medicationID: Int, slot: String) async throws {
+        try await write("POST", "medications/\(medicationID)/remind", body: ["slot": slot])
     }
 
+    /// The hub saves only these five fields; it clears `confidence` for the ones that changed.
     func updateMedication(_ medication: Medication) async throws {
-        _ = try await request("PUT", "medications/\(medication.id)", body: try json(medication))
+        let body: [String: Any] = [
+            "instructions": medication.instructions ?? "",
+            "quantity_start": medication.quantityStart,
+            "refills_remaining": medication.refillsRemaining.map { $0 as Any } ?? NSNull(),
+            "prescriber": medication.prescriber ?? "",
+            "pharmacy_phone": medication.pharmacyPhone ?? "",
+        ]
+        try await write("PATCH", "medications/\(medication.id)", body: body)
     }
 
     func stopTracking(medicationID: Int) async throws {
-        _ = try await request("DELETE", "medications/\(medicationID)")
+        try await write("DELETE", "medications/\(medicationID)")
     }
 
     // MARK: Scans
 
     func startScan(photo: Data?) async throws -> Scan {
+        let data: Data
         if let photo {
-            return try decode(Scan.self, from: try await upload("scans", photo: photo))
+            data = try await upload("scans", photo: photo)
+        } else {
+            data = try await request("POST", "scans", body: try jsonBody(["manual": true]))
         }
-        struct Manual: Encodable { var manual = true }
-        return try decode(Scan.self, from: try await request("POST", "scans", body: try json(Manual())))
+        return HubContract.scan(try decode(HubContract.ScanDTO.self, from: data))
     }
 
     func addPhoto(scanID: Int, photo: Data) async throws -> Scan {
-        var scan = try decode(Scan.self, from: try await upload("scans/\(scanID)/photos", photo: photo))
-        if scan.id < 0 { scan.id = scanID }   // the response may carry only the fields found so far
-        return scan
+        let data = try await upload("scans/\(scanID)/photos", photo: photo)
+        return HubContract.scan(try decode(HubContract.ScanDTO.self, from: data))
     }
 
-    func scan(id: Int) async throws -> Scan { try await get("scans/\(id)") }
+    func scan(id: Int) async throws -> Scan {
+        HubContract.scan(try decode(HubContract.ScanDTO.self, from: try await request("GET", "scans/\(id)")))
+    }
 
-    func requestRescan(scanID: Int) async throws {
-        _ = try await request("POST", "scans/\(scanID)/rescan", body: Data("{}".utf8))
+    func requestRescan(scanID _: Int) async throws {
+        throw APIError.unsupported
     }
 
     func discardScan(id: Int) async throws {
-        _ = try await request("DELETE", "scans/\(id)")
+        try await write("DELETE", "scans/\(id)")
     }
 
+    /// Body is the nine fields as typed, all strings. The hub converts them and answers `{ "medication": ... }`;
+    /// 409 means it was already added and 422 carries a readable `detail`.
     func completeScan(id: Int, fields: [ScanField]) async throws {
-        _ = try await request("POST", "scans/\(id)/complete", body: try json(CompleteScanRequest(fields: fields)))
+        var body: [String: Any] = [:]
+        for key in ScanKey.form {
+            body[key] = fields.first { $0.key == key }?.value ?? ""
+        }
+        _ = try await request("POST", "scans/\(id)/complete", body: try jsonBody(body))
+        cached = nil
     }
 
     // MARK: History, settings, privacy
 
     func adherence(month: String) async throws -> AdherenceMonth {
-        try await get("adherence", query: [.init(name: "month", value: month)])
+        let data = try await request("GET", "adherence", query: [.init(name: "month", value: month)])
+        return HubContract.adherence(try decode(HubContract.AdherenceDTO.self, from: data))
     }
 
-    func settings() async throws -> AppSettings { try await get("settings") }
+    func settings() async throws -> AppSettings {
+        try await currentSettings()
+    }
 
     func updateSettings(_ settings: AppSettings) async throws -> AppSettings {
-        let data = try await request("PUT", "settings", body: try json(settings))
-        return (try? decoder.decode(AppSettings.self, from: data)) ?? settings
+        let body = try encoder.encode(HubContract.settingsDTO(settings))
+        absorbState(try await request("PUT", "settings", body: body))
+        return try await currentSettings()
     }
 
-    func pauseCamera() async throws {
-        _ = try await request("POST", "camera/pause", body: Data("{}".utf8))
+    func setCameraPaused(_ paused: Bool) async throws {
+        var settings = try await currentSettings()
+        settings.cameraPaused = paused
+        _ = try await updateSettings(settings)
     }
 
     func exportData() async throws -> Data {
@@ -183,17 +273,16 @@ final class LiveAPI: MedCheckAPI {
     }
 
     func deleteAllData() async throws {
-        _ = try await request("DELETE", "data")
+        try await write("DELETE", "data")
     }
 
     // MARK: Demo
 
     func advanceDemo(days: Int) async throws {
-        struct Body: Encodable { var days: Int }
-        _ = try await request("POST", "demo/advance", body: try json(Body(days: days)))
+        try await write("POST", "demo/advance", body: ["days": days])
     }
 
     func resetDemo() async throws {
-        _ = try await request("POST", "demo/reset", body: Data("{}".utf8))
+        try await write("POST", "demo/reset")
     }
 }

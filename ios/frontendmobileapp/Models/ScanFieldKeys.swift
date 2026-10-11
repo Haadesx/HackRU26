@@ -1,45 +1,43 @@
 import Foundation
 
-/// Keys of the fields a label scan produces, and where each one appears in the UI.
+/// The nine scan fields of the hub contract (`frontend/docs/api-contract.md`), keyed exactly as the hub
+/// sends and expects them. Every value is a string; a missing value is the empty string.
 enum ScanKey {
     static let name = "name"
     static let strength = "strength"
-    static let instructions = "instructions"
     static let doseAmount = "dose_amount"
-    static let doseTimes = "dose_times"
-    static let quantity = "quantity"
-    static let refills = "refills"
-    static let pharmacy = "pharmacy"
+    static let scheduleTimes = "schedule_times"
+    static let quantityStart = "quantity_start"
+    static let refillsRemaining = "refills_remaining"
+    static let pharmacyName = "pharmacy_name"
     static let pharmacyPhone = "pharmacy_phone"
     static let prescriber = "prescriber"
+
+    /// Fields in display order. The same list drives "Found so far" and the Verify form.
+    static let form = [name, strength, doseAmount, scheduleTimes, quantityStart, refillsRemaining,
+                       pharmacyName, pharmacyPhone, prescriber]
+
+    /// Preview stays disabled until each of these has a value (refills may be left blank).
+    static let required: Set<String> = [name, strength, doseAmount, scheduleTimes, quantityStart]
 
     static let labels: [String: String] = [
         name: "Medication name",
         strength: "Strength",
-        instructions: "Instructions",
         doseAmount: "Tablets per dose",
-        doseTimes: "Dose times",
-        quantity: "Tablets in bottle",
-        refills: "Refills left",
-        pharmacy: "Pharmacy",
+        scheduleTimes: "Dose times",
+        quantityStart: "Tablets in bottle",
+        refillsRemaining: "Refills left",
+        pharmacyName: "Pharmacy",
         pharmacyPhone: "Pharmacy phone",
         prescriber: "Prescriber",
     ]
 
-    /// Rows of "Found so far" on the Scan screen, in order.
-    static let foundSoFar = [name, strength, instructions, pharmacy, prescriber, quantity, refills]
-
-    /// Fields of the Verify form, in order.
-    static let form = [name, strength, doseAmount, doseTimes, quantity, refills, pharmacy, pharmacyPhone, prescriber]
-
-    /// Preview stays disabled until each of these has a value.
-    static let required: Set<String> = [name, strength, doseAmount, doseTimes, quantity, refills]
-
-    /// Short label used in "Found so far" (the form uses the longer `labels`).
-    static let foundLabels: [String: String] = [
-        name: "Name", strength: "Strength", instructions: "Instructions", pharmacy: "Pharmacy",
-        prescriber: "Prescriber", quantity: "Tablets in bottle", refills: "Refills left",
-    ]
+    /// Short labels for the "Found so far" card.
+    static var foundLabels: [String: String] {
+        var short = labels
+        short[name] = "Name"
+        return short
+    }
 }
 
 extension ScanField {

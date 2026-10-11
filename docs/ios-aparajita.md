@@ -1,16 +1,16 @@
 # iOS app handoff — Aparajita
 
 > Single handoff file for the iOS component. Branch: `feat/ios-aparajita`. Code lives in [`ios/`](../ios/).
-> Last updated: 2026-10-11. Status vocabulary: **verified** (I ran it and saw the result),
+> Last updated: 2026-10-11 (second milestone: client conformed to the shared hub contract). Status vocabulary: **verified** (I ran it and saw the result),
 > **unverified** (written but not run/observed), **not built**.
 
 ## Current state in one paragraph
 
 A native SwiftUI iPhone/iPad app that mirrors the caregiver web UI (Home, medication sheet, Scan → Verify →
-Preview → Added, History, Settings). It **builds and runs on a real iPhone 15 (iOS 18.5) and in the
-simulator, using built-in demo data**. The network client (`LiveAPI`) has **never been run against a real
-server**, and as written it **does not match the shared hub contract** (`frontend/docs/api-contract.md`),
-see section I. Conforming the client to that contract is the next task and is tracked in section J.
+Preview → Added, History, Settings). It builds and runs on a real iPhone 15 (iOS 18.5) and in the simulator,
+on built-in demo data by default. **The network client now speaks the shared hub contract**
+(`frontend/docs/api-contract.md`): it decodes every repo fixture and passed a 34-check live run against the
+reference `tools/hub_adapter` (not yet against Urvi's `/hub`, and not yet from a physical iPhone).
 
 ---
 
@@ -24,7 +24,7 @@ see section I. Conforming the client to that contract is the next task and is tr
 - **Responsibilities:** UI, local state, camera capture and upload, calling the hub. It does **not** read
   labels itself (inference is server-side) and does **not** own schedules, dose history or prescriptions
   (the backend does).
-- **State:** UI feature-complete against the design and demo data; client/contract conformance pending.
+- **State:** UI feature-complete against the design; client conforms to the shared hub contract (verified with fixtures and a live run against the reference adapter); not yet verified against `/hub` or from a phone.
 
 ## B. Implemented functionality
 
@@ -66,6 +66,12 @@ test targets.
   non-accessibility size; the History calendar becomes a list at accessibility sizes.
 - **Minimum iOS 18.0** (template said 27.0, which blocked iOS 18 phones). Code uses `Tab`, `ScrollPosition`
   and `onGeometryChange`, which need iOS 18.
+- **Contract translation lives in one place.** `Services/HubContract.swift` holds the wire DTOs and pure
+  mapping functions; `LiveAPI` only moves bytes. The hub has no per-medication, per-day or settings reads,
+  so, like the web app, the client derives today's slots, "reminder sent", recent doses, the weekly count and
+  the History insight from the single `GET /state`.
+- **Tolerant decoding.** Ids may be numbers or numeric strings, and one malformed list entry is skipped
+  instead of failing the whole state (the reference adapter really does return `"medication_id": "5"`).
 - **Greeting follows the clock** instead of the web's hard-coded "Good morning".
 - **iOS-only APIs are fenced** (`#if os(iOS)`) so the target still compiles for macOS.
 
@@ -92,59 +98,48 @@ It is served by **Urvi's `/hub`** (`HUB_ENABLED=true`, Flask, port 8000, base `h
 **Apollo's reference `tools/hub_adapter`** (FastAPI, port 8500). Both are unauthenticated demo surfaces and
 must not be exposed publicly. `/api/v1` (JWT) is a different model and is **not** used by this app.
 
-### E2. What the iOS client sends today (`Services/LiveAPI.swift`)
+### E2. What the iOS client sends (`Services/LiveAPI.swift`) — conforms to the contract
 
-All paths relative to the base URL (`MEDCHECK_API_URL`, or Debug-only Settings card). No auth header.
+Base URL = `MEDCHECK_API_URL` (or the Debug-only Settings card). No auth header. JSON keys are snake_case,
+times ISO 8601. Writes return the full State, which the client keeps for derived reads.
 
-| Method | Path | Body |
-|---|---|---|
-| GET | `/health` | |
-| GET | `/state` | |
-| GET | `/medications/{id}` | |
-| GET | `/doses?medication_id=` or `?date=` | |
-| POST | `/medications/{id}/doses` | `{}` |
-| POST | `/medications/{id}/counts` | `{"count": n}` |
-| POST | `/medications/{id}/refill` | `{}` |
-| POST | `/medications/{id}/remind` | `{}` |
-| PUT | `/medications/{id}` | full medication |
-| DELETE | `/medications/{id}` | |
-| POST | `/scans` | multipart field **`image`**, or `{"manual": true}` |
-| POST | `/scans/{id}/photos` | multipart field **`image`** |
-| GET | `/scans/{id}` | |
-| POST | `/scans/{id}/rescan` | `{}` |
-| DELETE | `/scans/{id}` | |
-| POST | `/scans/{id}/complete` | `{"fields":[{key,value,state}]}` |
-| GET | `/adherence?month=2026-10` | |
-| GET / PUT | `/settings` | settings |
-| POST | `/camera/pause`, GET `/export`, DELETE `/data` | |
-| POST | `/demo/advance` `{"days":n}`, `/demo/reset` | |
-
-Date handling accepts ISO 8601 with or without a time zone and with or without fractional seconds.
-Keys are decoded with `.convertFromSnakeCase`.
-
-### E3. Contract mismatches (client vs `frontend/docs/api-contract.md`) — **all unresolved as of this commit**
-
-| # | iOS client today | Hub contract | Effect if unchanged |
+| Method | Path | Body | Used for |
 |---|---|---|---|
-| 1 | `GET /state` decoded as `{medications, today[], pending_scans, alerts, events, now}` | `{now, patient, hub, medications, doses[], reminders[], alerts, events, scans[], settings}`. No `today` list: slots are derived from `schedule_times` + `doses` | Today's doses, needs-help card and settings come back empty |
-| 2 | Dose slot `{medication_id, scheduled_at, status, taken_at, method}` | Dose `{id, medication_id, slot "HH:MM", date, taken_at, method}`; a past slot with no dose is "missed" | Taken/missed wrong |
-| 3 | `GET /medications/{id}`, `GET /doses` | do not exist | 404; sheet loses label fields / recent doses |
-| 4 | Event time key `occurred_at` | `at` | Event decode fails |
-| 5 | Log dose body `{}` | `{"method":"dashboard","slot":"HH:MM"?}`; returns State | works only if server tolerates empty body |
-| 6 | Remind body `{}` | `{"slot":"HH:MM"}` | wrong/ignored |
-| 7 | Edit details `PUT /medications/{id}` full object | `PATCH` with only `instructions`, `quantity_start`, `refills_remaining`, `prescriber`, `pharmacy_phone` | 405/ignored; edit form also offers fields the hub cannot save |
-| 8 | Photo upload field `image` | `photo` | upload rejected |
-| 9 | Scan `fields` is an array; keys `dose_times`, `quantity`, `refills`, `pharmacy`, plus `instructions`; `photo_count`, `events` | `fields` is an object with exactly nine keys: `name, strength, dose_amount, schedule_times, quantity_start, refills_remaining, pharmacy_name, pharmacy_phone, prescriber`; values are strings; `photos`, `manual`, `created_at`, `history[{step,at,detail}]`. No `instructions` | scan screens show nothing |
-| 10 | `POST /scans/{id}/rescan` ("Ask Rosa to scan again") | not in contract | 404; **needs a team decision** (see J) |
-| 11 | Complete body `{"fields":[…]}` | flat object of strings with the nine contract keys; returns `{medication}`; 409 if already complete, 422 with readable `detail` | Add fails |
-| 12 | Adherence `?month=2026-10` → `{month, doses_due, doses_taken, days[{date,due,taken,missed}], missed_note, suggestion}` | `{year, month (0-based), due, taken, missed, days[{date,due,missed,future,missedList[{medication_id,name,slot}]}]}`; insight text is computed by the client | History empty |
-| 13 | `GET /settings`, snake fields `first_reminder_days…`, `remind_again` `30_minutes`… | settings only inside State: `thresholds{first,second,urgent}`, `alert_missed`, `alert_no_refills`, `alert_wrong_bottle`, `remind_again` `"30"|"60"|"never"`, `voice_language` `"English"…`, `camera_paused`, `caregivers[{id,name,phone,scope,you}]`; `PUT /settings` returns State | settings never load/save |
-| 14 | `POST /camera/pause` | `PUT /settings` with `camera_paused: true` | 404 |
-| 15 | Errors shown as a generic sentence | `{"detail": "..."}` is meant to be shown to the caregiver | less helpful messages |
+| GET | `/health` | | hub chip |
+| GET | `/state` | | everything (polled every 5 s on Home) |
+| POST | `/medications/{id}/doses` | `{"method":"dashboard"}` (no slot: next untaken slot) | Log a dose |
+| POST | `/medications/{id}/remind` | `{"slot":"08:00"}` | Remind Rosa |
+| POST | `/medications/{id}/counts` | `{"count":12}` | Correct pill count |
+| POST | `/medications/{id}/refill` | | Mark refill picked up |
+| PATCH | `/medications/{id}` | `instructions, quantity_start, refills_remaining (null for OTC), prescriber, pharmacy_phone` | Edit details |
+| DELETE | `/medications/{id}` | | Stop tracking |
+| POST | `/scans` | multipart field **`photo`** (JPEG), or `{"manual":true}` | first photo / manual entry |
+| POST | `/scans/{id}/photos` | multipart field `photo` | more photos |
+| GET | `/scans/{id}` | | Verify |
+| DELETE | `/scans/{id}` | | Discard |
+| POST | `/scans/{id}/complete` | the nine fields as strings | Add (once) |
+| GET | `/adherence?month=2026-10` | | History |
+| PUT | `/settings` | full Settings | autosave, camera pause/resume (`camera_paused`) |
+| GET | `/export`, DELETE `/data` | | privacy |
+| POST | `/demo/advance` `{"days":n}`, `/demo/reset` | | Debug demo bar |
 
-Endpoints that already match: `GET /health`, `POST …/counts`, `POST …/refill`, `DELETE /medications/{id}`,
-`DELETE /scans/{id}`, `GET /export`, `DELETE /data`, `POST /demo/advance`, `POST /demo/reset`,
-`POST /scans` with `{"manual": true}`, `POST /scans/{id}/photos` path.
+Errors: `{"detail": "..."}` or `{"detail":[{"msg":...}]}` is shown to the caregiver as written (409/422 on Add).
+
+### E3. Contract conformance status
+
+| Area | Status |
+|---|---|
+| State shape (`now, patient, hub, medications, doses, reminders, alerts, events, scans, settings`) | conforms, verified against `state.json` and live |
+| Derived: today's rows, reminded/late, recent doses, week count, label rows, History day breakdown | conforms to the web's logic, verified (fixtures + live) |
+| Scan: nine string fields keyed `name … prescriber`, `photos`, `manual`, `history[]` | conforms, verified against three scan fixtures and live manual scan |
+| Complete request/response, 409/422 handling | conforms; hub deviation noted in I |
+| Adherence: `year`, 0-based `month`, `due/taken/missed`, `days[].missedList` | conforms, verified (fixture + live) |
+| Settings: `thresholds`, `alert_*`, `remind_again "30"|"60"|"never"`, `voice_language`, `camera_paused`, `caregivers[].you` | conforms; round trip verified live |
+| Camera pause **and resume** via `PUT /settings` | conforms, verified live |
+| Edit details limited to the five PATCH fields | conforms |
+| "Ask Rosa to scan again" | **not in the contract or the web UI**: shown in demo mode only, hidden against a real hub (`MedCheckAPI.supportsRescan`) |
+| Dosage-form-aware labels ("Capsules in bottle" in `frontend/src/lib/dosageForm.js`) | **not mirrored**; iOS always says "tablets" |
+| Patient/caregiver names from `state.patient` | **not used**; "Rosa" and "Elena" are fixed design copy (the web hard-codes "Rosa" in places too) |
 
 ### E4. Inputs from / outputs to other components
 
@@ -190,8 +185,11 @@ Run from the `ios/` directory. "Verified" means I ran it and it succeeded.
 | Compile for device, unsigned | `… -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` | verified |
 | Signed build + install on iPhone | set your own Team in Signing & Capabilities, then Run (or `xcodebuild … -destination 'id=<udid>' -allowProvisioningUpdates`, `xcrun devicectl device install app`) | verified on an iPhone 15, iOS 18.5 |
 | Demo mode | nothing to do | verified |
-| Point at a hub | set `MEDCHECK_API_URL=http://<host>:8000/hub` in the scheme (or `:8500` for `hub_adapter`) | **unverified** (client does not match contract yet) |
-| In-app self-test (40 checks) | `xcrun simctl launch --console-pty booted <bundle id> -medcheck.selfTest 1` | verified, 40/40 against `MockAPI` |
+| Point at a hub | set `MEDCHECK_API_URL=http://<host>:8000/hub` in the scheme (`:8500` for `tools/hub_adapter`) | verified against `tools/hub_adapter` from the simulator; `/hub` and a phone **unverified** |
+| In-app demo self-test (40 checks) | `xcrun simctl launch --console-pty booted <bundle id> -medcheck.selfTest 1` | verified, 40/40 against `MockAPI` |
+| Contract fixtures (32 checks) | `… launch --console-pty booted <bundle id> -medcheck.fixtures <repo>/frontend/docs/fixtures` | verified |
+| Live hub (34 checks) | start the adapter (below), then `SIMCTL_CHILD_MEDCHECK_API_URL=http://127.0.0.1:8500 xcrun simctl launch --console-pty booted <bundle id> -medcheck.liveTest 1` | verified |
+| Reference hub for the live test | from a checkout with `tools/hub_adapter` (`feat/integration`): `uv venv --python 3.11 .venv-hub && uv pip install --python .venv-hub/bin/python fastapi "uvicorn[standard]" httpx python-multipart`, then `HUB_MODE=demo HUB_STATE_FILE=/tmp/hub/state.json HUB_SCANS_DIR=/tmp/hub/scans .venv-hub/bin/python -m uvicorn tools.hub_adapter.app:app --host 127.0.0.1 --port 8500` | verified |
 
 Environment: macOS with Xcode 27. Device: Developer Mode on, device trusted, a development Team selected
 (the Team ID and bundle ID committed in `project.pbxproj` are Aparajita's personal ones, not secrets, but
@@ -201,53 +199,59 @@ change them). Debug launch arguments are listed in `ios/README.md`.
 
 | Item | Result |
 |---|---|
-| Simulator build (iPhone 17, iOS 27 runtime) | passes, 0 warnings (2026-10-11) |
-| macOS build | passes |
-| Generic iOS device compile at min iOS 18.0 | passes |
-| Signed build installed and launched on iPhone 15 (`iPhone15,4`, iOS 18.5) | passes; Aparajita reported it "looks good" |
-| In-app self-test | 40/40 (statuses, headline copy, bottle pill counts, scan flow, refill and count maths, offline, demo clock, adherence numbers, settings round trip) |
-| Visual QA | iPhone 17, iPhone 17e, iPad Pro 11" simulators; AX XXL text; offline chip |
-| SonarCloud | 1 bug + 39 smells reported on the first push; all 40 fixed in `d5e922e` (new analysis not yet seen) |
+| Simulator build (iPhone 17, iOS 27 runtime), macOS build, generic iOS device compile (min 18.0), **Release configuration** | all pass, 0 warnings (2026-10-11) |
+| Signed build installed and launched on iPhone 15 (`iPhone15,4`, iOS 18.5) | passes (first milestone build); Aparajita reported it "looks good". The contract-conforming build has **not** been reinstalled on the phone yet |
+| In-app demo self-test (`-medcheck.selfTest 1`) | 40/40 against `MockAPI` |
+| Contract fixtures (`-medcheck.fixtures <frontend/docs/fixtures>`) | 32/32: `state`, `settings`, three scans, `scan-complete-*`, `adherence` decode and map; settings re-encode to contract keys |
+| Live hub (`-medcheck.liveTest 1`, `MEDCHECK_API_URL`) against `tools/hub_adapter` in demo mode, from the simulator | 34/34 pass, 0 failures, 2 hub-side notes (see I). Covers health, state, dose, remind, count, refill, PATCH, manual scan, GET scan, complete, adherence, settings PUT, camera pause/resume, export, demo advance/reset, photo field name |
+| Visual QA on live data | Home, medication sheet, Verify, Preview, History, Settings rendered from the adapter |
+| SonarCloud | 1 bug + 39 smells fixed in `d5e922e`; no new analysis seen yet |
 
-**Not tested:** real camera capture and the sharpness hint on a device; share sheets on a device; tel: call;
-Local Network prompt; **any request against a real hub, `/hub` or `hub_adapter`**; VoiceOver pass; Reduce
-Motion; Release configuration; iPad on hardware; no XCTest or UI tests exist.
+**Not tested:** Urvi's `/hub` (Flask, port 8000) and any real inference scan (the adapter returned 502 for a
+photo upload because inference was not running; the `photo` field name was accepted); real camera capture
+and sharpness hint on a device; share sheets, tel: and Local Network prompt on a device; VoiceOver; iPad
+hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
 
-**Known failures:** none in what is tested. Known *gaps* are in sections E3 and J.
+**Known failures:** none in what is tested.
 
 ## I. Integration-relevant issues
 
-1. **Contract mismatch (section E3).** The client was written from the iOS design handoff's endpoint table,
-   which differs from the shared hub contract. Needs conforming before any integration test.
-2. **No `rescan` endpoint** in the contract for "Ask Rosa to scan again". Proposal: hide the button until
-   the backend adds one, or map it to a reminder/ask event if Urvi defines one.
-3. **Edit details can only persist five fields** (`instructions`, `quantity_start`, `refills_remaining`,
-   `prescriber`, `pharmacy_phone`). The current form offers more.
-4. **`/hub` is unauthenticated** and bound to localhost in the documented commands. A phone needs it reachable
-   on the LAN or Tailscale. Either bind to a LAN address for the demo or add a token (would need Urvi's and
-   Sinchana's agreement).
+1. **`/hub` is unauthenticated** and documented for localhost. A phone needs it on the LAN or Tailscale. Either
+   bind it to a LAN address for the demo or add a token (needs Urvi's and Sinchana's agreement).
+2. **Observed hub behaviors (reference adapter, demo mode)** that differ from `api-contract.md`. The client
+   tolerates all of them; the owners may want to fix them:
+   - `POST /medications/{id}/doses` returns the new dose with `"medication_id": "5"` (a string, contract says
+     integer). In JS the web's strict `===` would also fail to match it.
+   - A logged dose does not reduce `pills_left` (the web mock does; the contract's walkthrough says "pill
+     count drops").
+   - `POST /scans/{id}/complete` called twice returns 200 (contract: 409).
+   - New doses carry the real wall-clock `taken_at` while `now` is the fixed fixture time, so the dose is not
+     "today" and the slot stays late.
+   - `adherence.json` fixture has 12 days; the doc says one entry per day of the month.
+3. **Time zones.** Dose `slot` ("08:00") is a wall-clock time, while fixture ISO timestamps are UTC. In a
+   non-UTC time zone the derived "Taken 4:14" can look shifted (same on web). The backend should send times
+   whose local reading matches the slot, or include the patient's time zone.
+4. **No `rescan` endpoint** for "Ask Rosa to scan again" (hidden against a real hub).
 5. **Default branch history was rewritten.** `feat/inference-medcheck` was force-updated from `2637b78`
    to `d03fada` (after 2026-10-11T03:57Z) at the repo owner's request, to drop a co-author trailer from the
    first iOS commit. Everything up to Apollo's `b0489fe` is unchanged. Anyone who fetched the old tip must
    `git fetch && git reset --hard origin/feat/inference-medcheck`. Closed PR #2 still points at the old commit.
-6. **Same code, two branch names.** `feat/frontend-ios` holds the same commits (`b78dee8`, `d5e922e`) that
-   this branch is built on. `feat/ios-aparajita` is the canonical branch from now on; the older one can be
-   ignored.
+6. **Same code, two branch names.** `feat/frontend-ios` holds the earlier commits (`b78dee8`, `d5e922e`) this
+   branch is built on. `feat/ios-aparajita` is canonical.
 7. **No overlap with other components:** this branch only adds `ios/` and `docs/ios-aparajita.md`.
 
 ## J. Outstanding work
 
 | # | Task | Status |
 |---|---|---|
-| 1 | Conform `LiveAPI` + models to the hub contract (E3 rows 1–15), keeping `MedCheckAPI` and screens unchanged where possible | **next, in progress** |
-| 2 | Decode every `frontend/docs/fixtures/*.json` in the self-test to prove the mapping | next |
-| 3 | Run the app against `/hub` or `hub_adapter` from the simulator, then from the iPhone | blocked on 1 |
-| 4 | Real-device camera test (preview, sharpness hint, torch, capture, upload) | not started |
-| 5 | Reduce "Edit details" to the five fields the hub can save | with 1 |
-| 6 | Decide "Ask Rosa to scan again" | needs team input |
-| 7 | App icon, VoiceOver pass, dark mode | before demo if time |
+| 1 | Run the live test against Urvi's `/hub` (`HUB_ENABLED=true`, port 8000) and fix any difference from the adapter | next |
+| 2 | Reinstall the contract-conforming build on the iPhone 15 and run it against a hub on the LAN | next (needs the hub bound to a LAN/Tailscale address) |
+| 3 | Real-device camera test: preview, sharpness hint, torch, capture, upload through the hub to inference | not started |
+| 4 | Dosage-form-aware labels, patient/caregiver names from `state.patient` | optional parity with web |
+| 5 | Decide "Ask Rosa to scan again" (needs a backend endpoint or removal from the design) | needs team input |
+| 6 | App icon, VoiceOver pass, dark mode | before demo if time |
 
-Before the demo: items 1–4 at minimum, plus the hub reachable from the phone's network.
+Before the demo: items 1–3, with the hub reachable from the phone's network.
 
 ## K. Development change log
 
@@ -261,10 +265,12 @@ Before the demo: items 1–4 at minimum, plus the hub reachable from the phone's
 | 2026-10-11 | Fix SonarCloud: 1 bug (`? 2 : 2`) and 39 smells; remove concurrency warnings | quality gate "Reliability rating" | `d5e922e` |
 | 2026-10-11 | Pushed to `feat/frontend-ios`; PR #2 merged into `feat/inference-medcheck` carrying the first commit | | `3783248` (superseded) |
 | 2026-10-11 | History of `feat/inference-medcheck` rewritten to remove a co-author trailer (see I.5) | owner request | `d03fada` |
-| 2026-10-11 | Created `feat/ios-aparajita`; added this handoff; read the shared hub contract and recorded the mismatches (E3) | team handoff process | see "Pushed SHAs" |
+| 2026-10-11 | Created `feat/ios-aparajita`; added this handoff; read the shared hub contract and recorded the mismatches | team handoff process | `b503d96`, `1f83520` |
+| 2026-10-11 | **Conformed the client to the shared hub contract**: new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
+| 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs
 
-- `feat/ios-aparajita` base (code unchanged from `feat/frontend-ios`): `d5e922e`.
-- Handoff commit `b503d96` (docs only): verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
-- A later docs-only commit that records this line carries a new SHA; `git log feat/ios-aparajita` is authoritative.
+- `feat/ios-aparajita`: `b503d96` (handoff), `1f83520` (records that SHA), both docs-only on top of `d5e922e`.
+- Contract-conformance milestone: recorded in the next docs-only commit after the push is verified on GitHub.
+- `git log feat/ios-aparajita` is authoritative.

@@ -21,7 +21,6 @@ struct MockHub {
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
     var settings = AppSettings.standard
-    var cameraPaused = false
 
     // MARK: Seed
 
@@ -31,7 +30,7 @@ struct MockHub {
             Medication(id: 1, name: "Atorvastatin", strength: "20 mg", doseAmount: 1, dosesPerDay: 1,
                        scheduleTimes: ["20:00"], quantityStart: 30, pillsLeft: 2, fillDate: "2026-09-19",
                        refillsRemaining: 0, pharmacyName: cvs.0, pharmacyPhone: cvs.1, prescriber: "Dr. Okafor",
-                       prescriberPhone: "(732) 555-0148", purpose: "cholesterol", instructions: "Take 1 tablet at bedtime"),
+                       prescriberPhone: "(732) 555-0148", purpose: "for cholesterol", instructions: "Take 1 tablet at bedtime"),
             Medication(id: 2, name: "Vitamin D3", strength: "1000 IU", doseAmount: 1, dosesPerDay: 1,
                        scheduleTimes: ["08:00"], quantityStart: 100, pillsLeft: 4, fillDate: "2026-07-06",
                        refillsRemaining: nil, pharmacyName: nil, pharmacyPhone: nil, prescriber: nil,
@@ -39,15 +38,15 @@ struct MockHub {
             Medication(id: 3, name: "Metformin", strength: "500 mg", doseAmount: 1, dosesPerDay: 2,
                        scheduleTimes: ["08:00", "20:00"], quantityStart: 60, pillsLeft: 22, fillDate: "2026-09-21",
                        refillsRemaining: 1, pharmacyName: cvs.0, pharmacyPhone: cvs.1, prescriber: "Dr. Patel",
-                       prescriberPhone: "(732) 555-0161", purpose: "diabetes", instructions: "Take 1 tablet twice daily with food"),
+                       prescriberPhone: "(732) 555-0161", purpose: "for diabetes", instructions: "Take 1 tablet twice daily with food"),
             Medication(id: 4, name: "Lisinopril", strength: "10 mg", doseAmount: 1, dosesPerDay: 1,
                        scheduleTimes: ["08:00"], quantityStart: 30, pillsLeft: 29, fillDate: "2026-10-09",
                        refillsRemaining: 2, pharmacyName: cvs.0, pharmacyPhone: cvs.1, prescriber: "Dr. Patel",
-                       prescriberPhone: "(732) 555-0161", purpose: "blood pressure", instructions: "Take 1 tablet daily"),
+                       prescriberPhone: "(732) 555-0161", purpose: "for blood pressure", instructions: "Take 1 tablet daily"),
             Medication(id: 5, name: "Amlodipine", strength: "5 mg", doseAmount: 1, dosesPerDay: 1,
                        scheduleTimes: ["08:00"], quantityStart: 90, pillsLeft: 64, fillDate: "2026-09-14",
                        refillsRemaining: 3, pharmacyName: cvs.0, pharmacyPhone: cvs.1, prescriber: "Dr. Patel",
-                       prescriberPhone: "(732) 555-0161", purpose: "blood pressure", instructions: "Take 1 tablet daily"),
+                       prescriberPhone: "(732) 555-0161", purpose: "for blood pressure", instructions: "Take 1 tablet daily"),
         ]
 
         func label(_ key: String, _ title: String, _ value: String, flagged: Bool = false) -> ScanField {
@@ -132,17 +131,18 @@ struct MockHub {
         return Scan(
             id: 1, status: .needsCaregiver,
             fields: [f(ScanKey.name, "Lisinopril"), f(ScanKey.strength, "10 mg"),
-                     f(ScanKey.instructions, "1 tablet daily"),
-                     f(ScanKey.doseAmount, "1"), f(ScanKey.doseTimes, "8:00 AM"),
-                     f(ScanKey.quantity, nil, .missing), f(ScanKey.refills, nil, .missing),
-                     f(ScanKey.pharmacy, "CVS Pharmacy"), f(ScanKey.pharmacyPhone, "(732) 555-0123"),
+                     f(ScanKey.doseAmount, "1"), f(ScanKey.scheduleTimes, "8:00 AM"),
+                     f(ScanKey.quantityStart, nil, .missing), f(ScanKey.refillsRemaining, nil, .missing),
+                     f(ScanKey.pharmacyName, "CVS Pharmacy"), f(ScanKey.pharmacyPhone, "(732) 555-0123"),
                      f(ScanKey.prescriber, "Dr. Pat?l", .unsure)],
             photoCount: 2, createdAt: date(2026, 10, 10, 14, 10),
             events: [
-                ScanEvent(kind: "scanned", at: date(2026, 10, 10, 14, 10), note: "Read 7 of 9 details."),
-                ScanEvent(kind: "asked", at: date(2026, 10, 10, 14, 11), note: "\u{201C}How many tablets came in this bottle?\u{201D}"),
-                ScanEvent(kind: "unsure", at: date(2026, 10, 10, 14, 13), note: "She said \u{201C}I don't know.\u{201D}"),
-                ScanEvent(kind: "sent", at: date(2026, 10, 10, 14, 14), note: "Waiting for you now."),
+                ScanEvent(step: "Scanned", at: date(2026, 10, 10, 14, 10), detail: "Read 7 of 9 details."),
+                ScanEvent(step: "Asked Rosa", at: date(2026, 10, 10, 14, 11),
+                          detail: "\u{201C}How many tablets came in this bottle?\u{201D}"),
+                ScanEvent(step: "Rosa wasn't sure", at: date(2026, 10, 10, 14, 13),
+                          detail: "She said \u{201C}I don't know.\u{201D}"),
+                ScanEvent(step: "Sent to you", at: date(2026, 10, 10, 14, 14), detail: "Waiting for you now."),
             ])
     }
 
@@ -195,7 +195,7 @@ struct MockHub {
         func rank(_ slot: DoseSlot) -> Int {
             switch slot.status {
             case .taken: 0
-            case .notTaken: 1
+            case .notTaken, .reminded: 1
             case .upcoming: 2
             }
         }
@@ -294,6 +294,15 @@ struct MockHub {
         medications[index].pillsLeft = max(0, med.pillsLeft - Double(med.doseAmount))
     }
 
+    /// "Remind Rosa": the wearable repeats the reminder for a late dose at `slot` ("08:00").
+    mutating func remind(medicationID: Int, slot: String) {
+        let index = slots.firstIndex {
+            $0.medicationId == medicationID && $0.status == .notTaken
+                && Self.cal.isDate($0.scheduledAt, inSameDayAs: now) && Fmt.slotKey($0.scheduledAt) == slot
+        }
+        if let index { slots[index].status = .reminded }
+    }
+
     mutating func markRefillPickedUp(medicationID: Int) {
         guard let index = medications.firstIndex(where: { $0.id == medicationID }) else { return }
         let bottle = medications[index].quantityStart > 0 ? medications[index].quantityStart : 30
@@ -331,21 +340,21 @@ struct MockHub {
         }
         switch scan.photoCount {
         case 1:
-            set(ScanKey.name, "Lisinopril"); set(ScanKey.strength, "10 mg"); set(ScanKey.instructions, "1 tablet daily")
-            set(ScanKey.doseAmount, "1"); set(ScanKey.doseTimes, "8:00 AM")
+            set(ScanKey.name, "Lisinopril"); set(ScanKey.strength, "10 mg")
+            set(ScanKey.doseAmount, "1"); set(ScanKey.scheduleTimes, "8:00 AM")
         case 2:
-            set(ScanKey.pharmacy, "CVS Pharmacy"); set(ScanKey.pharmacyPhone, "(732) 555-0123")
+            set(ScanKey.pharmacyName, "CVS Pharmacy"); set(ScanKey.pharmacyPhone, "(732) 555-0123")
             set(ScanKey.prescriber, "Dr. Pat?l", .unsure)
         case 3:
             break   // the back of the label has not been shown yet
         default:
-            set(ScanKey.quantity, "30"); set(ScanKey.refills, "2")
+            set(ScanKey.quantityStart, "30"); set(ScanKey.refillsRemaining, "2")
         }
         let read = scan.fields.filter { ScanKey.form.contains($0.key) && $0.state != .missing }.count
         scan.status = .needsCaregiver
         scan.events = [
-            ScanEvent(kind: "scanned", at: scan.createdAt ?? now, note: "Read \(read) of \(ScanKey.form.count) details."),
-            ScanEvent(kind: "sent", at: now, note: "Waiting for you now."),
+            ScanEvent(step: "Scanned", at: scan.createdAt ?? now, detail: "Read \(read) of \(ScanKey.form.count) details."),
+            ScanEvent(step: "Sent to you", at: now, detail: "Waiting for you now."),
         ]
     }
 
@@ -356,20 +365,20 @@ struct MockHub {
 
         let name = values[ScanKey.name] ?? "Medication"
         let amount = Int(values[ScanKey.doseAmount] ?? "") ?? 1
-        let times = (values[ScanKey.doseTimes] ?? "8:00 AM")
+        let times = (values[ScanKey.scheduleTimes] ?? "8:00 AM")
             .components(separatedBy: CharacterSet(charactersIn: ",&"))
             .flatMap { $0.components(separatedBy: " and ") }
             .compactMap { Fmt.parseClock($0) }
             .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
-        let quantity = Int(values[ScanKey.quantity] ?? "") ?? 30
-        let refills = Int(values[ScanKey.refills] ?? "")
+        let quantity = Int(values[ScanKey.quantityStart] ?? "") ?? 30
+        let refills = Int(values[ScanKey.refillsRemaining] ?? "")
 
         if let existing = medications.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
             medications[existing].strength = values[ScanKey.strength] ?? medications[existing].strength
             medications[existing].doseAmount = amount
             medications[existing].quantityStart = quantity
             medications[existing].refillsRemaining = refills
-            medications[existing].pharmacyName = values[ScanKey.pharmacy] ?? medications[existing].pharmacyName
+            medications[existing].pharmacyName = values[ScanKey.pharmacyName] ?? medications[existing].pharmacyName
             medications[existing].pharmacyPhone = values[ScanKey.pharmacyPhone] ?? medications[existing].pharmacyPhone
             medications[existing].prescriber = values[ScanKey.prescriber] ?? medications[existing].prescriber
         } else {
@@ -377,9 +386,10 @@ struct MockHub {
                 id: newID(), name: name, strength: values[ScanKey.strength] ?? "", doseAmount: amount,
                 dosesPerDay: max(times.count, 1), scheduleTimes: times.isEmpty ? ["08:00"] : times,
                 quantityStart: quantity, pillsLeft: Double(quantity), fillDate: Fmt.dateKey(now),
-                refillsRemaining: refills, pharmacyName: values[ScanKey.pharmacy],
+                refillsRemaining: refills, pharmacyName: values[ScanKey.pharmacyName],
                 pharmacyPhone: values[ScanKey.pharmacyPhone], prescriber: values[ScanKey.prescriber],
-                prescriberPhone: nil, purpose: nil, instructions: values[ScanKey.instructions])
+                prescriberPhone: nil, purpose: nil,
+                instructions: "Take \(amount) tablet\(amount == 1 ? "" : "s")\(times.count > 1 ? " \(times.count) times daily" : " daily")")
             medications.append(med)
             let today = Self.cal.startOfDay(for: now)
             for time in med.scheduleTimes {

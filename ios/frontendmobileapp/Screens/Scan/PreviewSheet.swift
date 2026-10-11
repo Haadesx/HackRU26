@@ -105,13 +105,13 @@ struct PreviewSheet: View {
     }
 
     private var rows: some View {
-        let pharmacy = [draft.value(ScanKey.pharmacy), draft.value(ScanKey.pharmacyPhone)]
+        let pharmacy = [draft.value(ScanKey.pharmacyName), draft.value(ScanKey.pharmacyPhone)]
             .filter { !$0.isEmpty }.joined(separator: ", ")
         let supply = draft.lastsUntil(from: store.now).map { "Lasts until about \(Fmt.monthDay($0))" } ?? "Not known yet"
 
         return VStack(spacing: 0) {
-            row("Tablets in bottle", draft.value(ScanKey.quantity), badge: draft.editBadge(for: ScanKey.quantity))
-            row("Refills left", draft.value(ScanKey.refills), badge: draft.editBadge(for: ScanKey.refills))
+            row("Tablets in bottle", draft.value(ScanKey.quantityStart), badge: draft.editBadge(for: ScanKey.quantityStart))
+            row("Refills left", draft.value(ScanKey.refillsRemaining), badge: draft.editBadge(for: ScanKey.refillsRemaining))
             row("Prescriber", draft.value(ScanKey.prescriber).isEmpty ? "None" : draft.value(ScanKey.prescriber),
                 badge: draft.editBadge(for: ScanKey.prescriber))
             row("Pharmacy", pharmacy.isEmpty ? "None" : pharmacy, badge: nil)
@@ -172,7 +172,11 @@ struct PreviewSheet: View {
                 lastsUntil: draft.lastsUntil(from: store.now),
                 firstReminder: draft.firstReminder(after: store.now)))
         } catch {
-            errorMessage = "The MedCheck hub didn't respond. Your details are kept, so try again."
+            if case APIError.server(_, let message) = error {
+                errorMessage = "\(message) Your details are kept."
+            } else {
+                errorMessage = "The MedCheck hub didn't respond. Your details are kept, so try again."
+            }
         }
     }
 }

@@ -1,6 +1,11 @@
 import Foundation
 
 /// Date and copy helpers. Everything is en_US so the demo reads the same on any device.
+extension String {
+    /// Capitalizes only the first letter, unlike `capitalized`, which lowercases the rest.
+    var capitalizingFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
 enum Fmt {
     static let calendar: Calendar = {
         var c = Calendar(identifier: .gregorian)
@@ -112,6 +117,12 @@ enum Fmt {
         return "evening"
     }
 
+    /// "08:00" for a date, the hub's slot format.
+    static func slotKey(_ date: Date) -> String {
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
     /// Plain-language schedule: "1 tablet every morning at 8:00 AM, for blood pressure".
     static func scheduleSentence(amount: Int, times: [String], purpose: String?) -> String {
         let unit = amount == 1 ? "1 tablet" : "\(amount) tablets"
@@ -128,7 +139,7 @@ enum Fmt {
         default:
             core = "\(unit) \(labels.count) times a day"
         }
-        if let purpose, !purpose.isEmpty { core += ", for \(purpose)" }
+        if let purpose, !purpose.isEmpty { core += ", \(purpose)" }
         return core
     }
 }

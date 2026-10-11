@@ -465,28 +465,23 @@ struct PillCountForm: View {
 
 // MARK: - Edit details
 
-/// Edits what MedCheck stores for a medication. Saved through `PUT /medications/{id}` (assumed endpoint).
+/// Edits the five label details the hub can save (`PATCH /medications/{id}`): instructions, tablets in the
+/// bottle, refills left, prescriber and pharmacy phone. The hub clears "hard to read" on what changes.
 struct MedicationEditForm: View {
     let medication: Medication
     let onSave: (Medication) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var strength = ""
-    @State private var amount = ""
-    @State private var times = ""
-    @State private var pharmacy = ""
-    @State private var pharmacyPhone = ""
+    @State private var instructions = ""
+    @State private var quantity = ""
+    @State private var refills = ""
     @State private var prescriber = ""
-
-    private var parsedTimes: [String] {
-        times.components(separatedBy: CharacterSet(charactersIn: ",&"))
-            .compactMap { Fmt.parseClock($0) }
-            .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
-    }
+    @State private var pharmacyPhone = ""
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && Int(amount) != nil && !parsedTimes.isEmpty
+        guard let count = Int(quantity.trimmingCharacters(in: .whitespaces)), count >= 0 else { return false }
+        let trimmed = refills.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty || Int(trimmed) != nil
     }
 
     var body: some View {
@@ -497,19 +492,18 @@ struct MedicationEditForm: View {
                     .foregroundStyle(MC.ink)
                     .accessibilityAddTraits(.isHeader)
 
-                CapsuleTextField(title: "Medication name", text: $name)
-                CapsuleTextField(title: "Strength", text: $strength)
-                CapsuleTextField(title: "Tablets per dose", text: $amount).numericKeyboard()
-                CapsuleTextField(title: "Dose times", text: $times, placeholder: "8:00 AM, 8:00 PM",
-                                 hint: "Separate times with a comma.")
-                CapsuleTextField(title: "Pharmacy", text: $pharmacy)
-                CapsuleTextField(title: "Pharmacy phone", text: $pharmacyPhone).phoneKeyboard()
+                CapsuleTextField(title: "Instructions", text: $instructions)
+                CapsuleTextField(title: "Tablets in bottle", text: $quantity).numericKeyboard()
+                CapsuleTextField(title: "Refills left", text: $refills,
+                                 hint: medication.isOverTheCounter ? "Leave blank for over the counter." : nil)
+                    .numericKeyboard()
                 CapsuleTextField(title: "Prescriber", text: $prescriber)
+                CapsuleTextField(title: "Pharmacy phone", text: $pharmacyPhone).phoneKeyboard()
 
                 HStack(spacing: 10) {
                     Spacer()
                     Button("Cancel") { dismiss() }.buttonStyle(.capsule(.secondary))
-                    Button("Save") { save() }
+                    Button("Save details") { save() }
                         .buttonStyle(.capsule(.primary))
                         .disabled(!canSave)
                 }
@@ -522,26 +516,22 @@ struct MedicationEditForm: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear {
-            name = medication.name
-            strength = medication.strength
-            amount = String(medication.doseAmount)
-            times = medication.scheduleTimes.map { Fmt.clockLabel($0) }.joined(separator: ", ")
-            pharmacy = medication.pharmacyName ?? ""
-            pharmacyPhone = medication.pharmacyPhone ?? ""
+            instructions = medication.instructions ?? ""
+            quantity = String(medication.quantityStart)
+            refills = medication.refillsRemaining.map(String.init) ?? ""
             prescriber = medication.prescriber ?? ""
+            pharmacyPhone = medication.pharmacyPhone ?? ""
         }
     }
 
     private func save() {
         var updated = medication
-        updated.name = name.trimmingCharacters(in: .whitespaces)
-        updated.strength = strength.trimmingCharacters(in: .whitespaces)
-        updated.doseAmount = Int(amount) ?? medication.doseAmount
-        updated.scheduleTimes = parsedTimes
-        updated.dosesPerDay = parsedTimes.count
-        updated.pharmacyName = pharmacy.isEmpty ? nil : pharmacy
-        updated.pharmacyPhone = pharmacyPhone.isEmpty ? nil : pharmacyPhone
-        updated.prescriber = prescriber.isEmpty ? nil : prescriber
+        updated.instructions = instructions.trimmingCharacters(in: .whitespaces)
+        updated.quantityStart = Int(quantity.trimmingCharacters(in: .whitespaces)) ?? medication.quantityStart
+        let trimmedRefills = refills.trimmingCharacters(in: .whitespaces)
+        updated.refillsRemaining = trimmedRefills.isEmpty ? nil : Int(trimmedRefills)
+        updated.prescriber = prescriber.trimmingCharacters(in: .whitespaces)
+        updated.pharmacyPhone = pharmacyPhone.trimmingCharacters(in: .whitespaces)
         onSave(updated)
     }
 }

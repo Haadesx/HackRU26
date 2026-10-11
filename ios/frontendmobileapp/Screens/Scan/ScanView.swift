@@ -315,10 +315,10 @@ struct ScanView: View {
                     .accessibilityAddTraits(.isHeader)
 
                 if let scan = session.scan {
-                    ForEach(ScanKey.foundSoFar, id: \.self) { key in
+                    ForEach(ScanKey.form, id: \.self) { key in
                         foundRow(key: key, field: scan.field(key))
                     }
-                    if scan.field(ScanKey.quantity)?.state != .filled || scan.field(ScanKey.refills)?.state != .filled {
+                    if scan.field(ScanKey.quantityStart)?.state != .filled || scan.field(ScanKey.refillsRemaining)?.state != .filled {
                         Text("Try the back of the label, where the quantity is usually printed.")
                             .font(MCFont.regular(15, relativeTo: .footnote))
                             .foregroundStyle(MC.inkSoft)

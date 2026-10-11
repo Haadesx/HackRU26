@@ -62,9 +62,9 @@ final class ScanDraft {
             return "MedCheck couldn't read this clearly. Check it against the bottle."
         case .missing:
             switch key {
-            case ScanKey.quantity: return "Missing. Needed to warn before Rosa runs out."
-            case ScanKey.refills:
-                let pharmacy = value(ScanKey.pharmacy)
+            case ScanKey.quantityStart: return "Missing. Needed to warn before Rosa runs out."
+            case ScanKey.refillsRemaining:
+                let pharmacy = value(ScanKey.pharmacyName)
                 return pharmacy.isEmpty ? "Missing. You can also call the pharmacy to check."
                                         : "Missing. You can also call \(pharmacy.components(separatedBy: " ").first ?? pharmacy) to check."
             default: return "Missing. Please add it."
@@ -100,14 +100,14 @@ final class ScanDraft {
     var doseAmount: Int { Int(value(ScanKey.doseAmount)) ?? 1 }
 
     var scheduleTimes: [String] {
-        value(ScanKey.doseTimes)
+        value(ScanKey.scheduleTimes)
             .components(separatedBy: CharacterSet(charactersIn: ",&"))
             .flatMap { $0.components(separatedBy: " and ") }
             .compactMap { Fmt.parseClock($0) }
             .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
     }
 
-    var quantity: Int? { Int(value(ScanKey.quantity)) }
+    var quantity: Int? { Int(value(ScanKey.quantityStart)) }
 
     var scheduleSentence: String {
         Fmt.scheduleSentence(amount: doseAmount, times: scheduleTimes, purpose: nil)

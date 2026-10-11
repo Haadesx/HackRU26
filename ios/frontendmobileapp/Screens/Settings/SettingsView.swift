@@ -176,12 +176,17 @@ struct SettingsView: View {
                 InfoBox(title: "What MedCheck stores",
                         message: "Medication names and label details, when each dose was taken, pill counts, and the texts it sent.")
 
+                if store.settings.cameraPaused {
+                    NoticeBanner(
+                        status: .refillSoon, title: "The camera is paused",
+                        message: "MedCheck won't check bottles or confirm doses until you turn it back on.")
+                }
+
                 FlowLayout(spacing: 10, lineSpacing: 10) {
-                    Button(store.cameraPaused ? "Camera paused" : "Pause the camera") {
-                        Task { await store.pauseCamera() }
+                    Button(store.settings.cameraPaused ? "Turn the camera back on" : "Pause the camera") {
+                        Task { await store.setCameraPaused(!store.settings.cameraPaused) }
                     }
                     .buttonStyle(.capsule(.secondary))
-                    .disabled(store.cameraPaused)
 
                     ShareLink(item: RosaDataExport(fetch: { try await store.exportData() }),
                               preview: SharePreview("Rosa's MedCheck data")) {

@@ -11,7 +11,7 @@ struct VerifyView: View {
 
     @State private var scan: Scan?
     @State private var draft: ScanDraft?
-    @State private var loadFailed = false
+    @State private var loadError: String?
     @State private var showPreview = false
     @State private var confirmDiscard = false
     @State private var confirmManual = false
@@ -21,9 +21,9 @@ struct VerifyView: View {
             MC.page.ignoresSafeArea()
             if let draft {
                 content(draft)
-            } else if loadFailed {
+            } else if let loadError {
                 VStack(spacing: 16) {
-                    Text("Couldn't load this scan. The hub didn't respond.")
+                    Text(loadError)
                         .font(MCFont.body)
                         .foregroundStyle(MC.inkSoft)
                         .multilineTextAlignment(.center)
@@ -41,23 +41,26 @@ struct VerifyView: View {
     }
 
     private func load() async {
-        loadFailed = false
-        if let loaded = await store.loadScan(id: scanID) {
+        loadError = nil
+        do {
+            let loaded = try await store.loadScan(id: scanID)
             scan = loaded
             if draft == nil {
                 let created = ScanDraft(scan: loaded)
                 #if DEBUG
                 if DebugLaunch.openPreview {
-                    created.values[ScanKey.quantity] = "30"
-                    created.values[ScanKey.refills] = "2"
+                    created.values[ScanKey.quantityStart] = "30"
+                    created.values[ScanKey.refillsRemaining] = "2"
                     created.values[ScanKey.prescriber] = "Dr. Patel"
                     showPreview = true
                 }
                 #endif
                 draft = created
             }
-        } else {
-            loadFailed = true
+        } catch let APIError.server(_, message) {
+            loadError = "Couldn't load this scan. \(message)"
+        } catch {
+            loadError = "Couldn't load this scan. The hub didn't respond."
         }
     }
 
@@ -171,10 +174,10 @@ struct VerifyView: View {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 let active = index == steps.count - 1 && draft.status == .needsCaregiver
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.title(for: step.kind))
+                    Text(step.step)
                         .font(MCFont.bodyBold)
                         .foregroundStyle(MC.ink)
-                    Text([Fmt.time(step.at), step.note].compactMap { $0 }.joined(separator: ". "))
+                    Text([Fmt.time(step.at), step.detail].compactMap { $0 }.joined(separator: ". "))
                         .font(MCFont.regular(15, relativeTo: .footnote))
                         .foregroundStyle(active ? MC.ink : MC.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
@@ -189,16 +192,6 @@ struct VerifyView: View {
             }
         }
         .accessibilityLabel("What happened so far")
-    }
-
-    private static func title(for kind: String) -> String {
-        switch kind {
-        case "scanned": "Scanned"
-        case "asked": "Asked Rosa"
-        case "unsure": "Rosa wasn't sure"
-        case "sent": "Sent to you"
-        default: kind.capitalized
-        }
     }
 
     // MARK: Label photo
@@ -232,7 +225,7 @@ struct VerifyView: View {
                 .foregroundStyle(MC.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !draft.isManual, let scan {
+            if !draft.isManual, store.supportsRescan, let scan {
                 Button("Ask Rosa to scan again") {
                     Task { await store.requestRescan(scan) }
                 }
@@ -305,9 +298,9 @@ struct VerifyView: View {
 
     private static func placeholder(for key: String) -> String {
         switch key {
-        case ScanKey.quantity: "Check the label, e.g. 30"
-        case ScanKey.refills: "Check the label, e.g. 2"
-        case ScanKey.doseTimes: "8:00 AM"
+        case ScanKey.quantityStart: "Check the label, e.g. 30"
+        case ScanKey.refillsRemaining: "Check the label, e.g. 2"
+        case ScanKey.scheduleTimes: "8:00 AM"
         case ScanKey.doseAmount: "1"
         default: ""
         }
@@ -326,7 +319,7 @@ private struct KeyboardForField: ViewModifier {
 
     func body(content: Content) -> some View {
         switch key {
-        case ScanKey.doseAmount, ScanKey.quantity, ScanKey.refills:
+        case ScanKey.doseAmount, ScanKey.quantityStart, ScanKey.refillsRemaining:
             content.numericKeyboard()
         case ScanKey.pharmacyPhone:
             content.phoneKeyboard()

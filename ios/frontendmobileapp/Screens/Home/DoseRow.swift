@@ -32,6 +32,8 @@ struct DoseRow: View {
             return methodText.isEmpty ? "Taken \(time)" : "Taken \(time), \(methodText)"
         case .notTaken:
             return isToday ? "Not taken yet" : "Missed"
+        case .reminded:
+            return "Reminder sent"
         case .upcoming:
             return "Upcoming"
         }
@@ -41,6 +43,7 @@ struct DoseRow: View {
         switch slot.status {
         case .taken: SupplyStatus.onTrack.text
         case .notTaken: SupplyStatus.refillSoon.text
+        case .reminded: MC.navy
         case .upcoming: MC.inkSoft
         }
     }

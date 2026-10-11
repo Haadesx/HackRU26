@@ -31,6 +31,9 @@ enum DebugLaunch {
     static var offline: Bool { defaults.integer(forKey: "medcheck.offline") == 1 }
     static var skipDays: Int { defaults.integer(forKey: "medcheck.skipDays") }
     static var selfTest: Bool { defaults.integer(forKey: "medcheck.selfTest") == 1 }
+    static var liveTest: Bool { defaults.integer(forKey: "medcheck.liveTest") == 1 }
+    /// Folder with `frontend/docs/fixtures/*.json`; runs the contract decoding checks.
+    static var fixturesPath: String? { defaults.string(forKey: "medcheck.fixtures") }
 
     static var scrollY: CGFloat? {
         defaults.object(forKey: "medcheck.scrollY") == nil ? nil : CGFloat(defaults.double(forKey: "medcheck.scrollY"))

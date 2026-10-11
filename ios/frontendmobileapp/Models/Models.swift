@@ -24,10 +24,12 @@ struct Medication: Codable, Identifiable, Hashable {
     var prescriber: String?
     // UI additions
     var prescriberPhone: String?      // target of "Call Dr. Okafor's office"
-    var purpose: String?              // "cholesterol", used in the schedule sentence
+    var purpose: String?              // "for cholesterol", appended to the schedule sentence
     var instructions: String?
+    var otc: Bool?                    // over the counter; falls back to "no refill count"
+    var confidence: [String: String]? // label fields the scan was unsure of, e.g. ["prescriber": "unsure"]
 
-    var isOverTheCounter: Bool { refillsRemaining == nil }
+    var isOverTheCounter: Bool { otc ?? (refillsRemaining == nil) }
 
     var daysLeft: Double {
         pillsLeft / Double(max(doseAmount * dosesPerDay, 1))
@@ -44,6 +46,8 @@ struct Dose: Codable, Identifiable, Hashable {
 enum DoseStatus: String, Codable {
     case taken
     case notTaken = "not_taken"
+    /// Late, and the caregiver already asked the wearable to remind Rosa.
+    case reminded
     case upcoming
 
     init(from decoder: Decoder) throws {
@@ -122,13 +126,13 @@ enum ScanStatus: String, Codable {
     }
 }
 
-/// A step in the "what happened so far" timeline on Verify.
+/// A step in the "what happened so far" timeline on Verify (the hub's `history` entries).
 struct ScanEvent: Codable, Hashable, Identifiable {
-    var kind: String                  // scanned, asked, unsure, sent
+    var step: String                  // "Scanned", "Asked Rosa", "Rosa wasn't sure", "Sent to you"
     var at: Date
-    var note: String?
+    var detail: String?
 
-    var id: String { "\(kind)-\(at.timeIntervalSince1970)" }
+    var id: String { "\(step)-\(at.timeIntervalSince1970)" }
 }
 
 struct Scan: Codable, Identifiable, Hashable {
@@ -248,9 +252,10 @@ struct Caregiver: Codable, Identifiable, Hashable {
     var isYou: Bool?
 }
 
+/// Raw values are the contract's: minutes as a string, or "never".
 enum RemindAgain: String, Codable, CaseIterable {
-    case after30Minutes = "30_minutes"
-    case after1Hour = "1_hour"
+    case after30Minutes = "30"
+    case after1Hour = "60"
     case never
 
     var label: String {
@@ -262,10 +267,11 @@ enum RemindAgain: String, Codable, CaseIterable {
     }
 }
 
+/// Raw values are the contract's display names.
 enum VoiceLanguage: String, Codable, CaseIterable {
-    case english = "en"
-    case spanish = "es"
-    case portuguese = "pt"
+    case english = "English"
+    case spanish = "Spanish"
+    case portuguese = "Portuguese"
 
     var label: String {
         switch self {
@@ -287,6 +293,7 @@ struct AppSettings: Codable, Equatable {
     var textWrongBottle: Bool
     var remindAgain: RemindAgain
     var voiceLanguage: VoiceLanguage
+    var cameraPaused = false
 
     static let standard = AppSettings(
         caregivers: [],

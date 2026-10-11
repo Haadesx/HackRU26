@@ -47,9 +47,9 @@ enum DebugSelfTest {
         await store.submitPhoto(Data([2]))
         check("prescriber unsure after photo 2", store.scanSession.scan?.field(ScanKey.prescriber)?.state == .unsure)
         await store.submitPhoto(Data([3]))
-        check("quantity still missing after photo 3", store.scanSession.scan?.field(ScanKey.quantity)?.state == .missing)
+        check("quantity still missing after photo 3", store.scanSession.scan?.field(ScanKey.quantityStart)?.state == .missing)
         await store.submitPhoto(Data([4]))
-        check("quantity found after photo 4", store.scanSession.scan?.field(ScanKey.quantity)?.value == "30")
+        check("quantity found after photo 4", store.scanSession.scan?.field(ScanKey.quantityStart)?.value == "30")
         check("four photos kept", store.scanSession.photos.count == 4)
 
         check("own in-progress scan is not offered as needing help",
@@ -58,11 +58,11 @@ enum DebugSelfTest {
             let draft = ScanDraft(scan: pending)
             check("pending scan needs two details", pending.missingFields.count == 2)
             check("preview blocked while fields missing", !draft.isComplete)
-            draft.values[ScanKey.quantity] = "30"
-            draft.values[ScanKey.refills] = "2"
+            draft.values[ScanKey.quantityStart] = "30"
+            draft.values[ScanKey.refillsRemaining] = "2"
             draft.values[ScanKey.prescriber] = "Dr. Patel"
             check("preview allowed once filled", draft.isComplete)
-            check("added badge", draft.editBadge(for: ScanKey.quantity) == "Added by you")
+            check("added badge", draft.editBadge(for: ScanKey.quantityStart) == "Added by you")
             check("corrected badge", draft.editBadge(for: ScanKey.prescriber) == "Corrected by you")
             check("lasts until Nov 9", draft.lastsUntil(from: store.now).map { Fmt.monthDay($0) } == "Nov 9")
             check("first reminder tomorrow", draft.firstReminder(after: store.now).map { Fmt.relativeAt($0, now: store.now) } == "tomorrow at 8:00 AM")

@@ -172,9 +172,9 @@ private struct NeedsHelpCard: View {
 
     private var missingPhrase: String {
         let phrases: [String: String] = [
-            ScanKey.quantity: "the tablet count", ScanKey.refills: "refills", ScanKey.name: "the name",
-            ScanKey.strength: "the strength", ScanKey.doseAmount: "the dose", ScanKey.doseTimes: "the dose times",
-            ScanKey.pharmacy: "the pharmacy", ScanKey.pharmacyPhone: "the pharmacy phone",
+            ScanKey.quantityStart: "the tablet count", ScanKey.refillsRemaining: "refills", ScanKey.name: "the name",
+            ScanKey.strength: "the strength", ScanKey.doseAmount: "the dose", ScanKey.scheduleTimes: "the dose times",
+            ScanKey.pharmacyName: "the pharmacy", ScanKey.pharmacyPhone: "the pharmacy phone",
             ScanKey.prescriber: "the prescriber",
         ]
         let parts = scan.missingFields.map { phrases[$0.key] ?? $0.displayLabel.lowercased() }
