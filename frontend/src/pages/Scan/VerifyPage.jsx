@@ -8,6 +8,8 @@ import { FIELDS, REQUIRED } from "./fields";
 import ScanSteps from "./ScanSteps";
 import ScanTimeline from "./ScanTimeline";
 import PreviewDialog from "./PreviewDialog";
+import ScanVerification from "./ScanVerification";
+import { cachedVerification } from "../../lib/verificationCache";
 
 export default function VerifyPage() {
   const { scanId } = useParams();
@@ -22,7 +24,11 @@ export default function VerifyPage() {
 
   useEffect(() => {
     api.getScan(scanId)
-      .then((s) => { setScan(s); setValues(Object.fromEntries(FIELDS.map((f) => [f.key, s.fields[f.key].value]))); })
+      .then((s) => {
+        const verification = s.verification ?? cachedVerification(s.id);
+        setScan(verification ? { ...s, verification } : s);
+        setValues(Object.fromEntries(FIELDS.map((f) => [f.key, s.fields[f.key].value])));
+      })
       .catch((e) => setLoadError(e.message));
   }, [scanId]);
 
@@ -83,6 +89,8 @@ export default function VerifyPage() {
       </header>
 
       {fromRosa && <ScanTimeline history={scan.history} />}
+
+      {scan.verification && <ScanVerification verification={scan.verification} />}
 
       <form
         className="card grid gap-5 p-6 sm:p-7"

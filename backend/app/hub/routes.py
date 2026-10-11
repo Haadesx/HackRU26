@@ -370,7 +370,7 @@ def add_photo(scan_id: int):
 
 @hub_bp.get("/scans/<int:scan_id>")
 def get_scan(scan_id: int):
-    return jsonify(scan_json(_scan(scan_id)))
+    return jsonify(_scan_payload(_scan(scan_id)))
 
 
 @hub_bp.delete("/scans/<int:scan_id>")
