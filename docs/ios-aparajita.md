@@ -311,12 +311,13 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | **Conformed the client to the shared hub contract** (commit `b42266c`): new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
 | 2026-10-11 | Shrank the supply-shelf bottles by 25% (one scale constant) and tightened column spacing 20 → 12 pt | only 1.5 bottles were visible on an iPhone; the team wants at least two | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug-only `-medcheck.snapshot 1` (writes `Documents/medcheck-snapshot.png`) to screenshot a physical device; used it to confirm two bottles on the iPhone 15 | simulator widths are not a substitute for the real device | see "Pushed SHAs" |
-| 2026-10-11 | **Track tab and dose scanner** from `MedCheck-iOS-Update.md`: `DayDoses` (port of `buildDay`), raw dose/skip/reminder records in `HubState`, `DoseStatus` now taken / skipped / late / reminded / missed / upcoming, `skipDose` and `matchDose` in the API, `method: "scan"`, `TrackView`, `TrackDoseRow`, `DoseScannerCard`, shared `CameraViewfinder` and `ScanSourcePicker` extracted from `ScanView`, Home's Track button, `MockHub` rebuilt on records with skip, scanner and double-dose rules | the web app added Track; the iOS app is meant to match it | see "Pushed SHAs" |
+| 2026-10-11 | **Track tab and dose scanner** (commit `8e8df9d`) from `MedCheck-iOS-Update.md`: `DayDoses` (port of `buildDay`), raw dose/skip/reminder records in `HubState`, `DoseStatus` now taken / skipped / late / reminded / missed / upcoming, `skipDose` and `matchDose` in the API, `method: "scan"`, `TrackView`, `TrackDoseRow`, `DoseScannerCard`, shared `CameraViewfinder` and `ScanSourcePicker` extracted from `ScanView`, Home's Track button, `MockHub` rebuilt on records with skip, scanner and double-dose rules | the web app added Track; the iOS app is meant to match it | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs
 
 - `feat/ios-aparajita`: `b503d96` (handoff), `1f83520` (records that SHA), both docs-only on top of `d5e922e`.
 - Contract-conformance milestone (code + docs): `b42266c`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
-- The docs-only commit that records this line has its own SHA; `git log` is authoritative.
-- `git log feat/ios-aparajita` is authoritative.
+- Track tab and dose scanner (code + docs): `8e8df9d`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
+- Earlier: bottles at 75% and device snapshot `f57851a`, `c869e8d`.
+- The docs-only commit that records these lines has its own SHA; `git log feat/ios-aparajita` is authoritative.
