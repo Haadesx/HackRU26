@@ -113,6 +113,51 @@ def form_plural(noun: str) -> str:
     return "tablets" if noun == "tablet" else "capsules" if noun == "capsule" else "units"
 
 
+# Words a caregiver may choose in the UI. Only countable forms are supported.
+FORM_ALIASES = {
+    "tablet": "tablet", "tablets": "tablet", "caplet": "tablet", "caplets": "tablet",
+    "capsule": "capsule", "capsules": "capsule",
+}
+
+
+def resolve_form(scan_form: str | None, scan_unit: str | None, chosen: str | None) -> tuple[str | None, str | None, str | None]:
+    """Decide the medication's dosage form for a completed scan: ``(form, source, error)``.
+
+    Precedence: what inference read (form, then dose unit) over the caregiver's explicit
+    choice. The form is never guessed: unknown evidence returns ``(None, None, None)`` and
+    the caller must ask the caregiver. Conflicting, unsupported, or contradictory evidence
+    returns an error string instead of inventing a form.
+    """
+    read_form = FORM_ALIASES.get((scan_form or "").strip().lower())
+    read_unit = FORM_ALIASES.get((scan_unit or "").strip().lower())
+    picked = FORM_ALIASES.get((chosen or "").strip().lower())
+
+    if chosen and not picked:
+        return None, None, (
+            "MedCheck can only count tablets and capsules right now. If this is a different form, "
+            "ask a pharmacist or caregiver to add it by hand."
+        )
+    if scan_unit and not read_unit and read_form:
+        return None, None, (
+            f"The label reads {read_form} but the dose unit “{scan_unit}” doesn't match. Check the bottle."
+        )
+    if scan_unit and not read_unit and not read_form and not picked:
+        return None, None, (
+            f"The label's dose unit (“{scan_unit}”) isn't a countable tablet or capsule. Check the bottle — "
+            "only tablets and capsules are supported right now."
+        )
+
+    read = read_form or read_unit
+    if read and picked and read != picked:
+        return None, None, (
+            f"The label reads {read} but you selected {picked}. Check the bottle and choose the right form."
+        )
+    form = read or picked
+    if not form:
+        return None, None, None
+    return form, ("label" if read else "caregiver"), None
+
+
 def _num(v) -> str:
     if v is None:
         return ""

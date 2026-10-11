@@ -412,7 +412,17 @@ def complete_scan(scan_id: int):
         raise unprocessable("Add the strength, like 25 mg.")
     form = (scan.dosage_form or "").strip().lower() or None
     unit = (scan.dose_unit or "").strip().lower() or None
-    noun = labels.form_noun(form, unit)
+    form, form_source, form_error = labels.resolve_form(form, unit, v.get("dosage_form"))
+    if form_error:
+        raise unprocessable(form_error)
+    if not form:
+        raise ApiError(
+            422,
+            "FORM_UNCONFIRMED",
+            "The label didn't show whether these are tablets or capsules. Choose the form to continue — "
+            "MedCheck won't guess.",
+        )
+    noun = labels.form_noun(form, form)
     dose_amount = _parse_int(v.get("dose_amount"), f"{labels.form_plural(noun).capitalize()} per dose", minimum=1)
     times = _times(v.get("schedule_times"))
     quantity_start = _parse_int(v.get("quantity_start"), f"{labels.form_plural(noun).capitalize()} in the bottle", minimum=1)
@@ -423,7 +433,7 @@ def complete_scan(scan_id: int):
         patient,
         {
             "name": v["name"], "strength": strength, "dosage_form": form,   # None = unknown; never assumed
-            "dose_quantity": Decimal(dose_amount), "dose_unit": unit or noun,
+            "dose_quantity": Decimal(dose_amount), "dose_unit": form,
             "quantity_prescribed": Decimal(quantity_start), "refills_authorized": refills,
             "instructions": instructions,
         },
@@ -448,18 +458,12 @@ def complete_scan(scan_id: int):
     db.session.flush()
     scan.status = "complete"
     scan.medication_id = hm.id
-    scan.history = [*scan.history, {"step": "Added", "at": utcnow().isoformat(), "detail": f"{v['name']} {strength} is now tracked."}]
+    scan.history = [*scan.history, {"step": "Added", "at": utcnow().isoformat(), "detail": f"{v['name']} {strength} is now tracked ({form}, {form_source})."}]
     db.session.commit()
     hm, item = find_tracked(patient, hm.id)
     med = medication_json(patient, hm, item)
     build_state(patient)  # runs supply checks for the new bottle
-    warnings = list(result.get("warnings") or [])
-    if not form:
-        warnings.append({
-            "field": "dosage_form",
-            "message": "The dosage form wasn't readable from the label — please confirm the medication is correct.",
-        })
-    return jsonify({"medication": med, "warnings": warnings})
+    return jsonify({"medication": med, "warnings": list(result.get("warnings") or [])})
 
 
 # ---------- adherence ----------

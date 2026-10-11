@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.extensions import db
 from app.hub import labels
 from app.jobs import tasks
-from app.models import Medication, Prescription, PrescriptionItem, Reminder
+from app.models import DoseEvent, Medication, Prescription, PrescriptionItem, Reminder
 
 FIXTURES = Path(__file__).resolve().parents[2] / "frontend" / "docs" / "fixtures"
 HUB_EMAIL = "hub.patient@example.com"
@@ -23,14 +23,14 @@ LOSARTAN_LABEL = (
 )
 
 
-def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), dose=1, text=LOSARTAN_LABEL, status="ok", guidance=None, form=None, form_conf=0.85, form_source=None, dose_unit=None, frequency="once daily"):
+def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), strength_conf=0.92, dose=1, text=LOSARTAN_LABEL, status="ok", guidance=None, form=None, form_conf=0.85, form_source=None, dose_unit=None, frequency="once daily"):
     return {
         "status": status,
         "frame_quality": {"acceptable": status != "needs_rescan", "score": 0.9, "guidance": guidance or []},
         "label": {"detected": True, "confidence": 0.9, "text": text},
         "medication": {
             "name": {"value": name, "confidence": name_conf, "source": "ocr"},
-            "strength": {"value": strength[0], "unit": strength[1], "confidence": 0.92, "source": "ocr"} if strength else {"value": None, "unit": None, "confidence": 0, "source": "none"},
+            "strength": {"value": strength[0], "unit": strength[1], "confidence": strength_conf, "source": "ocr"} if strength else {"value": None, "unit": None, "confidence": 0, "source": "none"},
             "form": {"value": form, "confidence": form_conf if form else 0, "source": (form_source or ("ocr" if form else "none"))},
         },
         "instructions": {
@@ -199,6 +199,7 @@ def test_scan_two_photos_merge_and_complete(hub, monkeypatch, ctx):
     assert f["prescriber"] == {"value": "Dr. Patel", "state": "unsure"}
 
     values = {k: v["value"] for k, v in f.items()}
+    values["dosage_form"] = "tablet"  # caregiver confirms the form the label didn't state
     r = hub.post(f"/scans/{scan['id']}/complete", values)
     assert r.status_code == 200, r.get_json()
     med = r.get_json()["medication"]
@@ -264,29 +265,33 @@ def test_complete_preserves_capsule_form(hub, ctx, monkeypatch):
     assert item is not None and item.dose_unit == "capsule"
 
 
-def test_complete_unknown_form_is_not_tablet_and_warns(hub, ctx, monkeypatch):
+def test_complete_unknown_form_requires_caregiver_choice(hub, ctx, monkeypatch):
     fake = FakeInference(monkeypatch)
     fake.queue = [inference(name="Furosemide", form=None, dose_unit=None)]
     scan = hub.photo("/scans").get_json()
     values = {k: v["value"] for k, v in scan["fields"].items()}
     r = hub.post(f"/scans/{scan['id']}/complete", values)
+    assert r.status_code == 422 and "tablets or capsules" in r.get_json()["detail"]
+    assert db.session.scalar(select(Medication).where(Medication.name == "Furosemide")) is None  # nothing saved
+    r = hub.post(f"/scans/{scan['id']}/complete", {**values, "dosage_form": "tablet"})
     assert r.status_code == 200, r.get_json()
-    assert any(w.get("field") == "dosage_form" for w in r.get_json()["warnings"])
     med = db.session.scalar(select(Medication).where(Medication.name == "Furosemide"))
-    assert med is not None and med.dosage_form is None  # never silently "tablet"
+    assert med is not None and med.dosage_form == "tablet"  # caregiver-confirmed, never assumed
 
 
-def test_vlm_zero_confidence_form_is_ignored(hub, ctx, monkeypatch):
+def test_vlm_zero_confidence_form_is_not_trusted(hub, ctx, monkeypatch):
     """The VLM can guess "tablet" with confidence 0 for a label that never states a form."""
     fake = FakeInference(monkeypatch)
     fake.queue = [inference(name="Tamsulosin", form="tablet", form_conf=0.0, form_source="vlm", dose_unit=None)]
     scan = hub.photo("/scans").get_json()
+    assert "dosage_form" not in scan  # evidence floor dropped the guess
     values = {k: v["value"] for k, v in scan["fields"].items()}
     r = hub.post(f"/scans/{scan['id']}/complete", values)
+    assert r.status_code == 422  # must ask the caregiver instead of trusting the guess
+    r = hub.post(f"/scans/{scan['id']}/complete", {**values, "dosage_form": "capsule"})
     assert r.status_code == 200, r.get_json()
-    assert any(w.get("field") == "dosage_form" for w in r.get_json()["warnings"])
     med = db.session.scalar(select(Medication).where(Medication.name == "Tamsulosin"))
-    assert med is not None and med.dosage_form is None  # zero-confidence guess not used
+    assert med is not None and med.dosage_form == "capsule"  # caregiver's choice, not the VLM's "tablet"
 
 
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
@@ -318,9 +323,9 @@ def test_complete_validation_and_manual(hub):
     scan = hub.post("/scans", {"manual": True}).get_json()
     assert scan["manual"] is True and scan["photos"] == 0 and len(scan["fields"]) == 9
     base = {"name": "Losartan", "strength": "25 mg", "dose_amount": "1", "schedule_times": "08:00", "quantity_start": "30",
-            "refills_remaining": "", "pharmacy_name": "", "pharmacy_phone": "", "prescriber": ""}
+            "refills_remaining": "", "pharmacy_name": "", "pharmacy_phone": "", "prescriber": "", "dosage_form": "tablet"}
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "quantity_start": ""})
-    assert r.status_code == 422 and r.get_json()["detail"] == "Units in the bottle is required."
+    assert r.status_code == 422 and r.get_json()["detail"] == "Tablets in the bottle is required."
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "schedule_times": "8am"})
     assert r.status_code == 422 and "24-hour" in r.get_json()["detail"]
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "name": "metformin", "strength": "500mg"})
@@ -429,11 +434,16 @@ def test_verification_already_taken_blocks_second_log(hub, monkeypatch):
     set_now(T0 + timedelta(hours=1))
     med = hub.med("Metformin")
     assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    set_now(T0 + timedelta(hours=12, minutes=5))  # 19:05 — dinner window open
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    set_now(T0 + timedelta(hours=12, minutes=20))  # both doses of the day logged
     fake = FakeInference(monkeypatch)
     fake.queue = [inference(**METFORMIN_SCAN)]
     v = hub.photo("/scans").get_json()["verification"]
     assert v["status"] == "already_taken" and v["can_log"] is False
     assert v["taken_local"]
+    # the backend re-checks eligibility: another log is refused even though the scan looked positive
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 409
 
 
 def test_verification_not_due_when_window_closed(hub, monkeypatch):
@@ -479,3 +489,220 @@ def test_verification_morning_taken_evening_upcoming_is_not_due(hub, monkeypatch
     v = hub.photo("/scans").get_json()["verification"]
     assert v["status"] == "not_due" and v["can_log"] is False
     assert v["due_local"] == "19:00"
+
+
+def test_verification_recent_morning_dose_does_not_hide_evening(hub, monkeypatch):
+    """Even inside the recent-dose window, a later dose today stays visible."""
+    set_now(T0 + timedelta(hours=1))
+    med = hub.med("Metformin")
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    set_now(T0 + timedelta(hours=5))  # 12:00 — only 4h after the breakfast dose
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "not_due" and v["can_log"] is False
+    assert v["due_local"] == "19:00"
+    assert "already logged" in v["message"]
+
+
+# ---------- verification: fail-closed evidence gates ----------
+
+
+def test_verification_missing_strength_fails_closed(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=None)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "uncertain" and v["can_log"] is False
+    assert "strength" in v["message"].lower()
+
+
+def test_verification_unsure_strength_fails_closed(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(500, "mg"), strength_conf=0.6)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "uncertain" and v["can_log"] is False
+
+
+def test_verification_unsure_name_fails_closed(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", name_conf=0.6, strength=(500, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "uncertain" and v["can_log"] is False
+
+
+def test_verification_fuzzy_name_is_not_proof(hub, monkeypatch):
+    """A close spelling is a candidate, not an identity."""
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformn", name_conf=0.95, strength=(500, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "uncertain" and v["can_log"] is False
+    assert "Metformin 500 mg" in v["message"]
+
+
+def test_verification_exact_name_and_strength_matches(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "due_now"
+    assert v["medication"] == {"id": hub.med()["id"], "name": "Metformin", "strength": "500 mg"}
+    assert v["strength_match"] is True and v["matched"] == {"name": "exact", "strength": "exact"}
+
+
+ADD_METFORMIN_1000 = {
+    "name": "Metformin", "strength": "1000 mg", "dose_amount": "1",
+    "schedule_times": "08:00", "quantity_start": "30", "dosage_form": "tablet",
+}
+
+
+def _add_second_strength(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(1000, "mg"))]
+    sid = hub.photo("/scans").get_json()["id"]
+    r = hub.post(f"/scans/{sid}/complete", ADD_METFORMIN_1000)
+    assert r.status_code == 200, r.get_json()
+    return fake
+
+
+def test_verification_same_name_two_strengths_picks_matching(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = _add_second_strength(hub, monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(1000, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["medication"]["strength"] == "1000 mg"
+    assert v["status"] in ("due_now", "not_due", "already_taken")
+    fake.queue = [inference(name="Metformin", strength=(500, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["medication"]["strength"] == "500 mg"
+
+
+def test_verification_strength_matching_neither_of_two(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = _add_second_strength(hub, monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(750, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "strength_mismatch" and v["can_log"] is False
+    assert "medication" not in v
+    assert "1000 mg" in v["message"] and "500 mg" in v["message"]
+
+
+def test_verification_ambiguous_candidates_fail_closed(monkeypatch):
+    """Two tracked rows with the same name and strength: the evidence cannot pick one."""
+    from types import SimpleNamespace
+
+    from app.hub import state as hub_state
+    from app.hub import verify
+
+    med = SimpleNamespace(name="Metformin", strength="500 mg")
+    rows = [(SimpleNamespace(id=1, medication=med), SimpleNamespace(id=1, medication=med)),
+            (SimpleNamespace(id=2, medication=med), SimpleNamespace(id=2, medication=med))]
+    monkeypatch.setattr(hub_state, "tracked", lambda patient: rows)
+    patient = SimpleNamespace(id=1, timezone="America/New_York")
+    scan = SimpleNamespace(fields={
+        "name": {"value": "Metformin", "state": "filled"},
+        "strength": {"value": "500 mg", "state": "filled"},
+    })
+    v = verify.scan_verification(patient, scan)
+    assert v["status"] == "uncertain" and v["can_log"] is False
+    assert "more than one" in v["message"]
+
+
+def test_verification_never_records_a_dose(hub, ctx, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+
+    def taken_count():
+        return len(db.session.scalars(
+            select(DoseEvent).where(DoseEvent.patient_id == hub.patient["id"], DoseEvent.status.in_(("taken_on_time", "taken_late")))
+        ).all())
+
+    before = taken_count()
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "due_now" and v["can_log"] is True
+    assert taken_count() == before
+
+
+def test_stale_can_log_cannot_bypass_backend_eligibility(hub, monkeypatch):
+    """A can_log from an earlier scan must not let a later confirm slip through."""
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "due_now" and v["can_log"] is True
+    med_id = v["medication"]["id"]
+    assert hub.post(f"/medications/{med_id}/doses", {"method": "dashboard"}).status_code == 200
+    r = hub.post(f"/medications/{med_id}/doses", {"method": "dashboard"})
+    assert r.status_code == 409  # fresh eligibility check, not the stale can_log
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v2 = hub.photo("/scans").get_json()["verification"]
+    assert v2["status"] != "due_now" and v2["can_log"] is False
+
+
+# ---------- dosage-form confirmation ----------
+
+SCAN_BODY = {"name": "Metformin", "strength": "500 mg", "dose_amount": "1", "schedule_times": "08:00", "quantity_start": "30"}
+
+
+ADD_FUROSEMIDE_20 = {
+    "name": "Furosemide", "strength": "20 mg", "dose_amount": "1",
+    "schedule_times": "08:00", "quantity_start": "30", "dosage_form": "capsule",
+}
+
+
+def test_complete_scan_requires_dosage_form_when_label_is_silent(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Furosemide", strength=(20, "mg"), form=None)]
+    sid = hub.photo("/scans").get_json()["id"]
+    r = hub.post(f"/scans/{sid}/complete", {k: v for k, v in ADD_FUROSEMIDE_20.items() if k != "dosage_form"})
+    assert r.status_code == 422
+    assert "tablets or capsules" in r.get_json()["detail"]
+    r2 = hub.post(f"/scans/{sid}/complete", ADD_FUROSEMIDE_20)
+    assert r2.status_code == 200, r2.get_json()
+    assert r2.get_json()["medication"]["dosage_form"] == "capsule"
+    detail = hub.get(f"/scans/{sid}").get_json()["history"][-1]["detail"]
+    assert "(capsule, caregiver)" in detail
+
+
+def test_complete_scan_uses_label_form_without_confirmation(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Lisinopril", strength=(10, "mg"), form="tablet")]
+    sid = hub.photo("/scans").get_json()["id"]
+    scan = hub.get(f"/scans/{sid}").get_json()
+    assert scan["dosage_form"] == "tablet"
+    r = hub.post(f"/scans/{sid}/complete", {**SCAN_BODY, "name": "Lisinopril", "strength": "10 mg"})
+    assert r.status_code == 200
+    assert r.get_json()["medication"]["dosage_form"] == "tablet"
+    detail = hub.get(f"/scans/{sid}").get_json()["history"][-1]["detail"]
+    assert "(tablet, label)" in detail
+
+
+def test_complete_scan_rejects_conflicting_form_choice(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(500, "mg"), form="tablet")]
+    sid = hub.photo("/scans").get_json()["id"]
+    r = hub.post(f"/scans/{sid}/complete", {**SCAN_BODY, "dosage_form": "capsule"})
+    assert r.status_code == 422
+    assert "reads tablet" in r.get_json()["detail"]
+
+
+def test_complete_scan_rejects_unsupported_unit(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(500, "mg"), form=None, dose_unit="ml")]
+    sid = hub.photo("/scans").get_json()["id"]
+    r = hub.post(f"/scans/{sid}/complete", SCAN_BODY)
+    assert r.status_code == 422
+    assert "tablet" in r.get_json()["detail"].lower()
+
+
+def test_complete_scan_rejects_unsupported_form_choice(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(500, "mg"), form=None)]
+    sid = hub.photo("/scans").get_json()["id"]
+    r = hub.post(f"/scans/{sid}/complete", {**SCAN_BODY, "dosage_form": "liquid"})
+    assert r.status_code == 422
+    assert "tablets and capsules" in r.get_json()["detail"]

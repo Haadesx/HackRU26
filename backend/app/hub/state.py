@@ -158,6 +158,8 @@ def medication_json(patient: User, hm: HubMedication, item: PrescriptionItem) ->
         "strength": item.medication.strength or "",
         "purpose": hm.purpose or "",
         "dose_amount": _int_or_number(item.dose_quantity) or 1,
+        "dosage_form": item.medication.dosage_form or "",  # "" = unknown, never assumed
+        "dose_unit": item.dose_unit or "",
         "doses_per_day": len(times),
         "schedule_times": times,
         "quantity_start": hm.quantity_start or (int(item.quantity_prescribed) if item.quantity_prescribed else 0),
@@ -284,6 +286,10 @@ def scan_json(scan: HubScan) -> dict:
         data["medication_id"] = scan.medication_id
     if scan.guidance:
         data["guidance"] = scan.guidance  # extra: camera tips from the last photo
+    if scan.dosage_form:
+        data["dosage_form"] = scan.dosage_form  # extra: evidence-floored, may be absent
+    if scan.dose_unit:
+        data["dose_unit"] = scan.dose_unit  # extra: as read by inference
     return data
 
 
