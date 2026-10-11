@@ -1,1 +1,0 @@
-| 2026-10-11 | Pink heart app icon and favicon | Final app icon chosen | `frontend/public/favicon.svg`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `frontend/index.html` | none | none | Checked in browser |7427487|
