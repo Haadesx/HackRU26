@@ -21,6 +21,11 @@ enum DebugLaunch {
         }
     }
 
+    /// Skip the first-launch question: `-medcheck.role patient` or `caregiver`.
+    static var role: AppRole? {
+        defaults.string(forKey: "medcheck.role").flatMap(AppRole.init(rawValue:))
+    }
+
     static var openMedicationID: Int? {
         defaults.object(forKey: "medcheck.openMedication") == nil ? nil : defaults.integer(forKey: "medcheck.openMedication")
     }

@@ -54,13 +54,6 @@ struct HomeView: View {
         .sheet(item: $openMedication) { ref in
             MedicationSheet(medicationID: ref.id)
         }
-        .task {
-            // Poll while Home is visible so doses logged from the wearable show up live.
-            while !Task.isCancelled {
-                await store.refresh()
-                try? await Task.sleep(for: .seconds(5))
-            }
-        }
     }
 
     // MARK: Header
@@ -290,6 +283,8 @@ private struct EventRow: View {
         switch event.type {
         case "wrong_bottle": "Wrong bottle"
         case "double_dose": "Double dose"
+        case "skipped": "Skipped dose"
+        case "missed": "Missed dose"
         default: "Caught a mistake"
         }
     }

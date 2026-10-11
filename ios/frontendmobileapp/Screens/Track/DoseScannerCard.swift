@@ -8,6 +8,9 @@ import PhotosUI
 /// The live camera sits in the card on every device, as on the web's Track page: hold the bottle up, press
 /// "Scan this dose", and the result replaces the camera in the card.
 struct DoseScannerCard: View {
+    /// On the patient's phone the person holding the bottle is the one answering: "I took it", not "Rosa took it".
+    var asPatient = false
+
     private enum Phase: Equatable {
         case ready
         case checking
@@ -139,7 +142,9 @@ struct DoseScannerCard: View {
         case .match(let bottle, let slot, let late):
             NoticeBanner(
                 tone: .ok, title: "That's \(bottle.name) \(bottle.strength)",
-                message: "Due at \(Fmt.clockLabel(slot))\(late ? ", so it's late" : ""). Press Rosa took it only after she's taken it."
+                message: "Due at \(Fmt.clockLabel(slot))\(late ? ", so it's late" : ""). "
+                    + (asPatient ? "Press I took it only after you've taken it."
+                                 : "Press Rosa took it only after she's taken it.")
             ) {
                 FlowLayout(spacing: 10, lineSpacing: 10) {
                     Button("Not now") { reset() }.buttonStyle(.capsule(.secondary))
@@ -148,7 +153,7 @@ struct DoseScannerCard: View {
                     } label: {
                         HStack(spacing: 8) {
                             if isConfirming { ProgressView().tint(MC.navy) }
-                            Text("Rosa took it")
+                            Text(asPatient ? "I took it" : "Rosa took it")
                         }
                     }
                     .buttonStyle(.capsule(.primary))
