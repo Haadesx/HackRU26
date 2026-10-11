@@ -901,3 +901,15 @@ def test_events_endpoint_accepts_only_mistakes(hub):
     for kind in ("skipped", "missed", "nonsense"):
         r = hub.post("/events", {"type": kind, "message": "x"})
         assert r.status_code == 422 and "wrong_bottle or double_dose" in r.get_json()["detail"]
+
+
+def test_dose_scan_ignores_doses_of_stopped_medications(hub, monkeypatch):
+    """A stopped medication's open dose is not "due now": scanning another bottle must not say it is."""
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=1, minutes=5))  # Metformin's 08:00 dose is open
+    med = hub.med()
+    assert hub.delete(f"/medications/{med['id']}").status_code == 200
+    code, r = _dose_scan(hub, fake, name="Lisinopril", name_conf=0.95, strength=(10, "mg"), text="LISINOPRIL 10 mg")
+    assert code == 200 and r["status"] == "not_scheduled", r
+    assert "Metformin" not in r["message"]
+    assert not [e for e in hub.state()["events"] if e["type"] == "wrong_bottle"]

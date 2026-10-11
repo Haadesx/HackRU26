@@ -338,13 +338,18 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
 - **Update (2026-10-11, same day): the OCR word list had only 41 drugs.** That was the cause of "reads the pharmacy name
   instead of the medicine": with the drug missing from `DRUG_NAMES`, the extractor's name field fell back to the biggest
   word on the label ("WALGREENSPHARMACY", 0.3) and, because the strength is only trusted at 0.9 when it sits beside a
-  *recognized* name, the strength dropped to 0.75 = unsure as well. 151 common generics and brands were added to
-  `services/ocr/lexicon.py` (OCR owner's file, changed on `feat/integrate-ios` only; the 164 OCR tests and 519 inference
+  *recognized* name, the strength dropped to 0.75 = unsure as well. 125 common generics were added to
+  `services/ocr/lexicon.py` (brand names were tried and removed: generic labels print "Generic for Prozac", and the brand
+  was then read as the medicine) (OCR owner's file, changed on `feat/integrate-ios` only; the 164 OCR tests and 519 inference
   tests pass). A label that previously gave `WALGREENSPHARMACY` / 0.3 now gives `Fluoxetine` 0.95 and `20 mg` 0.9.
 - **Name consistency matters.** The hub only accepts an exact name match (`test_17`: "Metformin HCl" is *not* the tracked
   "Metformin", by the backend owner's design, and unsure names or strengths are never identity, `test_02`/`test_04`).
   A medication added earlier as "Fluoxetine Hcl" will therefore not match a bottle that now reads "Fluoxetine": stop
   tracking it and add it again. Whether salt suffixes should count as the same medicine is the backend owner's call.
+- **Dose scanner compared against stopped medications.** `hub/dose_scan.today_events` looked at every open dose event of the
+  patient, including doses of medications no longer tracked (here the seed's superseded Lisinopril 07:00 dose, still open
+  until 19:00), so a correct scan was answered "Lisinopril is due now. Put this one back". It now only considers tracked
+  medications (test `test_dose_scan_ignores_doses_of_stopped_medications`; backend 138 pass).
 - **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
 
 ## J. Outstanding work

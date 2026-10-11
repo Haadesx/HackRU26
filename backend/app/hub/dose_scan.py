@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from app.errors import ApiError
 from app.extensions import db
+from app.hub import state as hub_state
 from app.hub import verify as hub_verify
 from app.models import DoseEvent, HubMedication, User
 from app.utils.time import get_zone, utcnow
@@ -40,6 +41,12 @@ def _hub_ids(patient: User) -> dict:
     }
 
 
+def _tracked_medication_ids(patient: User) -> set:
+    """Medications the dashboard tracks right now. Doses of a medication that was stopped (or of the demo seed's old
+    prescriptions) can stay open in dose_events, but they are not "due" for the scanner."""
+    return {item.medication_id for _hm, item in hub_state.tracked(patient)}
+
+
 def today_events(patient: User, medication_id=None) -> list[DoseEvent]:
     tz = get_zone(patient.timezone)
     start = datetime.combine(utcnow().astimezone(tz).date(), datetime.min.time(), tzinfo=tz)
@@ -54,7 +61,8 @@ def today_events(patient: User, medication_id=None) -> list[DoseEvent]:
     )
     if medication_id is not None:
         stmt = stmt.where(DoseEvent.medication_id == medication_id)
-    return list(db.session.scalars(stmt))
+    tracked = _tracked_medication_ids(patient)
+    return [e for e in db.session.scalars(stmt) if e.medication_id in tracked]
 
 
 def _open_now(events: list[DoseEvent]) -> DoseEvent | None:
