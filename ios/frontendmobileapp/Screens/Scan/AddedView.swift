@@ -54,12 +54,6 @@ struct AddedView: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if !summary.warnings.isEmpty {
-                        NoticeBanner(tone: .low, title: "Worth a look",
-                                     message: summary.warnings.joined(separator: " "))
-                            .accessibilityElement(children: .combine)
-                    }
-
                     MCCard(padding: 16, radius: 12) {
                         HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 2) {
