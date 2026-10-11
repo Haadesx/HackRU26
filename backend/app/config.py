@@ -55,6 +55,8 @@ class Config:
     HUB_INFERENCE_API_KEY = os.getenv("HUB_INFERENCE_API_KEY") or None
     HUB_INFERENCE_TIMEOUT_S = float(os.getenv("HUB_INFERENCE_TIMEOUT_S", "90"))
     HUB_ASK_PATIENT_MINUTES = _int("HUB_ASK_PATIENT_MINUTES", 3)
+    # Demo only: the medication name can only be one of app/hub/demo_names.DEMO_MEDICATIONS.
+    HUB_DEMO_NAMES = _bool("HUB_DEMO_NAMES", False)
 
     # flask-smorest / OpenAPI
     API_TITLE = "MedCheck Backend API"

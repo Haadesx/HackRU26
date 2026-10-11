@@ -250,6 +250,10 @@ def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
     text = (scan.get("label") or {}).get("text") or ""
     out.update(_regex_fields(text, skip=meta_out.keys()))
     out.update(meta_out)
+    if current_app and current_app.config.get("HUB_DEMO_NAMES"):
+        from app.hub import demo_names
+
+        out = demo_names.apply(out, text)
     return out
 
 

@@ -37,9 +37,6 @@ struct HomeView: View {
                     aside
                 }
 
-                #if DEBUG
-                DemoBar()
-                #endif
             }
         }
         .refreshable { await store.refresh() }
@@ -159,12 +156,6 @@ struct HomeView: View {
                     }
                 }
             }
-            Text("Camera images never leave Rosa's home. This page shows only what MedCheck read from labels and the doses it logged.")
-                .font(MCFont.regular(15, relativeTo: .footnote))
-                .foregroundStyle(MC.inkSoft)
-                .padding(.top, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .top) { Rectangle().fill(MC.line).frame(height: 1) }
         }
     }
 }
@@ -311,46 +302,5 @@ private struct EventRow: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(MC.card))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.line, lineWidth: 1))
         .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Demo bar (debug builds only)
-
-struct DemoBar: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Demo mode. Today is \(Text(Fmt.dayShort(store.now)).font(MCFont.bodyBold))")
-                .font(MCFont.body)
-                .foregroundStyle(MC.page)
-
-            FlowLayout(spacing: 8, lineSpacing: 8) {
-                Button("Skip 1 day") { Task { await store.skip(days: 1) } }
-                    .buttonStyle(.capsule(.secondary, size: .compact))
-                Button("Skip a week") { Task { await store.skip(days: 7) } }
-                    .buttonStyle(.capsule(.secondary, size: .compact))
-                Button("Reset demo") { Task { await store.resetDemo() } }
-                    .buttonStyle(DemoOutlineStyle())
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16).fill(MC.ink))
-    }
-}
-
-private struct DemoOutlineStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(MCFont.bold(15, relativeTo: .headline))
-            .foregroundStyle(MC.mist)
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .overlay(Capsule().strokeBorder(MC.mist, lineWidth: 2))
-            .opacity(configuration.isPressed ? 0.6 : 1)
-            .contentShape(Capsule())
     }
 }
