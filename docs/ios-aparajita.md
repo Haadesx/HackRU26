@@ -75,6 +75,10 @@ test targets.
 - **Supply bottles are drawn at 75% of the handoff size** (`BottleMetrics.scale` in `Design/PillBottleView.swift`)
   so two full bottles plus the edge of a third fit on an iPhone beside the "Days left" column. The text under
   each bottle keeps its size; the on-bottle name is 13 pt (it shrinks only for long names).
+  **Measured on a physical iPhone 15 (393 × 852 pt, default text size): two full bottles plus the edge of a
+  third.** In the simulator at 390 pt wide, two still fit at Extra Large through the largest regular size
+  (at the largest the second bottle's badge touches the card edge); at accessibility text sizes only one
+  fits and the row scrolls.
 - **Greeting follows the clock** instead of the web's hard-coded "Good morning".
 - **iOS-only APIs are fenced** (`#if os(iOS)`) so the target still compiles for macOS.
 
@@ -189,6 +193,7 @@ Run from the `ios/` directory. "Verified" means I ran it and it succeeded.
 | Signed build + install on iPhone | set your own Team in Signing & Capabilities, then Run (or `xcodebuild … -destination 'id=<udid>' -allowProvisioningUpdates`, `xcrun devicectl device install app`) | verified on an iPhone 15, iOS 18.5 |
 | Demo mode | nothing to do | verified |
 | Point at a hub | set `MEDCHECK_API_URL=http://<host>:8000/hub` in the scheme (`:8500` for `tools/hub_adapter`) | verified against `tools/hub_adapter` from the simulator; `/hub` and a phone **unverified** |
+| Screenshot a physical device (Debug) | `xcrun devicectl device process launch --device <udid> --terminate-existing <bundle id> -- -medcheck.snapshot 1 -medcheck.scrollY 880`, wait about 10 s with the phone **unlocked**, then `xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier <bundle id> --source Documents/medcheck-snapshot.png --destination out.png` | verified on iPhone 15 |
 | In-app demo self-test (40 checks) | `xcrun simctl launch --console-pty booted <bundle id> -medcheck.selfTest 1` | verified, 40/40 against `MockAPI` |
 | Contract fixtures (32 checks) | `… launch --console-pty booted <bundle id> -medcheck.fixtures <repo>/frontend/docs/fixtures` | verified |
 | Live hub (34 checks) | start the adapter (below), then `SIMCTL_CHILD_MEDCHECK_API_URL=http://127.0.0.1:8500 xcrun simctl launch --console-pty booted <bundle id> -medcheck.liveTest 1` | verified |
@@ -271,6 +276,7 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | Created `feat/ios-aparajita`; added this handoff; read the shared hub contract and recorded the mismatches | team handoff process | `b503d96`, `1f83520` |
 | 2026-10-11 | **Conformed the client to the shared hub contract** (commit `b42266c`): new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
 | 2026-10-11 | Shrank the supply-shelf bottles by 25% (one scale constant) and tightened column spacing 20 → 12 pt | only 1.5 bottles were visible on an iPhone; the team wants at least two | see "Pushed SHAs" |
+| 2026-10-11 | Added Debug-only `-medcheck.snapshot 1` (writes `Documents/medcheck-snapshot.png`) to screenshot a physical device; used it to confirm two bottles on the iPhone 15 | simulator widths are not a substitute for the real device | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs

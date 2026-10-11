@@ -31,6 +31,9 @@ enum DebugLaunch {
     static var offline: Bool { defaults.integer(forKey: "medcheck.offline") == 1 }
     static var skipDays: Int { defaults.integer(forKey: "medcheck.skipDays") }
     static var selfTest: Bool { defaults.integer(forKey: "medcheck.selfTest") == 1 }
+    /// Saves a PNG of the window to the app's Documents folder after a few seconds, so a screenshot of a
+    /// physical device can be pulled with `devicectl device copy from`.
+    static var snapshot: Bool { defaults.integer(forKey: "medcheck.snapshot") == 1 }
     static var liveTest: Bool { defaults.integer(forKey: "medcheck.liveTest") == 1 }
     /// Folder with `frontend/docs/fixtures/*.json`; runs the contract decoding checks.
     static var fixturesPath: String? { defaults.string(forKey: "medcheck.fixtures") }
@@ -43,4 +46,23 @@ enum DebugLaunch {
         defaults.object(forKey: "medcheck.sheetScrollY") == nil ? nil : CGFloat(defaults.double(forKey: "medcheck.sheetScrollY"))
     }
 }
+
+#if canImport(UIKit)
+import UIKit
+
+extension DebugLaunch {
+    /// Writes `Documents/medcheck-snapshot.png` for the current key window.
+    @MainActor static func writeSnapshot() {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+              let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first else { return }
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        guard let data = image.pngData(),
+              let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        try? data.write(to: folder.appendingPathComponent("medcheck-snapshot.png"))
+        print("SNAPSHOT written \(Int(window.bounds.width))x\(Int(window.bounds.height))pt")
+    }
+}
+#endif
 #endif

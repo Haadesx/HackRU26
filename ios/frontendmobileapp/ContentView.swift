@@ -53,6 +53,12 @@ struct ContentView: View {
             if DebugLaunch.selfTest { await DebugSelfTest.run(store: store) }
             if let path = DebugLaunch.fixturesPath { DebugContractTest.runFixtures(directory: path) }
             if DebugLaunch.liveTest { await DebugContractTest.runLive() }
+            #if canImport(UIKit)
+            if DebugLaunch.snapshot {
+                try? await Task.sleep(for: .seconds(4))
+                DebugLaunch.writeSnapshot()
+            }
+            #endif
             #endif
         }
     }
