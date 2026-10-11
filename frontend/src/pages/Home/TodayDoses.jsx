@@ -2,27 +2,14 @@ import { useState } from "react";
 import Button from "../../components/Button";
 import StatusBadge from "../../components/StatusBadge";
 import EmptyState from "../../components/EmptyState";
-import { fmtSlot, fmtTime, sameDay } from "../../lib/format";
+import { fmtSlot, fmtTime } from "../../lib/format";
+import { buildDay } from "../../lib/doses";
 import { api } from "../../api/client";
 import { useAppState } from "../../state/AppState";
 
-export function buildToday(data) {
-  const now = new Date(data.now);
-  const rows = [];
-  for (const m of data.medications) {
-    for (const slot of m.schedule_times) {
-      const [h, mm] = slot.split(":").map(Number);
-      const due = new Date(now); due.setHours(h, mm, 0, 0);
-      const dose = data.doses.find((d) => d.medication_id === m.id && d.slot === slot && sameDay(d.taken_at, now));
-      const reminded = data.reminders.some((r) => r.medication_id === m.id && r.slot === slot && sameDay(r.sent_at, now));
-      const state = dose ? "taken" : due <= now ? (reminded ? "reminded" : "late") : "upcoming";
-      rows.push({ key: `${m.id}-${slot}`, med: m, slot, due, dose, state });
-    }
-  }
-  return rows.sort((a, b) => a.due - b.due || a.med.name.localeCompare(b.med.name));
-}
+export const buildToday = (data) => buildDay(data);
 
-const METHOD = { voice: "by voice", button: "button", dashboard: "logged by you" };
+const METHOD = { voice: "by voice", button: "button", dashboard: "logged by you", scan: "scanned" };
 
 export default function TodayDoses({ data }) {
   const { run } = useAppState();
@@ -38,9 +25,12 @@ export default function TodayDoses({ data }) {
 
   return (
     <section aria-labelledby="today-h" className="flex flex-col gap-3">
-      <div>
-        <h2 id="today-h" className="text-xl font-bold">Today's doses</h2>
-        <p className="text-ink-soft">{taken} of {rows.length} doses taken.{next ? ` Next: ${fmtSlot(next.slot)}.` : ""}</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 id="today-h" className="text-xl font-bold">Today's doses</h2>
+          <p className="text-ink-soft">{taken} of {rows.length} doses taken.{next ? ` Next: ${fmtSlot(next.slot)}.` : ""}</p>
+        </div>
+        <Button variant="secondary" to="/track">Track and scan doses</Button>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No doses scheduled today.</EmptyState>
@@ -52,6 +42,7 @@ export default function TodayDoses({ data }) {
               <span className="min-w-0"><strong>{r.med.name}</strong> {r.med.strength}</span>
               {r.state === "taken" && <StatusBadge tone="ok">Taken {fmtTime(r.dose.taken_at)}, {METHOD[r.dose.method] || r.dose.method}</StatusBadge>}
               {r.state === "upcoming" && <StatusBadge tone="grey">Upcoming</StatusBadge>}
+              {r.state === "skipped" && <StatusBadge tone="grey">Skipped</StatusBadge>}
               {r.state === "reminded" && <StatusBadge tone="info">Reminder sent</StatusBadge>}
               {r.state === "late" && (
                 <span className="flex flex-wrap items-center justify-end gap-2">

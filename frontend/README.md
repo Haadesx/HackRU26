@@ -39,6 +39,7 @@ addresses, so serve over HTTPS if you open the app from another device.
 | `/scan` | **Scan**: webcam capture, multiple photos per bottle, "Found so far", upload and manual-entry fallbacks |
 | `/scan/:scanId/verify` | **Verify**: fill in missing or unclear label fields, then **Preview** with Edit and Add |
 | `/scan/added/:medId` | **Added** confirmation |
+| `/track` | **Track**: today's doses by time of day (taken, late, upcoming, skipped), progress bar, Mark as taken / Remind Rosa / Skip, earlier days, and the **dose scanner** (webcam now, Meta glasses later) that checks the bottle before a dose is confirmed |
 | `/history` | **History**: adherence calendar, day breakdown, downloadable report |
 | `/settings` | **Settings**: caregivers, alert thresholds, reminder options, privacy controls |
 
@@ -53,10 +54,12 @@ src/
   lib/
     inventory.js     days left, status, run-out date, pill count
     format.js        dates and times
+    doses.js         each day's scheduled doses and their state (Home and Track)
   components/        Button (capsule), Card, Dialog, StatusBadge, StatTile, Notice,
                      TextField, Toggle, SectionHeader, EmptyState
   layout/            AppShell, TopNav, HubStatus, DemoBar
   pages/
+    Track/           TrackPage, DoseRow, DoseScanner
     Home/            HomePage, StatusHeadline, SupplyShelf, PillBottle, TodayDoses,
                      MedicationPanel, NeedsHelpCard, AlertFeed, MistakesCaught
     Scan/            ScanPage, CameraView, SourcePicker, FoundSoFar, ScanSteps,
@@ -108,6 +111,8 @@ the scan endpoints, which return the scan.
 | GET | `/state` | | Every screen |
 | POST | `/medications/{id}/doses` | `{ method, slot }` | Log a dose |
 | POST | `/medications/{id}/remind` | `{ slot }` | Remind Rosa |
+| POST | `/medications/{id}/skip` | `{ slot }` | Skip a dose (Track) |
+| POST | `/doses/scan` | multipart `photo` | Dose scanner: identify the bottle, record nothing (Track) |
 | POST | `/medications/{id}/counts` | `{ count }` | Correct pill count |
 | POST | `/medications/{id}/refill` | | Mark refill picked up |
 | PATCH | `/medications/{id}` | label fields | Edit details |

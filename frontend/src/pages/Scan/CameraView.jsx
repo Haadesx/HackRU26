@@ -6,7 +6,7 @@ import Notice from "../../components/Notice";
  * Webcam source for the MVP. Later, the Meta glasses become a second source that
  * produces the same photo blobs, and nothing downstream changes.
  */
-export default function CameraView({ onCapture, busy }) {
+export default function CameraView({ onCapture, busy, hint = "Hold the label inside the frame, about a hand's length away", captureLabel = "Take photo", compact = false }) {
   const video = useRef(null);
   const stream = useRef(null);
   const [status, setStatus] = useState("starting"); // starting | live | blocked | unsupported
@@ -64,10 +64,10 @@ export default function CameraView({ onCapture, busy }) {
       <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] bg-[#2B3A4D]">
         <video ref={video} autoPlay playsInline muted className="h-full w-full object-cover" aria-label="Live webcam view" />
         <div aria-hidden="true" className="pointer-events-none absolute inset-x-[16%] inset-y-[22%] rounded-2xl border-[3px] border-white shadow-[0_0_0_2000px_rgba(21,34,56,0.4)]" />
-        <span className="absolute left-1/2 top-[8%] -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-1.5 text-[15px] font-bold">
-          Hold the label inside the frame, about a hand's length away
+        <span className="absolute left-1/2 top-[8%] max-w-[92%] -translate-x-1/2 truncate rounded-full bg-white px-4 py-1.5 text-[15px] font-bold">
+          {hint}
         </span>
-        <span className="absolute bottom-[7%] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-ok-fill px-4 py-1.5 text-[15px] font-bold text-ok">
+        <span className="absolute bottom-[7%] left-1/2 max-w-[92%] -translate-x-1/2 truncate rounded-full bg-ok-fill px-4 py-1.5 text-[15px] font-bold text-ok">
           {status === "live" ? "Hold still, then take the photo." : "Starting the camera…"}
         </span>
       </div>
@@ -81,9 +81,9 @@ export default function CameraView({ onCapture, busy }) {
               </select>
             </label>
           )}
-          <span className="text-[15px] text-ink-soft">Tip: face a window or lamp so the label isn't in shadow.</span>
+          {!compact && <span className="text-[15px] text-ink-soft">Tip: face a window or lamp so the label isn't in shadow.</span>}
         </div>
-        <Button size="lg" onClick={capture} busy={busy} disabled={status !== "live"}>Take photo</Button>
+        <Button size="lg" onClick={capture} busy={busy} disabled={status !== "live"} className={compact ? "w-full" : ""}>{captureLabel}</Button>
       </div>
     </div>
   );

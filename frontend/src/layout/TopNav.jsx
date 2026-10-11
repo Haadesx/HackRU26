@@ -4,6 +4,7 @@ import HubStatus from "./HubStatus";
 const TABS = [
   { to: "/", label: "Home", end: true },
   { to: "/scan", label: "Scan" },
+  { to: "/track", label: "Track" },
   { to: "/history", label: "History" },
   { to: "/settings", label: "Settings" },
 ];
