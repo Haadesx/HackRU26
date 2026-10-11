@@ -227,11 +227,42 @@ enum DoseMatch: Equatable {
         var slot: String
     }
 
+    /// Why a bottle should not be taken now. The wording is the hub's; the kind picks the headline.
+    struct Advice: Equatable {
+        enum Kind: Equatable {
+            /// A tracked medicine whose next dose is later ("Fluoxetine isn't due yet. Next dose at 11:00").
+            case notDueYet
+            /// A tracked medicine with no doses left today.
+            case noMoreToday
+            /// Not a medicine the hub tracks.
+            case notTracked
+            /// The right medicine at a strength that isn't the prescription.
+            case strengthMismatch
+        }
+
+        var kind: Kind
+        var name: String?
+        var strength: String?
+        var message: String
+
+        var title: String {
+            switch kind {
+            case .notDueYet: "Don't take this yet"
+            case .noMoreToday: "Don't take another dose today"
+            case .notTracked: "Not a medication you're tracking"
+            case .strengthMismatch: "Don't take it until a pharmacist checks"
+            }
+        }
+    }
+
     case match(Bottle, slot: String, late: Bool)
     /// `reason` and `message` are the hub's own words ("wrong_medication", "strength_mismatch", "not_due").
     case wrongBottle(Bottle, expected: Expected, reason: String?, message: String?)
     case alreadyTaken(Bottle, slot: String?, takenAt: Date?)
+    /// Nothing is due and the bottle is not a problem.
     case notScheduled(message: String)
+    /// The bottle is one the caregiver should be told **not** to take now. Shown as a red advisory.
+    case doNotTake(Advice)
 }
 
 // MARK: - Alerts and events

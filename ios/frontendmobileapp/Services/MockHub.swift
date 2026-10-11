@@ -317,14 +317,20 @@ struct MockHub {
             list.sorted { abs($0.due.timeIntervalSince(now)) < abs($1.due.timeIntervalSince(now)) }
         }
 
+        // As on the real hub, a dose is "due now" from half an hour before its time until it is taken or closed.
+        // Anything later is not due yet, so a bottle for it is "Don't take this yet", not a wrong bottle.
+        let window: TimeInterval = 30 * 60
         let allOpen = nearest(medications.flatMap { open($0) })
-        let expected = allOpen.first { $0.due <= now } ?? allOpen.first
+        let expected = allOpen.first { $0.due.addingTimeInterval(-window) <= now }
 
         // `Self.untrackedBottle` is a medicine the hub doesn't track: the real hub answers wrong_bottle with no id.
         if demoMedicationID == Self.untrackedBottle {
-            guard let expected else { return .notScheduled(message: "No doses are left today.") }
             let message = "Ibuprofen isn't a medication you're tracking. Scan the right bottle, or add this one as a new "
                 + "prescription if the doctor prescribed it."
+            // Nothing due: the bottle is still not one to take, but there is no wrong-bottle event to record.
+            guard let expected else {
+                return .doNotTake(DoseMatch.Advice(kind: .notTracked, name: "Ibuprofen", strength: "200 mg", message: message))
+            }
             events.insert(SafetyEvent(
                 id: newID(), type: "wrong_bottle",
                 message: "Picked up Ibuprofen 200 mg when \(expected.med.name) was due. MedCheck caught it before it was taken.",
@@ -335,7 +341,8 @@ struct MockHub {
                                 reason: "wrong_medication", message: message)
         }
 
-        let seen = demoMedicationID.flatMap { id in medications.first { $0.id == id } } ?? expected?.med
+        let seen = demoMedicationID.flatMap { id in medications.first { $0.id == id } }
+            ?? expected?.med ?? allOpen.first?.med
         guard let seen else { return .notScheduled(message: "No doses are left today.") }
 
         let bottle = DoseMatch.Bottle(medicationID: seen.id, name: seen.name, strength: seen.strength)
@@ -353,6 +360,13 @@ struct MockHub {
                 medicationID: expected.med.id, name: expected.med.name, slot: expected.slot),
                                 reason: "not_due",
                                 message: "\(seen.name) \(seen.strength) isn't due now. \(expected.med.name) is due at \(expected.slot).")
+        }
+        let opensAt = openMine.due.addingTimeInterval(-window)
+        if opensAt > now {
+            return .doNotTake(DoseMatch.Advice(
+                kind: .notDueYet, name: seen.name, strength: seen.strength,
+                message: "\(seen.name) \(seen.strength) isn't due yet. Next dose at \(openMine.slot) "
+                    + "(you can log it from \(Fmt.slotKey(opensAt)))."))
         }
         return .match(bottle, slot: openMine.slot, late: openMine.due <= now)
     }
