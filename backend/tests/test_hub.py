@@ -294,33 +294,35 @@ def test_vlm_zero_confidence_form_is_not_trusted(hub, ctx, monkeypatch):
     assert med is not None and med.dosage_form == "capsule"  # caregiver's choice, not the VLM's "tablet"
 
 
-def test_unknown_to_ocr_lexicon_name_recovered_via_openfda(hub, monkeypatch):
-    """OCR read FLUOXETINE but its lexicon doesn't know it, so it guessed 'DEMO' at 0.3."""
+def test_name_taken_from_label_when_ocr_name_is_weak(hub, monkeypatch):
+    """OCR read FLUOXETINE but its lexicon doesn't know it, so it guessed 'DEMO' at 0.3.
+    The hub uses the label text itself; no drug list (OpenFDA or otherwise) limits the name."""
     from app.services import openfda
 
-    labels._fda_cache.clear()
-    looked_up = []
+    def no_network(*a, **kw):
+        raise AssertionError("scan name extraction must not call OpenFDA")
 
-    def fake_search(name, limit=10):
-        looked_up.append(name)
-        if name.lower() == "fluoxetine":
-            return {"available": True, "candidates": [{"openfda_id": "1", "generic_name": "FLUOXETINE HYDROCHLORIDE", "brand_name": "Prozac", "dosage_form": "capsule", "strengths": ["20 mg"], "rxcui": "1"}]}
-        return {"available": True, "candidates": []}
-
-    monkeypatch.setattr(openfda, "search", fake_search)
+    monkeypatch.setattr(openfda, "search", no_network)
     fake = FakeInference(monkeypatch)
-    body = inference(name="DEMO", name_conf=0.3, strength=(20, "mg"),
-                     text="DEMO PHARMACY (555) 010-2030\nFLUOXETINE 20 mg CAPSULES\nTake 1 capsule by mouth once daily")
-    fake.queue = [body]
-    f = hub.photo("/scans").get_json()["fields"]
-    assert f["name"] == {"value": "Fluoxetine", "state": "unsure"}
-    assert looked_up == ["FLUOXETINE"]  # pharmacy line and form words aren't looked up
+    fake.queue = [
+        inference(name="DEMO", name_conf=0.3, strength=(20, "mg"),
+                  text="DEMO PHARMACY (555) 010-2030\nFLUOXETINE 20 mg CAPSULES\nTake 1 capsule by mouth once daily"),
+        inference(name=None, text="MEFTAL-SPAS\nEach tablet contains\nDicyclomine Hydrochloride 10mg"),
+        inference(name=None, text="SOMEBRAND 5 mg TABLETS"),
+        inference(name=None, text="Take with food\nKeep out of reach of children"),
+    ]
+    names = [hub.photo("/scans").get_json()["fields"]["name"] for _ in range(4)]
+    assert names[0] == {"value": "Fluoxetine", "state": "unsure"}
+    assert names[1] == {"value": "Dicyclomine Hydrochloride", "state": "unsure"}
+    assert names[2] == {"value": "Somebrand", "state": "unsure"}  # any name, any source
+    assert names[3]["state"] == "missing"  # no strength line -> nothing guessed
 
-    # Nothing recognizable on the label -> stays missing (never invented)
-    labels._fda_cache.clear()
-    fake.queue = [inference(name=None, text="SOMEBRAND 5 mg TABLETS")]
-    monkeypatch.setattr(openfda, "search", lambda name, limit=10: {"available": True, "candidates": []})
-    assert hub.photo("/scans").get_json()["fields"]["name"]["state"] == "missing"
+
+def test_name_from_label_rules():
+    assert labels.name_from_label("Take 1 tablet\nLISINOPRIL 10 mg TABLETS") == "Lisinopril"
+    assert labels.name_from_label("Each tablet contains Mefenamic Acid 250mg") == "Mefenamic Acid"
+    assert labels.name_from_label("QTY 30\n250mg") is None  # nothing before the strength
+    assert labels.name_from_label("") is None
 
 
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
