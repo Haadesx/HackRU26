@@ -3,7 +3,9 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~05:00 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal), submission frozen. Final SHA in §A/§H.
+> **Last updated:** 2026-10-11 ~05:00 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal), **submission frozen at `7f93e60`**.
+> **Final submission commit:** `7f93e60afb915f037d8127787fe1e02bbe8a5ec6` on `feat/integration`
+> (submission URL: https://github.com/Haadesx/HackRU26/tree/feat/integration).
 > **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
@@ -27,8 +29,10 @@ detection, RapidOCR, multi-frame fusion, Qwen3-VL escalation only when needed); 
 409; a scan never records ingestion; dose confirm only when due; double-log blocked; inventory/
 refill/adherence; dashboard renders hub data; local scanner console; ElevenLabs TTS sample.
 
-**Suite status (independently re-run):** inference **523/523** (vision · ocr · vlm · api ·
-integration) and backend **81/81** (incl. 20 `/hub` tests). Frontend build clean.
+**Suite status (independently re-run on the frozen tree):** backend **123/123** (incl. 43 hub and 18 adversarial
+fail-closed tests, and Urvi's fork-safety tests); inference/adapter/integration **538/538** (523 inference +
+15 adapter); frontend build clean; demo rehearsal read-only **8/8** (state changes: none) and **15/15** with
+`--with-writes` (disposable fixture, state restored).
 
 **Safety fixes landed this pass (P0):**
 1. **Interval cadences can no longer become fixed times.** The hub's regex fallback converted
