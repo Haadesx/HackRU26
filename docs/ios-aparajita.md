@@ -72,6 +72,9 @@ test targets.
   the History insight from the single `GET /state`.
 - **Tolerant decoding.** Ids may be numbers or numeric strings, and one malformed list entry is skipped
   instead of failing the whole state (the reference adapter really does return `"medication_id": "5"`).
+- **Supply bottles are drawn at 75% of the handoff size** (`BottleMetrics.scale` in `Design/PillBottleView.swift`)
+  so two full bottles plus the edge of a third fit on an iPhone beside the "Days left" column. The text under
+  each bottle keeps its size; the on-bottle name is 13 pt (it shrinks only for long names).
 - **Greeting follows the clock** instead of the web's hard-coded "Good morning".
 - **iOS-only APIs are fenced** (`#if os(iOS)`) so the target still compiles for macOS.
 
@@ -267,6 +270,7 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | History of `feat/inference-medcheck` rewritten to remove a co-author trailer (see I.5) | owner request | `d03fada` |
 | 2026-10-11 | Created `feat/ios-aparajita`; added this handoff; read the shared hub contract and recorded the mismatches | team handoff process | `b503d96`, `1f83520` |
 | 2026-10-11 | **Conformed the client to the shared hub contract** (commit `b42266c`): new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
+| 2026-10-11 | Shrank the supply-shelf bottles by 25% (one scale constant) and tightened column spacing 20 → 12 pt | only 1.5 bottles were visible on an iPhone; the team wants at least two | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs

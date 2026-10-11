@@ -12,12 +12,44 @@ struct ShelfBottle: Identifiable, Hashable {
     let accessibilityText: String
 }
 
+/// Geometry of the bottle illustration. Every dimension is the handoff's original value times `scale`,
+/// so the bottle stays in proportion. At 0.75 two bottles fit beside the "Days left" column on an iPhone.
 private enum BottleMetrics {
-    static let capSize = CGSize(width: 152, height: 38)
-    static let neckSize = CGSize(width: 134, height: 8)
-    static let bodySize = CGSize(width: 140, height: 214)
-    static let daysTop: CGFloat = 14
-    static let badgeTop: CGFloat = 6
+    static let scale: CGFloat = 0.75
+
+    private static func s(_ value: CGFloat) -> CGFloat { value * scale }
+
+    static let capSize = CGSize(width: s(152), height: s(38))
+    static let neckSize = CGSize(width: s(134), height: s(8))
+    static let bodySize = CGSize(width: s(140), height: s(214))
+
+    static let capTopRadius = s(12)
+    static let capBottomRadius = s(6)
+    static let capBand = s(5)
+    static let capEdgeDrop = s(2)
+    /// Vertical ridges on the cap: a white stripe, then a darker one, repeating.
+    static let stripeOffset = s(7)
+    static let stripeWidth = s(3)
+    static let stripePeriod = s(10)
+
+    static let bodyTopRadius = s(10)
+    static let bodyBottomRadius = s(24)
+    static let bodyStroke = s(2)
+
+    static let labelHeight = s(62)
+    static let labelTop = s(18)
+    static let labelInset = s(10)
+    static let labelRadius = s(8)
+
+    static let pillSize = CGSize(width: s(24), height: s(12))
+    static let pillGap = s(4)
+    static let pillsBottom = s(12)
+
+    static let daysTop = s(14)
+    static let badgeTop = s(6)
+
+    /// Space between bottles in the shelf row.
+    static let columnSpacing: CGFloat = 12
 }
 
 struct PillBottleView: View {
@@ -52,7 +84,8 @@ struct PillBottleView: View {
             StatusBadge(status: bottle.status)
                 .padding(.top, BottleMetrics.badgeTop)
         }
-        .frame(width: BottleMetrics.capSize.width)
+        // At least the cap's width; grows if large text needs more room.
+        .frame(minWidth: BottleMetrics.capSize.width)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(bottle.accessibilityText)
     }
@@ -61,20 +94,25 @@ struct PillBottleView: View {
 /// Cap: white rounded rectangle with vertical ridges and a `line` band along the bottom.
 private struct BottleCap: View {
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 6,
-                                           bottomTrailingRadius: 6, topTrailingRadius: 12)
+        let shape = UnevenRoundedRectangle(topLeadingRadius: BottleMetrics.capTopRadius,
+                                           bottomLeadingRadius: BottleMetrics.capBottomRadius,
+                                           bottomTrailingRadius: BottleMetrics.capBottomRadius,
+                                           topTrailingRadius: BottleMetrics.capTopRadius)
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
-            var x: CGFloat = 7
+            var x = BottleMetrics.stripeOffset
             while x < size.width {
-                context.fill(Path(CGRect(x: x, y: 0, width: 3, height: size.height)), with: .color(MC.capStripe))
-                x += 10
+                context.fill(Path(CGRect(x: x, y: 0, width: BottleMetrics.stripeWidth, height: size.height)),
+                             with: .color(MC.capStripe))
+                x += BottleMetrics.stripePeriod
             }
-            context.fill(Path(CGRect(x: 0, y: size.height - 5, width: size.width, height: 5)), with: .color(MC.line))
+            context.fill(Path(CGRect(x: 0, y: size.height - BottleMetrics.capBand,
+                                     width: size.width, height: BottleMetrics.capBand)),
+                         with: .color(MC.line))
         }
         .frame(width: BottleMetrics.capSize.width, height: BottleMetrics.capSize.height)
         .clipShape(shape)
-        .background(shape.fill(MC.secondaryEdge).offset(y: 2))
+        .background(shape.fill(MC.secondaryEdge).offset(y: BottleMetrics.capEdgeDrop))
     }
 }
 
@@ -82,8 +120,10 @@ private struct BottleBody: View {
     let bottle: ShelfBottle
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 24,
-                                           bottomTrailingRadius: 24, topTrailingRadius: 10)
+        let shape = UnevenRoundedRectangle(topLeadingRadius: BottleMetrics.bodyTopRadius,
+                                           bottomLeadingRadius: BottleMetrics.bodyBottomRadius,
+                                           bottomTrailingRadius: BottleMetrics.bodyBottomRadius,
+                                           topTrailingRadius: BottleMetrics.bodyTopRadius)
         ZStack(alignment: .top) {
             shape.fill(bottle.status.tint)
             // Glass highlight
@@ -94,38 +134,41 @@ private struct BottleBody: View {
                         .init(color: .white.opacity(0.45), location: 1)],
                 startPoint: .leading, endPoint: .trailing))
 
-            // Label (illustration text stays a fixed size; the accessible text carries the same facts)
+            // Label. The name stays as large as the smaller bottle allows and shrinks only if a long name needs
+            // it; the accessible text carries the same facts either way.
             VStack(spacing: 0) {
                 Text(bottle.name)
-                    .font(.custom(MCFont.boldName, fixedSize: 16))
+                    .font(.custom(MCFont.boldName, fixedSize: 13))
                     .foregroundStyle(MC.ink)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Text(bottle.strength)
-                    .font(.custom(MCFont.regularName, fixedSize: 13))
+                    .font(.custom(MCFont.regularName, fixedSize: 11))
                     .foregroundStyle(MC.inkSoft)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .multilineTextAlignment(.center)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 3)
             .frame(maxWidth: .infinity)
-            .frame(height: 62)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white)
+            .frame(height: BottleMetrics.labelHeight)
+            .background(RoundedRectangle(cornerRadius: BottleMetrics.labelRadius).fill(Color.white)
                 .shadow(color: MC.ink.opacity(0.12), radius: 1, y: 1))
-            .padding(.horizontal, 10)
-            .padding(.top, 18)
+            .padding(.horizontal, BottleMetrics.labelInset)
+            .padding(.top, BottleMetrics.labelTop)
 
             // Pills fill from the bottom up in rows of 4; the partial row sits on top.
-            VStack(spacing: 4) {
+            VStack(spacing: BottleMetrics.pillGap) {
                 ForEach(Array(rowSizes.enumerated()), id: \.offset) { _, count in
-                    HStack(spacing: 4) {
+                    HStack(spacing: BottleMetrics.pillGap) {
                         ForEach(0..<count, id: \.self) { _ in BottlePill(status: bottle.status) }
                     }
                 }
             }
-            .padding(.bottom, 12)
+            .padding(.bottom, BottleMetrics.pillsBottom)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
-            shape.strokeBorder(MC.navy.opacity(0.10), lineWidth: 2)
+            shape.strokeBorder(MC.navy.opacity(0.10), lineWidth: BottleMetrics.bodyStroke)
         }
         .frame(width: BottleMetrics.bodySize.width, height: BottleMetrics.bodySize.height)
     }
@@ -140,7 +183,7 @@ private struct BottleBody: View {
     }
 }
 
-/// Two-tone capsule, 24 x 12, in the status pill colors.
+/// Two-tone capsule in the status pill colors.
 private struct BottlePill: View {
     let status: SupplyStatus
 
@@ -158,7 +201,7 @@ private struct BottlePill: View {
                             .init(color: .clear, location: 0.17)],
                     startPoint: .top, endPoint: .bottom)))
             .overlay(Capsule().strokeBorder(MC.navy.opacity(0.12), lineWidth: 1))
-            .frame(width: 24, height: 12)
+            .frame(width: BottleMetrics.pillSize.width, height: BottleMetrics.pillSize.height)
     }
 }
 
@@ -179,7 +222,7 @@ struct SupplyShelf: View {
                     helper: "Each bottle shows how many days of pills Rosa has left. A full bottle is 30 days or more. Tap a cap to see everything about that medication.")
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 20) {
+                    HStack(alignment: .top, spacing: BottleMetrics.columnSpacing) {
                         labelColumn
                         ForEach(bottles) { bottle in
                             Button { onOpen(bottle.id) } label: {
