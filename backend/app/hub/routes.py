@@ -11,7 +11,7 @@ from werkzeug.exceptions import HTTPException
 
 from app.errors import ApiError
 from app.extensions import db
-from app.hub import contacts, labels, rx
+from app.hub import contacts, labels, rx, verify as hub_verify
 from app.hub.defaults import DEFAULT_SETTINGS
 from app.hub.state import (
     build_state,
@@ -297,6 +297,11 @@ def _read_photo(scan: HubScan) -> None:
         scan.guidance = (result.get("frame_quality") or {}).get("guidance") or ["Hold the bottle steady and try another photo."]
     else:
         labels.merge(fields, confidence, labels.readings_from_inference(result))
+        form, unit = labels.form_from_inference(result)
+        if form:
+            scan.dosage_form = form
+        if unit:
+            scan.dose_unit = unit
         raw = (result.get("instructions") or {}).get("raw_text")
         if raw and not scan.instructions:
             scan.instructions = raw
@@ -325,6 +330,18 @@ def _strength_obj(strength: str) -> dict:
         return {}
 
 
+def _scan_payload(scan) -> dict:
+    """Scan JSON plus the read-only medication-verification block (never records a dose)."""
+    payload = scan_json(scan)
+    try:
+        verification = hub_verify.scan_verification(hub_patient(), scan)
+    except Exception:  # noqa: BLE001 - verification must never break a scan
+        verification = None
+    if verification:
+        payload["verification"] = verification
+    return payload
+
+
 @hub_bp.post("/scans")
 def start_scan():
     patient = hub_patient()
@@ -332,13 +349,13 @@ def start_scan():
         scan = HubScan(patient_id=patient.id, status="reading", photos=0, manual=True, fields=labels.empty_fields(), confidence={}, history=[], guidance=[])
         db.session.add(scan)
         db.session.commit()
-        return jsonify(scan_json(scan))
+        return jsonify(_scan_payload(scan))
     scan = HubScan(patient_id=patient.id, status="reading", photos=0, manual=False, fields=labels.empty_fields(), confidence={}, history=[], guidance=[])
     db.session.add(scan)
     db.session.flush()
     _read_photo(scan)
     db.session.commit()
-    return jsonify(scan_json(scan))
+    return jsonify(_scan_payload(scan))
 
 
 @hub_bp.post("/scans/<int:scan_id>/photos")
@@ -348,7 +365,7 @@ def add_photo(scan_id: int):
         raise ApiError(409, "SCAN_COMPLETE", "This medication was already added.")
     _read_photo(scan)
     db.session.commit()
-    return jsonify(scan_json(scan))
+    return jsonify(_scan_payload(scan))
 
 
 @hub_bp.get("/scans/<int:scan_id>")
@@ -393,17 +410,20 @@ def complete_scan(scan_id: int):
     strength = normalize_strength(v.get("strength"))
     if not strength:
         raise unprocessable("Add the strength, like 25 mg.")
-    dose_amount = _parse_int(v.get("dose_amount"), "Tablets per dose", minimum=1)
+    form = (scan.dosage_form or "").strip().lower() or None
+    unit = (scan.dose_unit or "").strip().lower() or None
+    noun = labels.form_noun(form, unit)
+    dose_amount = _parse_int(v.get("dose_amount"), f"{labels.form_plural(noun).capitalize()} per dose", minimum=1)
     times = _times(v.get("schedule_times"))
-    quantity_start = _parse_int(v.get("quantity_start"), "Tablets in the bottle", minimum=1)
+    quantity_start = _parse_int(v.get("quantity_start"), f"{labels.form_plural(noun).capitalize()} in the bottle", minimum=1)
     refills = _parse_int(v.get("refills_remaining"), "Refills", allow_none=True)
     when = ", ".join(times)
-    instructions = scan.instructions or f"Take {dose_amount} tablet{'s' if dose_amount != 1 else ''} at {when}."
+    instructions = scan.instructions or f"Take {dose_amount} {noun}{'s' if dose_amount != 1 else ''} at {when}."
     result = rx.add_medication(
         patient,
         {
-            "name": v["name"], "strength": strength, "dosage_form": "tablet",
-            "dose_quantity": Decimal(dose_amount), "dose_unit": "tablet",
+            "name": v["name"], "strength": strength, "dosage_form": form,   # None = unknown; never assumed
+            "dose_quantity": Decimal(dose_amount), "dose_unit": unit or noun,
             "quantity_prescribed": Decimal(quantity_start), "refills_authorized": refills,
             "instructions": instructions,
         },
@@ -433,7 +453,13 @@ def complete_scan(scan_id: int):
     hm, item = find_tracked(patient, hm.id)
     med = medication_json(patient, hm, item)
     build_state(patient)  # runs supply checks for the new bottle
-    return jsonify({"medication": med, "warnings": result.get("warnings", [])})
+    warnings = list(result.get("warnings") or [])
+    if not form:
+        warnings.append({
+            "field": "dosage_form",
+            "message": "The dosage form wasn't readable from the label — please confirm the medication is correct.",
+        })
+    return jsonify({"medication": med, "warnings": warnings})
 
 
 # ---------- adherence ----------

@@ -22,7 +22,7 @@ export default function Dialog({ open, onClose, label, children, className = "ma
       onClick={(e) => e.target === ref.current && onClose()}
       className={`w-[calc(100%-2rem)] ${className} rounded-[22px] bg-white p-0 text-ink shadow-dialog backdrop:bg-ink/45`}
     >
-      {open && <div className="max-h-[85vh] overflow-y-auto p-6 sm:p-7">{children}</div>}
+      {open && <div className="max-h-[85vh] overflow-y-auto overscroll-contain p-6 sm:p-7">{children}</div>}
     </dialog>
   );
 }

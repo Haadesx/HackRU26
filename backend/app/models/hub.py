@@ -101,6 +101,8 @@ class HubScan(db.Model):
     fields: Mapped[dict] = mapped_column(JSONB, nullable=False)          # {key: {value, state}}
     confidence: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # {key: float}
     instructions: Mapped[str | None] = mapped_column(Text)               # raw label instructions, if read
+    dosage_form: Mapped[str | None] = mapped_column(String(50))          # from inference, e.g. "capsule"; NULL = unknown
+    dose_unit: Mapped[str | None] = mapped_column(String(30))            # from inference dose unit; NULL = unknown
     guidance: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)    # last photo's camera guidance
     history: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     medication_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("hub_medications.id", ondelete="SET NULL"))

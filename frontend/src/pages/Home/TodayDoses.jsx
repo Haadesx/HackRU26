@@ -40,25 +40,39 @@ export default function TodayDoses({ data }) {
     <section aria-labelledby="today-h" className="flex flex-col gap-3">
       <div>
         <h2 id="today-h" className="text-xl font-bold">Today's doses</h2>
-        <p className="text-ink-soft">{taken} of {rows.length} doses taken.{next ? ` Next: ${fmtSlot(next.slot)}.` : ""}</p>
+        <p className="text-ink-soft" aria-live="polite">
+          {taken} of {rows.length} doses taken.{next ? ` Next: ${fmtSlot(next.slot)}.` : ""}
+        </p>
       </div>
       {rows.length === 0 ? (
         <EmptyState>No doses scheduled today.</EmptyState>
       ) : (
         <ul className="card overflow-hidden p-0">
           {rows.map((r) => (
-            <li key={r.key} className={`grid grid-cols-[80px_minmax(0,1fr)_auto] items-center gap-4 border-b border-line-soft px-5 py-4 last:border-b-0 ${r.state === "late" ? "bg-low-tint" : ""}`}>
-              <span className="text-ink-soft">{fmtSlot(r.slot)}</span>
-              <span className="min-w-0"><strong>{r.med.name}</strong> {r.med.strength}</span>
-              {r.state === "taken" && <StatusBadge tone="ok">Taken {fmtTime(r.dose.taken_at)}, {METHOD[r.dose.method] || r.dose.method}</StatusBadge>}
-              {r.state === "upcoming" && <StatusBadge tone="grey">Upcoming</StatusBadge>}
-              {r.state === "reminded" && <StatusBadge tone="info">Reminder sent</StatusBadge>}
-              {r.state === "late" && (
-                <span className="flex flex-wrap items-center justify-end gap-2">
-                  <StatusBadge tone="low">Not taken yet</StatusBadge>
-                  <Button variant="secondary" busy={busy === r.key} onClick={() => remind(r)}>Remind Rosa</Button>
-                </span>
-              )}
+            <li
+              key={r.key}
+              className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line-soft px-5 py-4 last:border-b-0 ${r.state === "late" ? "bg-low-tint" : ""}`}
+            >
+              <span className="w-[72px] flex-none tabular-nums text-ink-soft">{fmtSlot(r.slot)}</span>
+              <span className="min-w-0 flex-1"><strong>{r.med.name}</strong> {r.med.strength}</span>
+              <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                {r.state === "taken" && <StatusBadge tone="ok">Taken {fmtTime(r.dose.taken_at)}, {METHOD[r.dose.method] || r.dose.method}</StatusBadge>}
+                {r.state === "upcoming" && <StatusBadge tone="grey">Upcoming</StatusBadge>}
+                {r.state === "reminded" && <StatusBadge tone="info">Reminder sent</StatusBadge>}
+                {r.state === "late" && (
+                  <>
+                    <StatusBadge tone="low">Not taken yet</StatusBadge>
+                    <Button
+                      variant="secondary"
+                      busy={busy === r.key}
+                      aria-label={`Remind Rosa about ${r.med.name} at ${fmtSlot(r.slot)}`}
+                      onClick={() => remind(r)}
+                    >
+                      Remind Rosa
+                    </Button>
+                  </>
+                )}
+              </span>
             </li>
           ))}
         </ul>

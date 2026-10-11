@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.extensions import db
 from app.hub import labels
 from app.jobs import tasks
-from app.models import Prescription, Reminder
+from app.models import Medication, Prescription, PrescriptionItem, Reminder
 
 FIXTURES = Path(__file__).resolve().parents[2] / "frontend" / "docs" / "fixtures"
 HUB_EMAIL = "hub.patient@example.com"
@@ -23,7 +23,7 @@ LOSARTAN_LABEL = (
 )
 
 
-def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), dose=1, text=LOSARTAN_LABEL, status="ok", guidance=None):
+def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), dose=1, text=LOSARTAN_LABEL, status="ok", guidance=None, form=None, form_conf=0.85, form_source=None, dose_unit=None, frequency="once daily"):
     return {
         "status": status,
         "frame_quality": {"acceptable": status != "needs_rescan", "score": 0.9, "guidance": guidance or []},
@@ -31,11 +31,12 @@ def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), dose=1, text
         "medication": {
             "name": {"value": name, "confidence": name_conf, "source": "ocr"},
             "strength": {"value": strength[0], "unit": strength[1], "confidence": 0.92, "source": "ocr"} if strength else {"value": None, "unit": None, "confidence": 0, "source": "none"},
+            "form": {"value": form, "confidence": form_conf if form else 0, "source": (form_source or ("ocr" if form else "none"))},
         },
         "instructions": {
-            "raw_text": "Take 1 tablet by mouth once daily",
-            "parsed": [{"kind": "frequency", "text": "once daily"}],
-            "dose": {"quantity": dose, "unit": "tablet", "confidence": 0.9, "source": "ocr"} if dose else None,
+            "raw_text": f"Take 1 tablet by mouth {frequency}",
+            "parsed": [{"kind": "frequency", "text": frequency}],
+            "dose": {"quantity": dose, "unit": dose_unit, "confidence": 0.9, "source": "ocr"} if dose else None,
         },
     }
 
@@ -235,6 +236,59 @@ def test_label_meta_v13_preferred_over_regex(hub, monkeypatch):
     assert f["pharmacy_phone"] == {"value": "(732) 555-0123", "state": "unsure"}  # regex fallback fills the gap
 
 
+def test_interval_cadence_never_invents_schedule(hub, monkeypatch):
+    """"every 8 hours" is not day-anchored: the hub must not convert it to fixed times."""
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(frequency="every 8 hours")]
+    fields = hub.photo("/scans").get_json()["fields"]
+    assert fields["schedule_times"] == {"value": "", "state": "missing"}
+
+
+def test_day_anchored_frequency_still_converts_as_unsure(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(frequency="twice daily")]
+    fields = hub.photo("/scans").get_json()["fields"]
+    assert fields["schedule_times"] == {"value": "08:00, 20:00", "state": "unsure"}
+
+
+def test_complete_preserves_capsule_form(hub, ctx, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Amoxicillin", form="capsule", dose_unit="capsule")]
+    scan = hub.photo("/scans").get_json()
+    values = {k: v["value"] for k, v in scan["fields"].items()}
+    r = hub.post(f"/scans/{scan['id']}/complete", values)
+    assert r.status_code == 200, r.get_json()
+    med = db.session.scalar(select(Medication).where(Medication.name == "Amoxicillin"))
+    assert med is not None and med.dosage_form == "capsule"
+    item = db.session.scalar(select(PrescriptionItem).where(PrescriptionItem.medication_id == med.id))
+    assert item is not None and item.dose_unit == "capsule"
+
+
+def test_complete_unknown_form_is_not_tablet_and_warns(hub, ctx, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Furosemide", form=None, dose_unit=None)]
+    scan = hub.photo("/scans").get_json()
+    values = {k: v["value"] for k, v in scan["fields"].items()}
+    r = hub.post(f"/scans/{scan['id']}/complete", values)
+    assert r.status_code == 200, r.get_json()
+    assert any(w.get("field") == "dosage_form" for w in r.get_json()["warnings"])
+    med = db.session.scalar(select(Medication).where(Medication.name == "Furosemide"))
+    assert med is not None and med.dosage_form is None  # never silently "tablet"
+
+
+def test_vlm_zero_confidence_form_is_ignored(hub, ctx, monkeypatch):
+    """The VLM can guess "tablet" with confidence 0 for a label that never states a form."""
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Tamsulosin", form="tablet", form_conf=0.0, form_source="vlm", dose_unit=None)]
+    scan = hub.photo("/scans").get_json()
+    values = {k: v["value"] for k, v in scan["fields"].items()}
+    r = hub.post(f"/scans/{scan['id']}/complete", values)
+    assert r.status_code == 200, r.get_json()
+    assert any(w.get("field") == "dosage_form" for w in r.get_json()["warnings"])
+    med = db.session.scalar(select(Medication).where(Medication.name == "Tamsulosin"))
+    assert med is not None and med.dosage_form is None  # zero-confidence guess not used
+
+
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
     import requests
 
@@ -254,7 +308,7 @@ def test_missing_details_escalate_to_caregiver(hub, monkeypatch):
     scan = hub.photo("/scans").get_json()
     scan = hub.photo(f"/scans/{scan['id']}/photos").get_json()
     assert scan["status"] == "asking_patient"
-    assert "tablets in the bottle" in scan["history"][-1]["detail"]
+    assert "amount in the bottle" in scan["history"][-1]["detail"]
     set_now(T0 + timedelta(minutes=4))
     s = next(x for x in hub.state()["scans"] if x["id"] == scan["id"])
     assert s["status"] == "needs_caregiver" and s["history"][-1]["step"] == "Sent to you"
@@ -266,7 +320,7 @@ def test_complete_validation_and_manual(hub):
     base = {"name": "Losartan", "strength": "25 mg", "dose_amount": "1", "schedule_times": "08:00", "quantity_start": "30",
             "refills_remaining": "", "pharmacy_name": "", "pharmacy_phone": "", "prescriber": ""}
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "quantity_start": ""})
-    assert r.status_code == 422 and r.get_json()["detail"] == "Tablets in the bottle is required."
+    assert r.status_code == 422 and r.get_json()["detail"] == "Units in the bottle is required."
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "schedule_times": "8am"})
     assert r.status_code == 422 and "24-hour" in r.get_json()["detail"]
     r = hub.post(f"/scans/{scan['id']}/complete", {**base, "name": "metformin", "strength": "500mg"})
@@ -354,3 +408,74 @@ def test_hub_disabled_returns_404(app):
 def test_hub_patient_missing_is_readable(client):
     r = client.get("/hub/state")
     assert r.status_code == 503 and "Run `python -m scripts.seed`" in r.get_json()["detail"]
+
+
+# ---------- scan-vs-prescription verification ----------
+
+METFORMIN_SCAN = dict(name="Metformin", strength=(500, "mg"))
+
+
+def test_verification_due_now_offers_explicit_log(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))  # 08:00 local — breakfast window is open
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "due_now" and v["can_log"] is True
+    assert v["medication"]["name"] == "Metformin" and v["dose_event_id"]
+    assert "never records a dose" in v["message"]
+
+
+def test_verification_already_taken_blocks_second_log(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    med = hub.med("Metformin")
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "already_taken" and v["can_log"] is False
+    assert v["taken_local"]
+
+
+def test_verification_not_due_when_window_closed(hub, monkeypatch):
+    set_now(T0 - timedelta(hours=2))  # 05:00 local — before the breakfast window
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "not_due" and v["can_log"] is False
+    assert v["due_local"] == "08:00"
+
+
+def test_verification_wrong_medication(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference()]  # Losartan 25 mg — not tracked
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "wrong_medication" and v["can_log"] is False
+
+
+def test_verification_strength_mismatch(hub, monkeypatch):
+    set_now(T0 + timedelta(hours=1))
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(name="Metformin", strength=(1000, "mg"))]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "strength_mismatch" and v["can_log"] is False
+    assert "1000 mg" in v["message"]
+
+
+def test_verification_uncertain_without_readable_name(hub):
+    scan = hub.post("/scans", {"manual": True}).get_json()
+    assert scan["verification"]["status"] == "uncertain"
+    assert scan["verification"]["can_log"] is False
+
+
+def test_verification_morning_taken_evening_upcoming_is_not_due(hub, monkeypatch):
+    """A dose taken hours ago must not hide the next scheduled dose."""
+    set_now(T0 + timedelta(hours=1))  # 08:00 — breakfast taken now
+    med = hub.med("Metformin")
+    assert hub.post(f"/medications/{med['id']}/doses", {"method": "dashboard"}).status_code == 200
+    set_now(T0 + timedelta(hours=9))  # 16:00 — before the 19:00 dinner window
+    fake = FakeInference(monkeypatch)
+    fake.queue = [inference(**METFORMIN_SCAN)]
+    v = hub.photo("/scans").get_json()["verification"]
+    assert v["status"] == "not_due" and v["can_log"] is False
+    assert v["due_local"] == "19:00"

@@ -45,7 +45,7 @@ export default function ScanPage() {
         <ScanSteps current={0} />
       </header>
 
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]">
         <section aria-label="Camera" className="flex flex-col gap-4">
           <SourcePicker />
           <CameraView onCapture={send} busy={busy} />
@@ -64,7 +64,7 @@ export default function ScanPage() {
           </div>
         </section>
 
-        <aside className="flex flex-col gap-5">
+        <aside className="flex flex-col gap-5 xl:sticky xl:top-8">
           <FoundSoFar scan={scan} />
           <section aria-labelledby="nocam-h" className="flex flex-col items-start gap-2.5">
             <h2 id="nocam-h" className="text-lg font-bold">No camera?</h2>
