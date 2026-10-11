@@ -294,6 +294,35 @@ def test_vlm_zero_confidence_form_is_not_trusted(hub, ctx, monkeypatch):
     assert med is not None and med.dosage_form == "capsule"  # caregiver's choice, not the VLM's "tablet"
 
 
+def test_unknown_to_ocr_lexicon_name_recovered_via_openfda(hub, monkeypatch):
+    """OCR read FLUOXETINE but its lexicon doesn't know it, so it guessed 'DEMO' at 0.3."""
+    from app.services import openfda
+
+    labels._fda_cache.clear()
+    looked_up = []
+
+    def fake_search(name, limit=10):
+        looked_up.append(name)
+        if name.lower() == "fluoxetine":
+            return {"available": True, "candidates": [{"openfda_id": "1", "generic_name": "FLUOXETINE HYDROCHLORIDE", "brand_name": "Prozac", "dosage_form": "capsule", "strengths": ["20 mg"], "rxcui": "1"}]}
+        return {"available": True, "candidates": []}
+
+    monkeypatch.setattr(openfda, "search", fake_search)
+    fake = FakeInference(monkeypatch)
+    body = inference(name="DEMO", name_conf=0.3, strength=(20, "mg"),
+                     text="DEMO PHARMACY (555) 010-2030\nFLUOXETINE 20 mg CAPSULES\nTake 1 capsule by mouth once daily")
+    fake.queue = [body]
+    f = hub.photo("/scans").get_json()["fields"]
+    assert f["name"] == {"value": "Fluoxetine", "state": "unsure"}
+    assert looked_up == ["FLUOXETINE"]  # pharmacy line and form words aren't looked up
+
+    # Nothing recognizable on the label -> stays missing (never invented)
+    labels._fda_cache.clear()
+    fake.queue = [inference(name=None, text="SOMEBRAND 5 mg TABLETS")]
+    monkeypatch.setattr(openfda, "search", lambda name, limit=10: {"available": True, "candidates": []})
+    assert hub.photo("/scans").get_json()["fields"]["name"]["state"] == "missing"
+
+
 def test_scan_rescan_guidance_and_inference_down(hub, monkeypatch):
     import requests
 

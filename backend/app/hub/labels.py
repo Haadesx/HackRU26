@@ -164,6 +164,49 @@ def _num(v) -> str:
     return str(int(v)) if float(v) == int(v) else str(v)
 
 
+OPENFDA_NAME = 0.80  # name printed on the label AND known to OpenFDA; still "unsure" so the caregiver confirms
+_DOSE_LINE = re.compile(r"\d+(?:[.,]\d+)?\s*(?:mg|mcg|µg|g|ml|iu|%)\b|\b(?:tablets?|capsules?|caps?|tabs?|solution|suspension|cream|ointment|inhaler)\b", re.I)
+_WORD = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
+_NOT_A_NAME = {
+    "tablet", "tablets", "capsule", "capsules", "caps", "tabs", "take", "mouth", "daily", "once", "twice", "times",
+    "with", "food", "meals", "water", "every", "hours", "morning", "night", "bedtime", "refill", "refills", "pharmacy",
+    "only", "each", "film", "coated", "extended", "release", "delayed", "oral", "solution", "suspension", "label",
+    "quantity", "qty", "date", "expiry", "exp", "lot", "batch", "store", "keep", "children", "reach", "warning",
+    "hydrochloride", "sodium", "potassium", "calcium", "acid", "demo", "patient", "doctor", "prescriber",
+}
+_fda_cache: dict[str, str | None] = {}
+
+
+def name_from_openfda(label_text: str, max_lookups: int = 6) -> str | None:
+    """Find a drug name that is printed on the label (on a line with a strength or dosage form)
+    and that OpenFDA recognizes. Returns the word as printed (title-cased), or None.
+
+    Fallback for when the OCR name lexicon doesn't know the drug (e.g. fluoxetine). Never
+    returns text that isn't on the label.
+    """
+    from app.services import openfda
+
+    lines = [ln for ln in label_text.splitlines() if _DOSE_LINE.search(ln)]
+    tried = 0
+    for line in lines[:8]:
+        for word in _WORD.findall(line):
+            key = word.lower()
+            if key in _NOT_A_NAME or len(key) < 5:
+                continue
+            if key not in _fda_cache:
+                if tried >= max_lookups:
+                    return None
+                tried += 1
+                result = openfda.search(word, limit=5)
+                if not result["available"]:
+                    return None  # OpenFDA unreachable: don't guess, and don't keep trying
+                match = openfda.best_match(word, None, result["candidates"])
+                _fda_cache[key] = word.title() if match else None
+            if _fda_cache[key]:
+                return _fda_cache[key]
+    return None
+
+
 def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
     """Inference ScanResponse -> {field: (value, confidence)} for fields it supports."""
     out: dict[str, tuple[str, float]] = {}
@@ -171,6 +214,10 @@ def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
     name = med.get("name") or {}
     if name.get("value"):
         out["name"] = (str(name["value"]).strip(), float(name.get("confidence") or 0))
+    if out.get("name", ("", 0.0))[1] < UNSURE:
+        found = name_from_openfda((scan.get("label") or {}).get("text") or "")
+        if found:
+            out["name"] = (found, OPENFDA_NAME)
     strength = med.get("strength") or {}
     if strength.get("value") is not None:
         text = normalize_strength({"value": strength["value"], "unit": strength.get("unit")})
