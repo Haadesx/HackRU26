@@ -4,6 +4,7 @@ import HomePage from "./pages/Home/HomePage";
 import ScanPage from "./pages/Scan/ScanPage";
 import VerifyPage from "./pages/Scan/VerifyPage";
 import AddedPage from "./pages/Scan/AddedPage";
+import TrackPage from "./pages/Track/TrackPage";
 import HistoryPage from "./pages/History/HistoryPage";
 import SettingsPage from "./pages/Settings/SettingsPage";
 
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/scan" element={<ScanPage />} />
         <Route path="/scan/:scanId/verify" element={<VerifyPage />} />
         <Route path="/scan/added/:medId" element={<AddedPage />} />
+        <Route path="/track" element={<TrackPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -11,7 +11,7 @@ from werkzeug.exceptions import HTTPException
 
 from app.errors import ApiError
 from app.extensions import db
-from app.hub import contacts, labels, rx, verify as hub_verify
+from app.hub import contacts, dose_scan, labels, rx, verify as hub_verify
 from app.hub.defaults import DEFAULT_SETTINGS
 from app.hub.state import (
     build_state,
@@ -112,7 +112,7 @@ def log_dose(med_id: int):
     data = body()
     method = data.get("method") or "dashboard"
     if method not in HUB_METHODS:
-        raise unprocessable("method must be voice, button or dashboard.")
+        raise unprocessable("method must be voice, button, dashboard or scan.")
     slot = data.get("slot")
     tz = get_zone(patient.timezone)
     now = utcnow()
@@ -140,6 +140,45 @@ def log_dose(med_id: int):
     ref.method = method
     db.session.commit()
     return state_response()
+
+
+@hub_bp.post("/medications/<int:med_id>/skip")
+def skip_dose(med_id: int):
+    """Track tab: skip today's dose at `slot` on purpose. Not counted as missed in adherence."""
+    patient = hub_patient()
+    hm, item = find_tracked(patient, med_id)
+    slot = body().get("slot")
+    if not slot or not HHMM.match(str(slot)):
+        raise unprocessable("Say which dose to skip, like {\"slot\": \"20:00\"}.")
+    tz = get_zone(patient.timezone)
+    matches = [e for e in doses_today(patient, item) if e.scheduled_at.astimezone(tz).strftime("%H:%M") == slot]
+    if not matches:
+        raise unprocessable(f"{item.medication.name} isn't scheduled at {slot} today.")
+    event = dose_service.lock_event(matches[0].id)
+    if event.status in ("taken_on_time", "taken_late"):
+        raise ApiError(409, "ALREADY_LOGGED", f"The {slot} dose of {item.medication.name} was already taken, so it can't be skipped.")
+    if event.status == "skipped":
+        raise ApiError(409, "ALREADY_SKIPPED", f"The {slot} dose of {item.medication.name} is already skipped.")
+    dose_service.skip(event, allow_missed=True)
+    db.session.commit()
+    return state_response()
+
+
+@hub_bp.post("/doses/scan")
+def scan_dose():
+    """Track-tab dose scanner: which bottle is this, and is it the one due now? Records no dose."""
+    patient = hub_patient()
+    result = _read_uploaded_label(patient)
+    if result.get("status") == "needs_rescan":
+        tips = (result.get("frame_quality") or {}).get("guidance") or []
+        raise unprocessable("Couldn't see the label clearly. " + (tips[0] if tips else "Hold the bottle closer and try again."))
+    fields, confidence = labels.empty_fields(), {}
+    labels.merge(fields, confidence, labels.readings_from_inference(result))
+    match, event_msg = dose_scan.match_dose(patient, fields)
+    if event_msg:
+        record_event(patient, "wrong_bottle", event_msg)
+    db.session.commit()
+    return jsonify(match)
 
 
 @hub_bp.post("/medications/<int:med_id>/remind")
@@ -272,8 +311,8 @@ def _scan(scan_id: int) -> HubScan:
     return scan
 
 
-def _read_photo(scan: HubScan) -> None:
-    """Send the uploaded photo to inference and merge the result into the scan."""
+def _read_uploaded_label(patient) -> dict:
+    """Validate the multipart 'photo' upload and return the inference ScanResponse for it."""
     upload = request.files.get("photo")
     if upload is None:
         raise unprocessable("Attach a photo in the 'photo' field.")
@@ -285,12 +324,16 @@ def _read_photo(scan: HubScan) -> None:
     content_type = (upload.mimetype or "").lower()
     if content_type not in ("image/jpeg", "image/png"):
         content_type = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
-    patient = hub_patient()
     known = [
         {"name": item.medication.name, **({"strength": _strength_obj(item.medication.strength)} if item.medication.strength else {})}
         for _, item in tracked(patient)
     ]
-    result = labels.read_label(data, content_type, known)
+    return labels.read_label(data, content_type, known)
+
+
+def _read_photo(scan: HubScan) -> None:
+    """Send the uploaded photo to inference and merge the result into the scan."""
+    result = _read_uploaded_label(hub_patient())
     scan.photos += 1
     fields, confidence = dict(scan.fields), dict(scan.confidence)
     if result.get("status") == "needs_rescan":
@@ -611,6 +654,14 @@ def delete_all():
 # ---------- wearable / inference inputs (not called by the dashboard) ----------
 
 
+def record_event(patient, type_: str, message: str, at=None) -> None:
+    """Add a 'Mistakes caught' event and text contacts when alert_wrong_bottle is on."""
+    db.session.add(HubEvent(patient_id=patient.id, type=type_, message=message[:500], at=at or utcnow()))
+    settings = get_settings(patient)
+    if settings.get("alert_wrong_bottle"):
+        contacts.text_contacts(settings, f"MedCheck: {message}")
+
+
 @hub_bp.post("/events")
 def add_event():
     """Wearable mistake: {"type": "wrong_bottle"|"double_dose", "message": "...", "at"?: ISO}."""
@@ -629,10 +680,7 @@ def add_event():
             raise unprocessable("at must be an ISO 8601 time.")
         if at.tzinfo is None:
             raise unprocessable("at needs a timezone, e.g. 2026-10-10T18:30:00Z.")
-    db.session.add(HubEvent(patient_id=patient.id, type=data["type"], message=message[:500], at=at))
-    settings = get_settings(patient)
-    if settings.get("alert_wrong_bottle"):
-        contacts.text_contacts(settings, f"MedCheck: {message}")
+    record_event(patient, data["type"], message, at)
     db.session.commit()
     return state_response()
 

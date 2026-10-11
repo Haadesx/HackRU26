@@ -38,6 +38,8 @@ backend matches it, the UI works with no code changes: set `VITE_API_URL` and re
 | GET | `/health` | | `{ "ok": true }` | Hub status chip |
 | GET | `/state` | | State | Every screen |
 | POST | `/medications/{id}/doses` | `{ "method": "dashboard", "slot": "08:00" }` (slot optional: use the next untaken slot today) | State | Log a dose |
+| POST | `/doses/scan` | multipart field `photo` | Dose match (see below) | Track tab dose scanner. Identifies the bottle; **records nothing** |
+| POST | `/medications/{id}/skip` | `{ "slot": "20:00" }` | State | Track tab: skip a dose on purpose |
 | POST | `/medications/{id}/remind` | `{ "slot": "08:00" }` | State | "Remind Rosa": the wearable repeats the reminder |
 | POST | `/medications/{id}/counts` | `{ "count": 12 }` | State | Correct pill count. Sets `pills_left` |
 | POST | `/medications/{id}/refill` | | State | Refill picked up: `pills_left += quantity_start`, `refills_remaining -= 1` (unless null), `fill_date = today`, remove that medication's `low_*` alerts |
@@ -67,6 +69,7 @@ backend matches it, the UI works with no code changes: set `VITE_API_URL` and re
   "medications": [Medication],
   "doses": [Dose],                        // at least the last 14 days; more is fine
   "reminders": [Reminder],                // today's is enough
+  "skips": [Skip],                        // today's is enough
   "alerts": [Alert],                      // newest first
   "events": [Event],                      // newest first
   "scans": [Scan],                        // the UI shows those with status "needs_caregiver" on Home
@@ -105,7 +108,34 @@ sending texts: days left ≤ `urgent` is urgent, ≤ `first` is refill soon.
 ```
 
 `slot` and `date` are required: the UI matches doses to scheduled times with them. A slot with
-no dose whose time has passed shows as **missed**. `method` is `voice`, `button` or `dashboard`.
+no dose whose time has passed shows as **missed**. `method` is `voice`, `button`, `dashboard`
+or `scan` (confirmed after a Track-tab scan).
+
+### Skip
+
+```json
+{ "medication_id": 2, "slot": "20:00", "at": "2026-10-10T18:31:00.000Z" }
+```
+
+State includes `"skips": [Skip]` (today's is enough). A skipped slot is not counted as missed in
+adherence.
+
+### Dose match (`POST /doses/scan`) — see [`fixtures/dose-scan-*.json`](fixtures/)
+
+The hub identifies which medication is in the photo and compares it with what's due now.
+**It must not record a dose.** The caregiver then presses "Rosa took it", which calls
+`POST /medications/{id}/doses` with `method: "scan"` and the returned `slot`.
+
+| `status` | Extra fields | UI |
+|---|---|---|
+| `match` | `medication_id, name, strength, slot, late` | "That's Vitamin D3 1000 IU. Due at 8:00 AM" + Rosa took it |
+| `wrong_bottle` | `medication_id, name, strength, expected: { medication_id, name, slot }` | "Wrong bottle". The hub should also add a `wrong_bottle` event |
+| `already_taken` | `medication_id, name, strength, slot, taken_at` | "Already taken… would be a double dose" |
+| `not_scheduled` | `message` | "Nothing due" |
+
+Unreadable photos: return 422 with a readable `detail` ("Couldn't see a label. Hold the bottle
+closer."). On `feat/integration`, the existing `/api/v1/scans` matching logic can back this
+endpoint.
 
 ### Reminder
 

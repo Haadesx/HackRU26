@@ -83,6 +83,7 @@ function seed() {
     medications,
     doses: seedDoses(medications, now),
     reminders: [],
+    skips: [],
     alerts: [
       { id: id(), medication_id: 3, type: "no_refills", sent_at: iso(at(9, "09:00")),
         message: "No refills left for Atorvastatin. Dr. Okafor needs to send a new prescription." },
@@ -176,14 +177,62 @@ export const mock = {
   async health() { await delay(50); return { ok: db.hub.connected }; },
   async getState() { await delay(); return clone(db); },
 
-  async logDose(mid, slot) {
+  async logDose(mid, slot, method = "dashboard") {
+    await delay();
     const m = med(mid);
     const today = dateKey(db.now);
     const taken = db.doses.filter((d) => d.medication_id === m.id && d.date === today).map((d) => d.slot);
     const s = slot || m.schedule_times.find((t) => !taken.includes(t)) || m.schedule_times[0];
-    if (!take(m, s, db.now, "dashboard")) throw new Error(`There are no ${m.name} pills left to log.`);
+    if (slot && db.doses.some((d) => d.medication_id === m.id && d.date === today && d.slot === s)) {
+      throw new Error(`${m.name} was already taken at this time today.`);
+    }
+    if (!take(m, s, db.now, method)) throw new Error(`There are no ${m.name} pills left to log.`);
     checkSupply(m);
     return clone(db);
+  },
+
+  async skipDose(mid, slot) {
+    await delay();
+    const m = med(mid);
+    db.skips.push({ medication_id: m.id, slot, at: db.now });
+    return clone(db);
+  },
+
+  /**
+   * Dose scanner. The real hub reads the photo; the mock pretends the bottle is
+   * `demoMedId` (or the dose due now) and reports whether it's the right one.
+   * Returns { status: "match" | "wrong_bottle" | "already_taken" | "not_scheduled", ... }
+   */
+  async matchDose(_photo, demoMedId) {
+    await delay(500);
+    const now = new Date(db.now);
+    const today = dateKey(now);
+    const slotState = (m, slot) => {
+      const [h, mm] = slot.split(":").map(Number);
+      const due = new Date(now); due.setHours(h, mm, 0, 0);
+      const taken = db.doses.find((d) => d.medication_id === m.id && d.date === today && d.slot === slot);
+      const skipped = db.skips.some((x) => x.medication_id === m.id && x.slot === slot && dateKey(x.at) === today);
+      return { m, slot, due, taken, skipped };
+    };
+    const open = db.medications.flatMap((m) => m.schedule_times.map((t) => slotState(m, t)))
+      .filter((x) => !x.taken && !x.skipped)
+      .sort((a, b) => Math.abs(a.due - now) - Math.abs(b.due - now));
+    const expected = open.find((x) => x.due <= now) || open[0] || null;
+    const seen = demoMedId ? med(demoMedId) : expected?.m;
+    if (!seen) return { status: "not_scheduled", message: "No doses are left today." };
+    const mine = seen.schedule_times.map((t) => slotState(seen, t));
+    const openMine = mine.filter((x) => !x.taken && !x.skipped).sort((a, b) => Math.abs(a.due - now) - Math.abs(b.due - now))[0];
+    const base = { medication_id: seen.id, name: seen.name, strength: seen.strength };
+    if (!openMine) {
+      const last = mine.filter((x) => x.taken).at(-1);
+      return { ...base, status: "already_taken", taken_at: last?.taken.taken_at, slot: last?.slot };
+    }
+    if (expected && expected.m.id !== seen.id && openMine.due > now) {
+      db.events.unshift({ id: id(), type: "wrong_bottle", at: db.now,
+        message: `Picked up ${seen.name} when ${expected.m.name} was due. MedCheck caught it before it was taken.` });
+      return { ...base, status: "wrong_bottle", expected: { medication_id: expected.m.id, name: expected.m.name, slot: expected.slot } };
+    }
+    return { ...base, status: "match", slot: openMine.slot, late: openMine.due <= now };
   },
 
   async remind(mid, slot) {
@@ -295,7 +344,8 @@ export const mock = {
           const when = new Date(year, month, d, h, mm);
           if (when > now) continue;
           due++;
-          const hit = db.doses.some((x) => x.medication_id === m.id && x.date === key && x.slot === slot);
+          const hit = db.doses.some((x) => x.medication_id === m.id && x.date === key && x.slot === slot)
+            || db.skips.some((x) => x.medication_id === m.id && x.slot === slot && dateKey(x.at) === key);
           if (!hit) missedList.push({ medication_id: m.id, name: m.name, slot });
         }
       }

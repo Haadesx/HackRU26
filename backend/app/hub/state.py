@@ -332,6 +332,7 @@ def build_state(patient: User) -> dict:
             {"medication_id": r.hub_medication_id, "slot": r.slot, "date": r.date.isoformat(), "sent_at": r.sent_at}
             for r in reminders
         ],
+        "skips": skips_json(patient, med_ids),
         "alerts": [
             {"id": a.id, "medication_id": a.hub_medication_id, "type": a.type, "message": a.message, "sent_at": a.sent_at}
             for a in alerts
@@ -342,6 +343,31 @@ def build_state(patient: User) -> dict:
     }
     db.session.commit()
     return state
+
+
+def skips_json(patient: User, med_ids: dict[uuid.UUID, int]) -> list[dict]:
+    """Today's intentionally skipped doses: [{medication_id, slot, at}] (dashboard contract "Skip")."""
+    tz = get_zone(patient.timezone)
+    start = datetime.combine(local_today(patient), datetime.min.time(), tzinfo=tz)
+    events = db.session.scalars(
+        select(DoseEvent)
+        .where(
+            DoseEvent.patient_id == patient.id,
+            DoseEvent.status == "skipped",
+            DoseEvent.scheduled_at >= start,
+            DoseEvent.scheduled_at < start + timedelta(days=1),
+        )
+        .order_by(DoseEvent.scheduled_at)
+    ).all()
+    return [
+        {
+            "medication_id": med_ids[e.medication_id],
+            "slot": e.scheduled_at.astimezone(tz).strftime("%H:%M"),
+            "at": e.confirmed_at or e.scheduled_at,
+        }
+        for e in events
+        if e.medication_id in med_ids
+    ]
 
 
 def doses_today(patient: User, item: PrescriptionItem) -> list[DoseEvent]:

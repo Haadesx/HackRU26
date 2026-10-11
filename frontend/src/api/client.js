@@ -40,7 +40,10 @@ const photoForm = (blob) => {
 const real = {
   health: () => http("/health"),
   getState: () => http("/state"),
-  logDose: (id, slot) => http(`/medications/${id}/doses`, { method: "POST", body: { method: "dashboard", slot } }),
+  logDose: (id, slot, method = "dashboard") => http(`/medications/${id}/doses`, { method: "POST", body: { method, slot } }),
+  skipDose: (id, slot) => http(`/medications/${id}/skip`, { method: "POST", body: { slot } }),
+  // The hub identifies the bottle in the photo and compares it with what's due now.
+  matchDose: (blob) => http("/doses/scan", { method: "POST", body: photoForm(blob) }),
   remind: (id, slot) => http(`/medications/${id}/remind`, { method: "POST", body: { slot } }),
   recordCount: (id, count) => http(`/medications/${id}/counts`, { method: "POST", body: { count } }),
   markRefilled: (id) => http(`/medications/${id}/refill`, { method: "POST" }),

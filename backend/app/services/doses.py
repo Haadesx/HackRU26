@@ -146,9 +146,12 @@ def _post_confirm_alerts(event: DoseEvent, item, was_missed: bool) -> None:
             )
 
 
-def skip(event: DoseEvent, now: datetime | None = None) -> None:
+def skip(event: DoseEvent, now: datetime | None = None, allow_missed: bool = False) -> None:
+    """Mark a dose skipped on purpose. allow_missed lets a caregiver turn an already-missed dose
+    into an intentional skip (the /hub Track tab); the outcome row is replaced, not duplicated."""
     now = now or utcnow()
-    if event.status != "pending":
+    allowed = ("pending", "missed") if allow_missed else ("pending",)
+    if event.status not in allowed:
         raise conflict("DOSE_NOT_SKIPPABLE", f"Dose is already {event.status}.", {"status": event.status})
     event.status = "skipped"
     event.confirmed_at = now

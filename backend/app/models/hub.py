@@ -32,7 +32,7 @@ from app.utils.time import utcnow
 SCAN_STATUSES = ("reading", "asking_patient", "needs_caregiver", "complete")
 EVENT_TYPES = ("wrong_bottle", "double_dose")
 ALERT_TYPES = ("low_7", "low_5", "low_3", "no_refills")
-HUB_METHODS = ("voice", "button", "dashboard")
+HUB_METHODS = ("voice", "button", "dashboard", "scan")  # scan = confirmed after a Track-tab dose scan
 
 
 def _int_pk():

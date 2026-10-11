@@ -444,6 +444,104 @@ def test_missed_dose_texts_contacts(hub, monkeypatch, ctx):
     assert texts == ["MedCheck: Rosa hasn't taken the 08:00 dose of Metformin 500 mg."]  # refills-only contact not texted
 
 
+def _dose_scan(hub, fake, **kw):
+    fake.queue = [inference(**kw)]
+    r = hub.photo("/doses/scan")
+    return r.status_code, r.get_json()
+
+
+METFORMIN = dict(name="Metformin", name_conf=0.95, strength=(500, "mg"), text="METFORMIN 500 mg TABLETS")
+
+
+def test_dose_scan_match_then_log_with_scan_method(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=1, minutes=5))  # 08:05, breakfast dose due
+    code, r = _dose_scan(hub, fake, **METFORMIN)
+    assert code == 200, r
+    assert (r["status"], r["slot"], r["late"], r["name"], r["strength"]) == ("match", "08:00", False, "Metformin", "500 mg")
+    assert isinstance(r["medication_id"], int)
+    assert hub.state()["doses"] == []  # the scan recorded nothing
+    state = hub.post(f"/medications/{r['medication_id']}/doses", {"method": "scan", "slot": r["slot"]}).get_json()
+    assert state["doses"][-1]["method"] == "scan"
+    # Scanning again now: already taken
+    code, r2 = _dose_scan(hub, fake, **METFORMIN)
+    assert code == 200 and r2["status"] in ("already_taken", "not_scheduled")
+
+
+def test_dose_scan_late_and_unreadable(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=2, minutes=30))  # 09:30, past the 09:00 on-time end
+    code, r = _dose_scan(hub, fake, **METFORMIN)
+    assert code == 200 and r["status"] == "match" and r["late"] is True
+    code, r = _dose_scan(hub, fake, name="Metformin", name_conf=0.4, strength=(500, "mg"), text="")
+    assert code == 422 and r["detail"]  # unsure name -> fail closed with a readable sentence
+    fake.queue = [inference(status="needs_rescan", guidance=["Move closer to the label"])]
+    r = hub.photo("/doses/scan")
+    assert r.status_code == 422 and "Move closer" in r.get_json()["detail"]
+
+
+def test_dose_scan_wrong_bottle_records_event(hub, monkeypatch, api):
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=1, minutes=5))
+    code, r = _dose_scan(hub, fake, name="Lisinopril", name_conf=0.95, strength=(10, "mg"), text="LISINOPRIL 10 mg")
+    assert code == 200
+    assert r["status"] == "wrong_bottle" and r["expected"]["name"] == "Metformin" and r["expected"]["slot"] == "08:00"
+    events = hub.state()["events"]
+    assert events[0]["type"] == "wrong_bottle" and "Lisinopril" in events[0]["message"] and "Metformin" in events[0]["message"]
+    # Wrong strength of a tracked medication is also caught
+    code, r = _dose_scan(hub, fake, name="Metformin", name_conf=0.95, strength=(1000, "mg"), text="METFORMIN 1000 mg")
+    assert r["status"] == "wrong_bottle" and r["reason"] == "strength_mismatch"
+
+
+def test_dose_scan_ignores_yesterdays_open_doses(hub, monkeypatch):
+    """At 01:30 last night's 19:00 dose is still late-confirmable, but the Track tab works on today only."""
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=18, minutes=30))  # Tue 01:30 local
+    code, r = _dose_scan(hub, fake, **METFORMIN)
+    assert code == 200, r
+    assert r["status"] == "not_scheduled" and "Next dose at 08:00" in r["message"]
+
+
+def test_dose_scan_nothing_due(hub, monkeypatch):
+    fake = FakeInference(monkeypatch)
+    set_now(T0 + timedelta(hours=5))  # 12:00: breakfast still confirmable (late) until 19:00 -> skip it first
+    med = hub.med()
+    hub.post(f"/medications/{med['id']}/skip", {"slot": "08:00"})
+    code, r = _dose_scan(hub, fake, **METFORMIN)
+    assert code == 200 and r["status"] == "not_scheduled" and "isn't due yet" in r["message"]
+
+
+def test_skip_dose(hub, ctx):
+    from app.models import DoseOutcome
+
+    med = hub.med()
+    state = hub.post(f"/medications/{med['id']}/skip", {"slot": "19:00"}).get_json()
+    assert state["skips"] == [{"medication_id": med["id"], "slot": "19:00", "at": state["skips"][0]["at"]}]
+    assert db.session.scalar(select(DoseOutcome.status)) == "skipped"
+    assert hub.post(f"/medications/{med['id']}/skip", {"slot": "19:00"}).status_code == 409
+    assert hub.post(f"/medications/{med['id']}/skip", {"slot": "13:00"}).status_code == 422
+    assert hub.post(f"/medications/{med['id']}/skip", {}).status_code == 422
+    # A dose that was taken can't be skipped
+    set_now(T0 + timedelta(hours=1, minutes=5))
+    hub.post(f"/medications/{med['id']}/doses", {"slot": "08:00"})
+    assert hub.post(f"/medications/{med['id']}/skip", {"slot": "08:00"}).status_code == 409
+    # Skipped slots aren't counted as missed in adherence
+    later = T0 + timedelta(days=1)
+    set_now(later)
+    tasks.mark_missed_doses(later)
+    day = next(d for d in hub.get("/adherence?month=2026-10").get_json()["days"] if d["date"] == "2026-10-12")
+    assert (day["due"], day["missed"]) == (1, 0)
+
+
+def test_skip_turns_missed_into_skipped(hub, ctx):
+    med = hub.med()
+    at = T0 + timedelta(hours=3, minutes=1)
+    set_now(at)
+    tasks.mark_missed_doses(at)
+    r = hub.post(f"/medications/{med['id']}/skip", {"slot": "08:00"})
+    assert r.status_code == 200 and r.get_json()["skips"][0]["slot"] == "08:00"
+
+
 def test_hub_disabled_returns_404(app):
     from app import create_app
 
