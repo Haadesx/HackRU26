@@ -222,7 +222,7 @@ Untested: deploying to TigerData / Render / Railway / Fly.io; real Twilio/FCM se
 
 ## I. Testing and verification
 
-`backend/tests/` (76 tests incl. 15 for `/hub` in `test_hub.py`, all passing; `pytest` 9.1.1 against TimescaleDB 2.30.2, last run 2026-10-10):
+`backend/tests/` (77 tests incl. 15 for `/hub` in `test_hub.py`, all passing; `pytest` 9.1.1 against TimescaleDB 2.30.2, last run 2026-10-10):
 - `test_auth_permissions.py`: windows seeded, login/refresh, error envelope, caregiver read-only on every write route, revoke, invite rules.
 - `test_scheduling.py`: 48h generation, snapshotted windows, confirm_deadline (next dose / 24h cap), idempotency, local-today view, DST (Nov 1 2026), every_other_day, activation validation, window edit vs history, revise/supersede without duplicates.
 - `test_scans_doses.py`: match/fuzzy/no_match/not_due/ambiguous, idempotency, user mismatch, future/naive timestamps, confirm from scan, on-time boundary, early confirm 409, mismatch alerts, skip, insufficient stock.
@@ -240,7 +240,8 @@ Not verified: real SMS/push delivery, load/performance, TigerData cloud.
 - **2026-10-10** — Pushed `feat/backend-urvi` to origin (first push; tracks `origin/feat/backend-urvi`). No code changes.
 - **2026-10-10** — Bug fix: the root `.gitignore` rule `models/` (unanchored) silently excluded `backend/app/models/`, so the first push was missing all model files and would not run from a fresh clone. Cherry-picked the orchestrator's fix (`/models/` anchored to repo root, upstream 179c4d6) and committed the models (`4a01a5b`). Verified: fresh `git worktree` checkout of the branch → `pytest` 61 passed.
 - **2026-10-10** — Created `feat/integration` from `origin/feat/inference-medcheck` (which already contains the UI via PR #1) and merged `feat/backend-urvi` (no conflicts). Added the `/hub` compatibility layer (section L): `app/hub/` (routes, state, labels, contacts, rx, defaults), `app/models/hub.py`, migration `0003_hub_compat` (7 hub_* tables), `services/prescriptions.deactivate`, `mark_missed(on_missed=...)` hook, CORS for `/hub/*`, new `HUB_*` env vars. Migration env now ignores TimescaleDB's own hypertable indexes during autogenerate (autogenerate had tried to drop them; dev DB indexes recreated; `flask db check` clean). Tests: 75 passed (61 + 14 hub).
-- **2026-10-10** — Merged `origin/feat/integration` (orchestrator's inference v1.3 `label_meta` + `tools/hub_adapter`, a file-backed reference adapter on :8500). `/hub` now prefers `label_meta` over its regex fallback (same mapping as the adapter). The adapter and `/hub` serve the same UI contract; `/hub` persists to the real backend (prescriptions, doses, stock). Choosing one for the demo is a team decision. Tests: 76 passed. Live: UI dev server + inference mock + backend hub, scans through real inference HTTP, complete → new medication, Home/History rendered with real data.
+- **2026-10-10** — Merged `origin/feat/integration` (orchestrator's inference v1.3 `label_meta` + `tools/hub_adapter`, a file-backed reference adapter on :8500). `/hub` now prefers `label_meta` over its regex fallback (same mapping as the adapter). The adapter and `/hub` serve the same UI contract; `/hub` persists to the real backend (prescriptions, doses, stock). Choosing one for the demo is a team decision. Tests: 76 passed.
+- **2026-10-10** — Bug fix: photo upload to `POST /hub/scans` returned an empty response (`net::ERR_EMPTY_RESPONSE`) and macOS showed "Python quit unexpectedly". Cause: `requests` resolves proxies through the macOS system lookup (`_scproxy` → SystemConfiguration/CoreFoundation), which is not fork-safe, so the forked gunicorn worker was aborted ("crashed on child side of fork pre-exec"). Fix: new `app/utils/http.py` session with `trust_env=False` that still honors `HTTP(S)_PROXY`/`NO_PROXY` env vars; used for the inference call and OpenFDA (OpenFDA from a gunicorn worker had the same latent crash). Regression test `tests/test_http_fork_safety.py`. Verified: graceful gunicorn reload, 3 consecutive live uploads succeeded, no new crash reports. Tests: 77 passed. Live: UI dev server + inference mock + backend hub, scans through real inference HTTP, complete → new medication, Home/History rendered with real data.
 
 ## L. Dashboard compatibility layer (`/hub`)
 
@@ -309,5 +310,6 @@ New tables (migration `0003_hub_compat`): see db.md §18.
 - Caregivers must register before being invited (no email invites).
 - `daily_adherence` continuous aggregate is UTC-bucketed and unused by the API (see C).
 - Dose events are generated 48h ahead; if the worker is down for more than ~48h, patients see no upcoming doses until it runs (activation and window edits generate immediately).
+- On macOS, any new outbound HTTP code must use `app.utils.http` (not bare `requests`), or forked gunicorn workers can crash. Twilio and Firebase clients have not been checked for this.
 - Seed history is synthetic and uses a fixed status pattern.
 - Assumptions awaiting team confirmation (from `plan.md` §9): default window times, 24h confirm cap, mismatch alerts to both patient and caregivers.

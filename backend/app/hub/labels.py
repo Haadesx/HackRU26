@@ -19,6 +19,7 @@ from flask import current_app
 
 from app.errors import ApiError
 from app.services.normalize import normalize_strength
+from app.utils import http
 
 FIELD_ORDER = (
     "name", "strength", "dose_amount", "schedule_times", "quantity_start",
@@ -160,7 +161,7 @@ def read_label(image: bytes, content_type: str, known: list[dict]) -> dict:
     if known:
         data["hints"] = json.dumps({"known_candidates": known, "locale": "en-US"})
     try:
-        resp = requests.post(
+        resp = http.post(
             f"{cfg['HUB_INFERENCE_URL']}/v1/scan",
             files={"image": ("label", image, content_type)},
             data=data,

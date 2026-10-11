@@ -13,6 +13,7 @@ from rapidfuzz import fuzz
 
 from app.models import Medication
 from app.services.normalize import normalize_name, normalize_strength
+from app.utils import http
 from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def search(name: str, limit: int = 10) -> dict:
     if cfg.get("OPENFDA_API_KEY"):
         params["api_key"] = cfg["OPENFDA_API_KEY"]
     try:
-        resp = requests.get(NDC_URL, params=params, timeout=cfg.get("OPENFDA_TIMEOUT_S", 5))
+        resp = http.get(NDC_URL, params=params, timeout=cfg.get("OPENFDA_TIMEOUT_S", 5))
     except requests.RequestException as exc:
         log.warning("OpenFDA request failed: %s", exc)
         return {"available": False, "candidates": []}
