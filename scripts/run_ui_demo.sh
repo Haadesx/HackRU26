@@ -48,7 +48,7 @@ if ! curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
       ( cd backend && SEED_PASSWORD=medcheck-demo-password PYTHONPATH=. "../../$VENV_BACKEND/bin/python" scripts/seed.py >/dev/null 2>&1 )
       echo "seeded demo patient (demo.patient@example.com)"
     fi
-    ( cd backend && HUB_ENABLED=true HUB_PATIENT_EMAIL=demo.patient@example.com HUB_INFERENCE_URL=http://127.0.0.1:8300 CORS_ORIGINS='*' PYTHONPATH=. nohup "../../$VENV_BACKEND/bin/gunicorn" -b 127.0.0.1:8000 --workers 1 --threads 4 wsgi:app >"$RUN_DIR/backend.log" 2>&1 & echo $! > "$RUN_DIR/backend.pid" )
+    ( cd backend && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES HUB_ENABLED=true HUB_PATIENT_EMAIL=demo.patient@example.com HUB_INFERENCE_URL=http://127.0.0.1:8300 CORS_ORIGINS='*' PYTHONPATH=. nohup "../../$VENV_BACKEND/bin/gunicorn" -b 127.0.0.1:8000 --workers 1 --threads 4 wsgi:app >"$RUN_DIR/backend.log" 2>&1 & echo $! > "$RUN_DIR/backend.pid" )
     for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1 && break; sleep 0.5; done
   else
     echo "backend venv missing ($VENV_BACKEND) — install backend/requirements.txt first"
