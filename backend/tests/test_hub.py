@@ -44,9 +44,9 @@ def inference(name="Losartan", name_conf=0.95, strength=(25, "mg"), dose=1, text
 class FakeInference:
     def __init__(self, monkeypatch):
         self.queue, self.calls = [], []
-        monkeypatch.setattr(labels.requests, "post", self._post)
+        monkeypatch.setattr(labels.http, "post", self._post)
 
-    def _post(self, url, files, data, headers, timeout):
+    def _post(self, url, files=None, data=None, headers=None, timeout=None):
         self.calls.append({"url": url, "data": data})
         body = self.queue.pop(0)
         if isinstance(body, Exception):

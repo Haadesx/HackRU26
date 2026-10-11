@@ -58,6 +58,8 @@ class _Resp:
 def test_create_draft_verifies_against_openfda(api, app, monkeypatch):
     import requests
 
+    from app.utils import http
+
     seen = {}
 
     def fake_get(url, params, timeout):
@@ -69,7 +71,7 @@ def test_create_draft_verifies_against_openfda(api, app, monkeypatch):
             "openfda": {"rxcui": ["861007"]},
         }]})
 
-    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(http, "get", fake_get)
     app.config["OPENFDA_ENABLED"] = True
     try:
         p = api.register("patient")
@@ -85,10 +87,12 @@ def test_create_draft_verifies_against_openfda(api, app, monkeypatch):
 def test_openfda_outage_is_a_warning_not_an_error(api, app, monkeypatch):
     import requests
 
+    from app.utils import http
+
     def boom(*a, **kw):
         raise requests.ConnectionError("down")
 
-    monkeypatch.setattr(requests, "get", boom)
+    monkeypatch.setattr(http, "get", boom)
     app.config["OPENFDA_ENABLED"] = True
     try:
         p = api.register("patient")
