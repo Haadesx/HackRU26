@@ -89,14 +89,14 @@ export default function VerifyPage() {
         onSubmit={(e) => { e.preventDefault(); if (!stillMissing.length) setPreview(true); }}
         noValidate
       >
-        <div className="grid gap-5 sm:grid-cols-2">
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {FIELDS.map((f) => {
             const st = stateOf(f);
             const note = st === "missing" ? `Missing. ${f.why || "Check the label."}` : st === "unsure" ? "MedCheck couldn't read this clearly. Check it against the bottle." : null;
             return (
               <TextField key={f.key} id={`f-${f.key}`} label={f.label + (f.required ? "" : " (optional)")} state={st} note={note}
                 placeholder={f.placeholder} inputMode={f.inputMode} value={values[f.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} className={f.wide ? "sm:col-span-2" : ""} />
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} className={f.wide ? "sm:col-span-2 xl:col-span-3" : ""} />
             );
           })}
         </div>

@@ -59,10 +59,10 @@ export default function HistoryPage() {
         <Button variant="secondary" onClick={download} disabled={!adh.due}>Download report for her doctor</Button>
       </header>
 
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:gap-10">
         <AdherenceCalendar year={adh.year} month={adh.month} days={adh.days} selected={selected} onSelect={setSelected}
           onPrev={() => move(-1)} onNext={() => move(1)} today={keyOf(now)} />
-        <aside className="flex flex-col gap-4">
+        <aside className="flex flex-col gap-4 xl:sticky xl:top-8">
           {dayData ? (
             <section aria-labelledby="day-h" className="flex flex-col gap-3">
               <h2 id="day-h" className="text-xl font-bold">{fmtLongDate(dayDate)}</h2>
