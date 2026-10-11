@@ -396,6 +396,11 @@ def reconcile_fields(
         if ocr is None and vlm is None:
             continue
         if ocr is None:
+            # A zero-confidence VLM value is not evidence: the model often emits a default
+            # (e.g. form="tablet") for a field the label never states. Drop it instead of
+            # presenting a guess as a read.
+            if float(vlm["confidence"] or 0) <= 0:
+                continue
             result.fields[key] = {
                 "value": vlm["value"],
                 "confidence": vlm["confidence"],

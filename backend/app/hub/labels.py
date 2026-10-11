@@ -26,8 +26,8 @@ FIELD_ORDER = (
 )
 REQUIRED = ("name", "strength", "dose_amount", "schedule_times", "quantity_start")
 LABELS = {
-    "name": "medication name", "strength": "strength", "dose_amount": "tablets per dose",
-    "schedule_times": "times of day", "quantity_start": "tablets in the bottle",
+    "name": "medication name", "strength": "strength", "dose_amount": "amount per dose",
+    "schedule_times": "times of day", "quantity_start": "amount in the bottle",
     "refills_remaining": "refills", "pharmacy_name": "pharmacy", "pharmacy_phone": "pharmacy phone",
     "prescriber": "prescriber",
 }
@@ -37,12 +37,20 @@ TEXT_PARSED = 0.75     # parsed by regex from raw OCR text
 PHONE_PARSED = 0.70
 
 _FREQUENCIES = [
-    (re.compile(r"\b(four times|4 times|qid|every 6 hours)\b", re.I), "08:00, 12:00, 16:00, 20:00"),
-    (re.compile(r"\b(three times|3 times|tid|every 8 hours)\b", re.I), "08:00, 14:00, 20:00"),
-    (re.compile(r"\b(twice|two times|2 times|bid|every 12 hours)\b", re.I), "08:00, 20:00"),
+    (re.compile(r"\b(four times|4 times|qid)\b", re.I), "08:00, 12:00, 16:00, 20:00"),
+    (re.compile(r"\b(three times|3 times|tid)\b", re.I), "08:00, 14:00, 20:00"),
+    (re.compile(r"\b(twice|two times|2 times|bid)\b", re.I), "08:00, 20:00"),
     (re.compile(r"\b(at bedtime|bedtime|at night|nightly)\b", re.I), "20:00"),
     (re.compile(r"\b(once|daily|every day|each day|every morning|in the morning|qd)\b", re.I), "08:00"),
 ]
+
+# Interval cadences are NOT day-anchored: the first dose time decides every later clock time,
+# so converting "every 8 hours" into 08:00/14:00/20:00 invents a non-equivalent schedule.
+# When this matches, no schedule is inferred and the caregiver must set the times explicitly.
+_INTERVAL = re.compile(
+    r"\bevery\s*(?:\d+|other)\s*(?:hours?|hrs?|days?|weeks?)\b|\bevery\s*other\s*day\b|\bq\s?\d+\s*h\b",
+    re.I,
+)
 _QTY = re.compile(r"\b(?:QTY|QUANTITY)\s*[:#]?\s*(\d{1,4})\b", re.I)
 _REFILLS = re.compile(r"\bREFILLS?\s*(?:REMAINING|LEFT)?\s*[:#]?\s*(\d{1,2})\b", re.I)
 _NO_REFILLS = re.compile(r"\bNO\s+REFILLS\b", re.I)
@@ -63,6 +71,45 @@ def state_for(confidence: float, value: str) -> str:
     if not value or confidence < UNSURE:
         return "missing"
     return "filled" if confidence >= FILLED else "unsure"
+
+
+def form_from_inference(scan: dict) -> tuple[str | None, str | None]:
+    """Dosage form and dose unit as read by inference (never invented).
+
+    A field only counts when it carries a usable source and confidence — the VLM can
+    return ``"tablet"`` with confidence 0 for a label that never states a form, and that
+    guess must not become the medication's dosage form. Returns (None, None) when the
+    evidence is missing or too weak so the caller can ask for review instead.
+    """
+    med = scan.get("medication") or {}
+    form_field = med.get("form") or {}
+    form = str(form_field.get("value")).strip().lower() if form_field.get("value") else None
+    form_source = str(form_field.get("source") or "none")
+    form_conf = float(form_field.get("confidence") or 0)
+    if form in ("", "none") or form_source == "none" or form_conf < UNSURE:
+        form = None
+
+    dose = (scan.get("instructions") or {}).get("dose") or {}
+    unit = str(dose.get("unit")).strip().lower() if dose.get("unit") else None
+    unit_source = str(dose.get("source") or "none")
+    unit_conf = float(dose.get("confidence") or 0)
+    if unit in ("", "none") or unit_source == "none" or unit_conf < UNSURE:
+        unit = None
+    return form, unit
+
+
+def form_noun(form: str | None, unit: str | None = None) -> str:
+    """Counting noun for copy: tablet / capsule / unit (never silently 'tablet')."""
+    for candidate in (form, unit):
+        if candidate in ("tablet", "tablets"):
+            return "tablet"
+        if candidate in ("capsule", "capsules"):
+            return "capsule"
+    return "unit"
+
+
+def form_plural(noun: str) -> str:
+    return "tablets" if noun == "tablet" else "capsules" if noun == "capsule" else "units"
 
 
 def _num(v) -> str:
@@ -93,11 +140,12 @@ def readings_from_inference(scan: dict) -> dict[str, tuple[str, float]]:
         [p.get("text", "") for p in instructions.get("parsed") or [] if p.get("kind") == "frequency"]
         + [instructions.get("raw_text") or ""]
     )
-    for pattern, times in _FREQUENCIES:
-        if pattern.search(wording):
-            base = float(dose.get("confidence") or (scan.get("label") or {}).get("confidence") or 0.6)
-            out["schedule_times"] = (times, min(base, CONVERTED_CAP))
-            break
+    if not _INTERVAL.search(wording):
+        for pattern, times in _FREQUENCIES:
+            if pattern.search(wording):
+                base = float(dose.get("confidence") or (scan.get("label") or {}).get("confidence") or 0.6)
+                out["schedule_times"] = (times, min(base, CONVERTED_CAP))
+                break
 
     # v1.3: inference reads label metadata itself. Prefer it; regexes below only fill gaps
     # (older gateways, or fields label_meta left empty).
