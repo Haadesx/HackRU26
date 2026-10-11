@@ -94,134 +94,10 @@ struct ScanView: View {
 
     private var cameraColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sourcePicker
-            cameraView
+            ScanSourcePicker()
+            CameraViewfinder(camera: camera, aspectRatio: sizeClass == .regular ? 1.25 : 0.82)
             controls
             photosStrip
-        }
-    }
-
-    private var sourcePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Scan with").font(MCFont.bodyBold).foregroundStyle(MC.ink)
-            VStack(spacing: 10) {
-                sourceOption(title: "This phone",
-                             detail: "Hold the bottle up to the camera.",
-                             selected: true, enabled: true)
-                sourceOption(title: "Meta AI glasses",
-                             detail: "Coming after the MVP. Rosa will just look at the bottle.",
-                             selected: false, enabled: false)
-            }
-        }
-    }
-
-    private func sourceOption(title: String, detail: String, selected: Bool, enabled: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                .font(.system(size: 22))
-                .foregroundStyle(enabled ? MC.navy : MC.dashed)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(MCFont.bodyBold)
-                Text(detail).font(MCFont.regular(15, relativeTo: .footnote))
-            }
-            .foregroundStyle(enabled ? MC.ink : MC.inkMuted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? MC.mist : MC.card))
-        .overlay {
-            if enabled {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(MC.navy, lineWidth: 2)
-            } else {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(MC.dashed, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-        .accessibilityHint(enabled ? "" : "Not available yet")
-    }
-
-    private var cameraView: some View {
-        ZStack {
-            Rectangle().fill(Color(hex: 0x2B3A4D))
-
-            #if os(iOS)
-            if camera.isRunning {
-                CameraPreview(session: camera.session)
-            }
-            #endif
-
-            if !camera.isRunning {
-                Text(placeholderText)
-                    .font(MCFont.regular(15, relativeTo: .footnote))
-                    .foregroundStyle(Color(hex: 0x9AA6B2))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
-
-            // Dim everything outside the aiming frame.
-            GeometryReader { proxy in
-                let hole = CGRect(x: proxy.size.width * 0.12, y: proxy.size.height * 0.24,
-                                  width: proxy.size.width * 0.76, height: proxy.size.height * 0.46)
-                Path { path in
-                    path.addRect(CGRect(origin: .zero, size: proxy.size))
-                    path.addRoundedRect(in: hole, cornerSize: CGSize(width: 14, height: 14))
-                }
-                .fill(Color(hex: 0x141B23).opacity(0.45), style: FillStyle(eoFill: true))
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(Color.white, lineWidth: 3)
-                    .frame(width: hole.width, height: hole.height)
-                    .position(x: hole.midX, y: hole.midY)
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-
-            VStack {
-                Text("Hold the label inside the frame")
-                    .font(MCFont.bodyBold)
-                    .foregroundStyle(MC.ink)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.white))
-                Spacer()
-                if camera.isRunning {
-                    feedbackPill
-                } else if camera.authorization == .unavailable {
-                    Text("Sample label ready")
-                        .font(MCFont.bodyBold)
-                        .foregroundStyle(SupplyStatus.refillSoon.text)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(MC.butter))
-                }
-            }
-            .padding(.vertical, 18)
-            .padding(.horizontal, 12)
-        }
-        .aspectRatio(sizeClass == .regular ? 1.25 : 0.82, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Camera view. Hold the label inside the frame. \(camera.isRunning ? camera.feedback.text : placeholderText)")
-    }
-
-    private var feedbackPill: some View {
-        let sharp = camera.feedback == .sharp
-        return Text(camera.feedback.text)
-            .font(MCFont.bodyBold)
-            .foregroundStyle(sharp ? SupplyStatus.onTrack.text : MC.ink)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(sharp ? SupplyStatus.onTrack.fill : Color.white))
-    }
-
-    private var placeholderText: String {
-        switch camera.authorization {
-        case .notDetermined: "Waiting for camera access."
-        case .denied: "The camera is off."
-        case .unavailable: "No camera on this device. Take photo uses a sample label so you can try the flow."
-        case .authorized: "Starting the camera."
         }
     }
 
@@ -315,10 +191,16 @@ struct ScanView: View {
                     .accessibilityAddTraits(.isHeader)
 
                 if let scan = session.scan {
-                    ForEach(ScanKey.foundSoFar, id: \.self) { key in
-                        foundRow(key: key, field: scan.field(key))
+                    ForEach(ScanKey.form, id: \.self) { key in
+                        foundRow(key: key, field: scan.field(key), form: scan.dosageForm)
                     }
-                    if scan.field(ScanKey.quantity)?.state != .filled || scan.field(ScanKey.refills)?.state != .filled {
+                    if let tip = scan.guidance {
+                        Text(tip)
+                            .font(MCFont.bodyBold)
+                            .foregroundStyle(SupplyStatus.refillSoon.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if scan.field(ScanKey.quantityStart)?.state != .filled || scan.field(ScanKey.refillsRemaining)?.state != .filled {
                         Text("Try the back of the label, where the quantity is usually printed.")
                             .font(MCFont.regular(15, relativeTo: .footnote))
                             .foregroundStyle(MC.inkSoft)
@@ -344,8 +226,8 @@ struct ScanView: View {
         }
     }
 
-    private func foundRow(key: String, field: ScanField?) -> some View {
-        let title = ScanKey.foundLabels[key] ?? key
+    private func foundRow(key: String, field: ScanField?, form: DosageForm?) -> some View {
+        let title = ScanKey.foundLabel(for: key, form: form)
         let state = field?.state ?? .missing
         return HStack(alignment: .center, spacing: 12) {
             Text(title).font(MCFont.body).foregroundStyle(MC.ink)
@@ -354,7 +236,9 @@ struct ScanView: View {
             case .filled:
                 PillBadge(text: field?.value ?? "Found", fill: SupplyStatus.onTrack.fill, textColor: SupplyStatus.onTrack.text)
             case .unsure:
-                PillBadge(text: "Unclear", fill: SupplyStatus.refillSoon.fill, textColor: SupplyStatus.refillSoon.text)
+                // What was read is shown with a nudge to check it, as the web app does. "Unclear" if nothing legible.
+                PillBadge(text: "\(field?.value ?? "Unclear") \u{00B7} check", fill: SupplyStatus.refillSoon.fill,
+                          textColor: SupplyStatus.refillSoon.text)
             case .missing:
                 PillBadge(text: "Not found yet", fill: SupplyStatus.urgent.fill, textColor: SupplyStatus.urgent.text)
             }

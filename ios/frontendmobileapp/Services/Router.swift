@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, scan, history, settings
+    case home, scan, track, history, settings
 }
 
 /// Summary handed to the Added screen once `POST /scans/{id}/complete` succeeds.
@@ -11,6 +11,10 @@ struct AddedSummary: Hashable {
     var quantity: Int?
     var lastsUntil: Date?
     var firstReminder: Date?
+    /// "tablet" or "capsule": the label's, or the caregiver's choice.
+    var form: DosageForm?
+    /// Things the hub wants the caregiver to know about the medication it just added.
+    var warnings: [String] = []
 }
 
 enum ScanRoute: Hashable {
@@ -26,6 +30,10 @@ final class Router {
 
     func openScan() {
         tab = .scan
+    }
+
+    func openTrack() {
+        tab = .track
     }
 
     func openVerify(scanID: Int) {

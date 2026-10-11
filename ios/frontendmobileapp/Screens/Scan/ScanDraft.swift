@@ -9,6 +9,12 @@ final class ScanDraft {
     let events: [ScanEvent]
     let status: ScanStatus
     let labelImageURL: String?
+    /// What the label said ("tablet" or "capsule"). Never overridden by the caregiver's choice.
+    let readForm: DosageForm?
+    /// The hub's check of this bottle against the tracked medications, if it sent one.
+    let verification: ScanVerification?
+    /// The caregiver's choice when the label didn't say.
+    var chosenForm: DosageForm?
 
     var values: [String: String]
     private let original: [String: String]
@@ -20,6 +26,8 @@ final class ScanDraft {
         events = scan.events
         status = scan.status
         labelImageURL = scan.labelImageUrl
+        readForm = scan.dosageForm
+        verification = scan.verification
 
         var start: [String: String] = [:]
         var states: [String: FieldState] = [:]
@@ -62,9 +70,9 @@ final class ScanDraft {
             return "MedCheck couldn't read this clearly. Check it against the bottle."
         case .missing:
             switch key {
-            case ScanKey.quantity: return "Missing. Needed to warn before Rosa runs out."
-            case ScanKey.refills:
-                let pharmacy = value(ScanKey.pharmacy)
+            case ScanKey.quantityStart: return "Missing. Needed to warn before Rosa runs out."
+            case ScanKey.refillsRemaining:
+                let pharmacy = value(ScanKey.pharmacyName)
                 return pharmacy.isEmpty ? "Missing. You can also call the pharmacy to check."
                                         : "Missing. You can also call \(pharmacy.components(separatedBy: " ").first ?? pharmacy) to check."
             default: return "Missing. Please add it."
@@ -84,14 +92,31 @@ final class ScanDraft {
         }
     }
 
+    // MARK: Dosage form
+
+    /// The form to word things with: the label's, else the caregiver's choice, else nil ("unit(s)").
+    var form: DosageForm? { readForm ?? chosenForm }
+
+    /// The hub won't add a medication whose form nobody confirmed, and never guesses it.
+    var needsFormChoice: Bool { form == nil }
+
+    /// Sent as `dosage_form` only when the caregiver chose it: the hub never lets a choice override the label.
+    var formToSend: DosageForm? { readForm == nil ? chosenForm : nil }
+
     // MARK: Completeness
 
     var missingRequired: [String] {
         ScanKey.required.filter { value($0).isEmpty }.sorted()
     }
 
-    /// Preview stays disabled until no required field is missing.
-    var isComplete: Bool { missingRequired.isEmpty }
+    /// How many required details are still open, counting the dosage form.
+    var missingCount: Int { missingRequired.count + (needsFormChoice ? 1 : 0) }
+
+    /// Preview stays disabled until no required field is missing and the dosage form is known.
+    var isComplete: Bool { missingCount == 0 }
+
+    /// Label for a field, with "Units", "Tablets" or "Capsules" following the dosage form.
+    func label(for key: String) -> String { ScanKey.label(for: key, form: form) }
 
     // MARK: Derived copy
 
@@ -100,17 +125,35 @@ final class ScanDraft {
     var doseAmount: Int { Int(value(ScanKey.doseAmount)) ?? 1 }
 
     var scheduleTimes: [String] {
-        value(ScanKey.doseTimes)
+        value(ScanKey.scheduleTimes)
             .components(separatedBy: CharacterSet(charactersIn: ",&"))
             .flatMap { $0.components(separatedBy: " and ") }
             .compactMap { Fmt.parseClock($0) }
             .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
     }
 
-    var quantity: Int? { Int(value(ScanKey.quantity)) }
+    var quantity: Int? { Int(value(ScanKey.quantityStart)) }
 
     var scheduleSentence: String {
-        Fmt.scheduleSentence(amount: doseAmount, times: scheduleTimes, purpose: nil)
+        Fmt.scheduleSentence(amount: Double(doseAmount), times: scheduleTimes, purpose: nil, noun: form.noun())
+    }
+
+    /// The dose times as the hub reads them ("08:00, 20:00"). "8:00 AM" and "8pm" are accepted here and
+    /// converted; anything that still isn't a time goes through as typed so the hub can say what is wrong.
+    var scheduleTimesPayload: String {
+        let raw = value(ScanKey.scheduleTimes)
+        let parts = raw.components(separatedBy: CharacterSet(charactersIn: ",&"))
+            .flatMap { $0.components(separatedBy: " and ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let parsed = parts.compactMap { Fmt.parseClock($0) }
+        guard !parts.isEmpty, parsed.count == parts.count else { return raw }
+        var times: [String] = []
+        for clock in parsed {
+            let time = String(format: "%02d:%02d", clock.hour, clock.minute)
+            if !times.contains(time) { times.append(time) }
+        }
+        return times.sorted().joined(separator: ", ")
     }
 
     /// Days the bottle lasts: tablets / (tablets per dose x doses per day).
@@ -141,7 +184,8 @@ final class ScanDraft {
     /// Body of `POST /scans/{id}/complete`.
     var payload: [ScanField] {
         ScanKey.form.map { key in
-            ScanField(key: key, value: value(key).isEmpty ? nil : value(key), state: payloadState(for: key))
+            let text = key == ScanKey.scheduleTimes ? scheduleTimesPayload : value(key)
+            return ScanField(key: key, value: text.isEmpty ? nil : text, state: payloadState(for: key))
         }
     }
 

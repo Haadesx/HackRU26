@@ -15,6 +15,9 @@ struct ContentView: View {
             Tab("Scan", systemImage: "camera.viewfinder", value: AppTab.scan) {
                 ScanFlowView()
             }
+            Tab("Track", systemImage: "checklist", value: AppTab.track) {
+                TrackView()
+            }
             Tab("History", systemImage: "calendar", value: AppTab.history) {
                 HistoryView()
             }
@@ -35,7 +38,6 @@ struct ContentView: View {
         .onAppear {
             #if DEBUG
             if let tab = DebugLaunch.tab { router.tab = tab }
-            if DebugLaunch.openVerify { router.openVerify(scanID: 1) }
             if DebugLaunch.showAdded {
                 router.tab = .scan
                 router.scanPath = [.added(AddedSummary(name: "Lisinopril", strength: "10 mg", quantity: 30,
@@ -48,9 +50,19 @@ struct ContentView: View {
             await store.refresh()
             await store.loadSettings()
             #if DEBUG
+            if DebugLaunch.openVerify, let id = store.scansNeedingHelp.first?.id { router.openVerify(scanID: id) }
+            if let id = DebugLaunch.verifyScanID { router.openVerify(scanID: id) }
             if DebugLaunch.offline { store.simulateOffline = true; await store.refresh() }
             if DebugLaunch.skipDays > 0 { await store.skip(days: DebugLaunch.skipDays) }
             if DebugLaunch.selfTest { await DebugSelfTest.run(store: store) }
+            if let path = DebugLaunch.fixturesPath { DebugContractTest.runFixtures(directory: path) }
+            if DebugLaunch.liveTest { await DebugContractTest.runLive() }
+            #if canImport(UIKit)
+            if DebugLaunch.snapshot {
+                try? await Task.sleep(for: .seconds(4))
+                DebugLaunch.writeSnapshot()
+            }
+            #endif
             #endif
         }
     }

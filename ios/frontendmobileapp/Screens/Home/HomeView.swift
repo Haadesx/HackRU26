@@ -37,9 +37,6 @@ struct HomeView: View {
                     aside
                 }
 
-                #if DEBUG
-                DemoBar()
-                #endif
             }
         }
         .refreshable { await store.refresh() }
@@ -67,7 +64,7 @@ struct HomeView: View {
 
     private var greeting: String {
         let hour = Fmt.calendar.component(.hour, from: store.now)
-        return "Good \(Fmt.dayPart(forHour: hour)), Elena. Here's how Rosa is doing."
+        return "Good \(Fmt.dayPart(forHour: hour)), \(store.caregiverName). Here's how \(store.patientName) is doing."
     }
 
     private var header: some View {
@@ -116,6 +113,9 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Today's doses", helper: store.today.isEmpty ? nil : store.doseSummary)
 
+            Button("Track and scan doses") { router.openTrack() }
+                .buttonStyle(.capsule(.secondary))
+
             if store.today.isEmpty {
                 MCCard {
                     EmptyStateView(message: "No doses logged today yet.", actionTitle: "Log a dose") {
@@ -123,7 +123,7 @@ struct HomeView: View {
                     }
                 }
             } else {
-                DoseList(slots: store.today, now: store.now) { slot in
+                DoseList(slots: store.today) { slot in
                     Task { await store.remindRosa(slot) }
                 }
             }
@@ -134,10 +134,16 @@ struct HomeView: View {
 
     private var aside: some View {
         VStack(alignment: .leading, spacing: 28) {
-            if !store.alerts.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(title: "Texts sent to you")
-                    ForEach(store.alerts) { alert in
+            // Always shown, newest five, as on the web: "No texts yet" says nothing has gone out, not that none can.
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Texts sent to you")
+                if store.alerts.isEmpty {
+                    Text("No texts yet. You'll get one when any medication drops below a week's supply.")
+                        .font(MCFont.body)
+                        .foregroundStyle(MC.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(store.alerts.prefix(5)) { alert in
                         AlertRow(alert: alert, now: store.now)
                     }
                 }
@@ -150,12 +156,6 @@ struct HomeView: View {
                     }
                 }
             }
-            Text("Camera images never leave Rosa's home. This page shows only what MedCheck read from labels and the doses it logged.")
-                .font(MCFont.regular(15, relativeTo: .footnote))
-                .foregroundStyle(MC.inkSoft)
-                .padding(.top, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .top) { Rectangle().fill(MC.line).frame(height: 1) }
         }
     }
 }
@@ -172,9 +172,9 @@ private struct NeedsHelpCard: View {
 
     private var missingPhrase: String {
         let phrases: [String: String] = [
-            ScanKey.quantity: "the tablet count", ScanKey.refills: "refills", ScanKey.name: "the name",
-            ScanKey.strength: "the strength", ScanKey.doseAmount: "the dose", ScanKey.doseTimes: "the dose times",
-            ScanKey.pharmacy: "the pharmacy", ScanKey.pharmacyPhone: "the pharmacy phone",
+            ScanKey.quantityStart: "the tablet count", ScanKey.refillsRemaining: "refills", ScanKey.name: "the name",
+            ScanKey.strength: "the strength", ScanKey.doseAmount: "the dose", ScanKey.scheduleTimes: "the dose times",
+            ScanKey.pharmacyName: "the pharmacy", ScanKey.pharmacyPhone: "the pharmacy phone",
             ScanKey.prescriber: "the prescriber",
         ]
         let parts = scan.missingFields.map { phrases[$0.key] ?? $0.displayLabel.lowercased() }
@@ -232,7 +232,7 @@ private extension Alert {
         case "no_refills": "New prescription needed"
         case "low_3": "Refill now"
         case "low_5", "low_7": "Refill soon"
-        default: "Heads up"
+        default: "Alert"
         }
     }
 
@@ -302,46 +302,5 @@ private struct EventRow: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(MC.card))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(MC.line, lineWidth: 1))
         .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Demo bar (debug builds only)
-
-struct DemoBar: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Demo mode. Today is \(Text(Fmt.dayShort(store.now)).font(MCFont.bodyBold))")
-                .font(MCFont.body)
-                .foregroundStyle(MC.page)
-
-            FlowLayout(spacing: 8, lineSpacing: 8) {
-                Button("Skip 1 day") { Task { await store.skip(days: 1) } }
-                    .buttonStyle(.capsule(.secondary, size: .compact))
-                Button("Skip a week") { Task { await store.skip(days: 7) } }
-                    .buttonStyle(.capsule(.secondary, size: .compact))
-                Button("Reset demo") { Task { await store.resetDemo() } }
-                    .buttonStyle(DemoOutlineStyle())
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16).fill(MC.ink))
-    }
-}
-
-private struct DemoOutlineStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(MCFont.bold(15, relativeTo: .headline))
-            .foregroundStyle(MC.mist)
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .overlay(Capsule().strokeBorder(MC.mist, lineWidth: 2))
-            .opacity(configuration.isPressed ? 0.6 : 1)
-            .contentShape(Capsule())
     }
 }

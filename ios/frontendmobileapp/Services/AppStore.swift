@@ -30,23 +30,29 @@ final class AppStore {
 
     // Hub state (`GET /state`)
     var medications: [Medication] = []
-    var today: [DoseSlot] = []
+    var doses: [DoseRecord] = []
+    var reminders: [ReminderRecord] = []
+    var skips: [SkipRecord] = []
     var pendingScans: [Scan] = []
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
     var now: Date = MockHub.demoStart
+    /// `state.patient`: first names the hub has for the patient and the caregiver. Rosa and Elena until it says.
+    var patientName = "Rosa"
+    var caregiverName = "Elena"
 
     // Settings (`GET /settings`)
     var settings: AppSettings = .standard
     var settingsJustSaved = false
     @ObservationIgnored private var syncedSettings: AppSettings?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The hub's check of each scan, remembered because older hubs leave it off `GET /scans/{id}`.
+    @ObservationIgnored private var verifications: [Int: ScanVerification] = [:]
 
     // UI
     var toast: Toast?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     var scanSession = ScanSession()
-    var cameraPaused = false
 
     init(api: any MedCheckAPI = AppConfig.makeAPI()) {
         self.api = api
@@ -56,13 +62,37 @@ final class AppStore {
 
     var isDemo: Bool { api.isDemo }
 
-    /// Debug only: point the app at a real hub, or back to demo data.
+    /// Hides "Ask Rosa to scan again" on hubs that have no such endpoint (the shared contract has none).
+    var supportsRescan: Bool { api.supportsRescan }
+
+    /// How the last "Apply" in Settings went, in a sentence for the Hub connection card.
+    var hubConfigMessage: String?
+
+    /// Point the app at a real hub, or back to demo data. The address may be just the host and port: the hub is
+    /// looked for there and under `/hub`, and the address that answered is the one kept.
     func configureHub(useDemo: Bool, baseURL: String) async {
+        var address = baseURL
+        hubConfigMessage = nil
+        if !useDemo {
+            if let typed = AppConfig.normalizedURL(from: baseURL) {
+                if let found = await AppConfig.locateHub(from: typed) {
+                    address = found.absoluteString
+                    hubConfigMessage = "Found the hub at \(address)."
+                } else {
+                    address = typed.absoluteString
+                    hubConfigMessage = "Couldn't reach a MedCheck hub at \(address). Check that it is running, that it listens "
+                        + "on the network (0.0.0.0, not only 127.0.0.1) and that this device is on the same network."
+                }
+            } else {
+                hubConfigMessage = "That doesn't look like an address. Try http://192.168.1.20:8000/hub."
+            }
+        }
         AppConfig.useDemoData = useDemo
-        AppConfig.savedBaseURL = baseURL
+        AppConfig.savedBaseURL = address
         api = AppConfig.makeAPI()
         isLoaded = false
         syncedSettings = nil
+        verifications = [:]
         await refresh()
         await loadSettings()
     }
@@ -83,11 +113,15 @@ final class AppStore {
         do {
             let state = try await api.state()
             medications = state.medications
-            today = state.today
+            doses = state.doses
+            reminders = state.reminders
+            skips = state.skips
             pendingScans = state.pendingScans
             alerts = state.alerts
             events = state.events
-            now = state.now ?? Date()
+            now = state.now
+            if let name = state.patientName { patientName = name }
+            if let name = state.caregiverName { caregiverName = name }
             hubConnected = true
         } catch {
             hubConnected = false
@@ -117,6 +151,13 @@ final class AppStore {
 
     func bottle(for med: Medication) -> ShelfBottle {
         let status = status(for: med)
+        guard med.stockKnown else {
+            return ShelfBottle(
+                id: med.id, name: med.name, strength: med.strength, status: status,
+                pillCount: PillBottleView.pillCount(forDaysLeft: med.daysLeft),
+                daysText: "Not counted", runsOutText: "Count the pills",
+                accessibilityText: "\(med.name), pills not counted yet. Button.")
+        }
         let days = Fmt.daysText(med.daysLeft)
         let runOut = runOutDate(for: med)
         return ShelfBottle(
@@ -179,10 +220,21 @@ final class AppStore {
     /// Scans Rosa handed over for the caregiver to finish. The scan the caregiver is working on
     /// from the Scan tab is theirs already, so it doesn't show up as "Needs your help".
     var scansNeedingHelp: [Scan] {
-        pendingScans.filter { $0.status != .complete && $0.id != scanSession.scan?.id }
+        pendingScans.filter { $0.status == .needsCaregiver && $0.id != scanSession.scan?.id }
     }
 
     // MARK: Derived dose data
+
+    /// Every scheduled dose of one day, worked out from the hub's dose, skip and reminder records.
+    func slots(on day: Date) -> [DoseSlot] {
+        DayDoses.build(day: day, now: now, medications: medications, doses: doses, skips: skips, reminders: reminders)
+    }
+
+    /// Today's doses.
+    var today: [DoseSlot] { slots(on: now) }
+
+    /// The dose most likely in Rosa's hand right now.
+    var doseDueNow: DoseSlot? { DayDoses.doseDueNow(in: today) }
 
     var dosesTakenToday: Int { today.filter { $0.status == .taken }.count }
 
@@ -206,6 +258,7 @@ final class AppStore {
 
     func showToast(_ message: String, isError: Bool = false) {
         toast = Toast(message: message, isError: isError)
+        AccessibilityNotification.Announcement(message).post()
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3.2))
@@ -215,15 +268,28 @@ final class AppStore {
     }
 
     /// Runs a hub call and reports failure with a toast. Returns whether it succeeded.
+    ///
+    /// When the hub answered with an error it was reachable, so its own sentence is shown (for example
+    /// "Lisinopril was already taken at this time today.") and the connection chip stays as it was.
+    /// Anything else means the hub did not respond, so `failure` is shown and the chip turns red.
     @discardableResult
     private func perform(failure: String, _ work: () async throws -> Void) async -> Bool {
         do {
             try await work()
             return true
         } catch {
-            hubConnected = false
-            showToast(failure, isError: true)
+            report(error, fallback: failure)
             return false
+        }
+    }
+
+    /// Shows why a hub call failed. See `perform`.
+    private func report(_ error: Error, fallback: String) {
+        if case APIError.server(_, let message) = error {
+            showToast(message, isError: true)
+        } else {
+            hubConnected = false
+            showToast(fallback, isError: true)
         }
     }
 
@@ -231,13 +297,62 @@ final class AppStore {
 
     func logDose(_ med: Medication) async -> Bool {
         let ok = await perform(failure: "Couldn't log the dose. The hub didn't respond.") {
-            try await api.logDose(medicationID: med.id)
+            try await api.logDose(medicationID: med.id, slot: nil, method: .dashboard)
         }
         if ok {
             showToast("Logged a dose of \(med.name).")
             await refresh()
         }
         return ok
+    }
+
+    /// Track: "Mark as taken" for one slot. Never called for a scan alone: a scan only identifies the bottle.
+    func markTaken(_ slot: DoseSlot) async -> Bool {
+        let name = label(for: slot).name
+        let ok = await perform(failure: "Couldn't mark \(name) as taken. The hub didn't respond.") {
+            try await api.logDose(medicationID: slot.medicationId, slot: slot.slot, method: .dashboard)
+        }
+        if ok {
+            showToast("\(name) marked as taken.")
+            await refresh()
+        }
+        return ok
+    }
+
+    /// Track: "Skip" for one slot, on purpose. Not counted as missed.
+    func skip(_ slot: DoseSlot) async -> Bool {
+        let name = label(for: slot).name
+        let ok = await perform(failure: "Couldn't skip \(name). The hub didn't respond.") {
+            try await api.skipDose(medicationID: slot.medicationId, slot: slot.slot)
+        }
+        if ok {
+            showToast("Skipped \(name) at \(Fmt.time(slot.scheduledAt)).")
+            await refresh()
+        }
+        return ok
+    }
+
+    // MARK: Dose scanner
+
+    /// Asks the hub which bottle is in the photo. Records nothing. After a wrong bottle the hub adds a
+    /// "Mistakes caught" event, so state is refreshed for Home.
+    func matchDose(photo: Data, demoMedicationID: Int? = nil) async throws -> DoseMatch {
+        let match = try await api.matchDose(photo: photo, demoMedicationID: demoMedicationID)
+        if case .wrongBottle = match { await refresh() }
+        return match
+    }
+
+    /// "Log this dose now" on a bottle check (Verify): the normal dose endpoint, once, for the next open slot.
+    /// Throws so the card can show the hub's own sentence ("The 08:00 dose of Lisinopril is already logged.").
+    func logCheckedDose(medicationID: Int) async throws {
+        try await api.logDose(medicationID: medicationID, slot: nil, method: .dashboard)
+        await refresh()
+    }
+
+    /// "Rosa took it": the only thing that turns a scan into a recorded dose.
+    func confirmScannedDose(medicationID: Int, slot: String) async throws {
+        try await api.logDose(medicationID: medicationID, slot: slot, method: .scan)
+        await refresh()
     }
 
     func correctCount(_ med: Medication, to count: Int) async -> Bool {
@@ -265,14 +380,18 @@ final class AppStore {
     func remindRosa(_ slot: DoseSlot) async {
         let name = label(for: slot).name
         let ok = await perform(failure: "Couldn't send the reminder. The hub didn't respond.") {
-            try await api.remindRosa(medicationID: slot.medicationId)
+            try await api.remindRosa(medicationID: slot.medicationId, slot: slot.slot)
         }
-        if ok { showToast("Rosa will hear a reminder for \(name).") }
+        if ok {
+            showToast("Rosa will hear a reminder for \(name).")
+            await refresh()
+        }
     }
 
-    func updateMedication(_ med: Medication) async -> Bool {
+    /// Saves edited label details. `scheduleTimes` is the new dose times, or nil when they weren't changed.
+    func updateMedication(_ med: Medication, scheduleTimes: [String]? = nil) async -> Bool {
         let ok = await perform(failure: "Couldn't save the changes. The hub didn't respond.") {
-            try await api.updateMedication(med)
+            try await api.updateMedication(med, scheduleTimes: scheduleTimes)
         }
         if ok {
             showToast("Saved changes to \(med.name).")
@@ -300,34 +419,49 @@ final class AppStore {
         defer { scanSession.isReading = false }
         do {
             if let current = scanSession.scan {
-                scanSession.scan = try await api.addPhoto(scanID: current.id, photo: data)
+                scanSession.scan = remember(try await api.addPhoto(scanID: current.id, photo: data))
             } else {
-                scanSession.scan = try await api.startScan(photo: data)
+                scanSession.scan = remember(try await api.startScan(photo: data))
             }
             scanSession.photos.append(data)
         } catch {
-            hubConnected = false
-            showToast("Couldn't read that photo. The hub didn't respond, so try again.", isError: true)
+            report(error, fallback: "Couldn't read that photo. The hub didn't respond, so try again.")
         }
     }
 
     /// "Enter the details by hand": an empty scan, so Verify can reuse the same form.
     func beginManualEntry() async -> Scan? {
         do {
-            let scan = try await api.startScan(photo: nil)
+            let scan = remember(try await api.startScan(photo: nil))
             scanSession.scan = scan
             return scan
         } catch {
-            hubConnected = false
-            showToast("Couldn't start. The hub didn't respond, so try again.", isError: true)
+            report(error, fallback: "Couldn't start. The hub didn't respond, so try again.")
             return nil
         }
     }
 
-    func loadScan(id: Int) async -> Scan? {
-        if let local = scanSession.scan, local.id == id { return local }
-        if let pending = pendingScans.first(where: { $0.id == id }) { return pending }
-        return try? await api.scan(id: id)
+    /// Keeps the hub's check of a scan, and puts it back on a copy that arrived without one.
+    private func remember(_ scan: Scan) -> Scan {
+        var scan = scan
+        if let verification = scan.verification {
+            verifications[scan.id] = verification
+        } else {
+            scan.verification = verifications[scan.id]
+        }
+        return scan
+    }
+
+    /// The scan for Verify. Like the web app it asks the hub, because only `GET /scans/{id}` carries the
+    /// bottle check for a scan Rosa handed over. If the hub can't be asked, the copy already in hand is used.
+    func loadScan(id: Int) async throws -> Scan {
+        do {
+            return remember(try await api.scan(id: id))
+        } catch {
+            if let local = scanSession.scan, local.id == id { return remember(local) }
+            if let pending = pendingScans.first(where: { $0.id == id }) { return remember(pending) }
+            throw error
+        }
     }
 
     func requestRescan(_ scan: Scan) async {
@@ -349,10 +483,14 @@ final class AppStore {
     }
 
     /// `POST /scans/{id}/complete`. Throws so the Preview sheet can show the failure inline.
-    func completeScan(id: Int, fields: [ScanField]) async throws {
-        try await api.completeScan(id: id, fields: fields)
+    /// Returns the hub's `warnings` about the new medication, usually none.
+    @discardableResult
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] {
+        let warnings = try await api.completeScan(id: id, fields: fields, dosageForm: dosageForm)
         if scanSession.scan?.id == id { scanSession = ScanSession() }
+        verifications[id] = nil
         await refresh()
+        return warnings
     }
 
     // MARK: History
@@ -381,10 +519,19 @@ final class AppStore {
         syncedSettings = loaded
     }
 
+    /// Why the settings on screen aren't being saved, if they can't be. Cleared once they are valid again.
+    var settingsProblem: String?
+
     /// Called whenever `settings` changes; saves after a short pause so typing isn't a request per key.
+    /// Values the hub would refuse are held back and explained, instead of being sent and bounced.
     func settingsDidChange() {
-        guard let synced = syncedSettings, settings != synced else { return }
+        guard let synced = syncedSettings, settings != synced else {
+            settingsProblem = nil
+            return
+        }
         saveTask?.cancel()
+        settingsProblem = settings.problem
+        guard settingsProblem == nil else { return }
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled, let self else { return }
@@ -401,20 +548,22 @@ final class AppStore {
             try? await Task.sleep(for: .seconds(1.8))
             settingsJustSaved = false
         } catch {
-            hubConnected = false
-            showToast("Couldn't save your settings. The hub didn't respond.", isError: true)
+            if case APIError.server(_, let message) = error { settingsProblem = message }
+            report(error, fallback: "Couldn't save your settings. The hub didn't respond.")
         }
     }
 
     // MARK: Privacy
 
-    func pauseCamera() async {
-        let ok = await perform(failure: "Couldn't pause the camera. The hub didn't respond.") {
-            try await api.pauseCamera()
+    /// Pause or resume the hub's camera. The hub stores this in settings (`camera_paused`).
+    func setCameraPaused(_ paused: Bool) async {
+        let ok = await perform(failure: "Couldn't change the camera. The hub didn't respond.") {
+            try await api.setCameraPaused(paused)
         }
         if ok {
-            cameraPaused = true
-            showToast("The camera is paused.")
+            settings.cameraPaused = paused
+            await loadSettings()
+            showToast(paused ? "The camera is paused." : "The camera is on again.")
         }
     }
 
@@ -448,9 +597,9 @@ final class AppStore {
             try await api.resetDemo()
         }
         if ok {
-            cameraPaused = false
             scanSession = ScanSession()
             await refresh()
+            await loadSettings()
         }
     }
 }

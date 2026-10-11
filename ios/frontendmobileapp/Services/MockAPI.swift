@@ -3,6 +3,7 @@ import Foundation
 /// Demo hub: same contract as `LiveAPI`, answered from `MockHub` with a little latency.
 final class MockAPI: MedCheckAPI {
     let isDemo = true
+    let supportsRescan = true
 
     /// Set from the debug section in Settings to exercise the offline and error states.
     var simulateOffline = false
@@ -25,7 +26,9 @@ final class MockAPI: MedCheckAPI {
         try await gate()
         return HubState(
             medications: hub.medications,
-            today: hub.todaySlots(),
+            doses: hub.doses,
+            reminders: hub.reminders,
+            skips: hub.skips,
             pendingScans: hub.scans.filter { $0.status != .complete },
             alerts: hub.alerts.sorted { $0.sentAt > $1.sentAt },
             events: hub.events.sorted { $0.occurredAt > $1.occurredAt },
@@ -36,7 +39,7 @@ final class MockAPI: MedCheckAPI {
 
     func medication(id: Int) async throws -> MedicationDetail {
         try await gate()
-        guard let med = hub.medications.first(where: { $0.id == id }) else { throw APIError.http(404) }
+        guard let med = hub.medications.first(where: { $0.id == id }) else { throw APIError.notFound }
         let week = hub.weekText(for: id)
         return MedicationDetail(medication: med, labelFields: hub.labels[id] ?? [],
                                 weekTaken: week.taken, weekDue: week.due)
@@ -52,14 +55,26 @@ final class MockAPI: MedCheckAPI {
         return hub.slots(on: date)
     }
 
-    func logDose(medicationID: Int) async throws {
+    func logDose(medicationID: Int, slot: String?, method: DoseMethod) async throws {
         try await gate()
-        hub.logDose(medicationID: medicationID)
+        try hub.logDose(medicationID: medicationID, slot: slot, method: method)
+    }
+
+    func skipDose(medicationID: Int, slot: String) async throws {
+        try await gate()
+        try hub.skipDose(medicationID: medicationID, slot: slot)
+    }
+
+    func matchDose(photo _: Data, demoMedicationID: Int?) async throws -> DoseMatch {
+        // Reading a label takes a moment on the real hub.
+        try? await Task.sleep(for: .milliseconds(450))
+        try await gate()
+        return hub.matchDose(demoMedicationID: demoMedicationID)
     }
 
     func correctCount(medicationID: Int, count: Int) async throws {
         try await gate()
-        guard let index = hub.medications.firstIndex(where: { $0.id == medicationID }) else { throw APIError.http(404) }
+        guard let index = hub.medications.firstIndex(where: { $0.id == medicationID }) else { throw APIError.notFound }
         hub.medications[index].pillsLeft = Double(max(0, count))
     }
 
@@ -68,20 +83,32 @@ final class MockAPI: MedCheckAPI {
         hub.markRefillPickedUp(medicationID: medicationID)
     }
 
-    func remindRosa(medicationID _: Int) async throws {
+    func remindRosa(medicationID: Int, slot: String) async throws {
         try await gate()
+        hub.remind(medicationID: medicationID, slot: slot)
     }
 
-    func updateMedication(_ medication: Medication) async throws {
+    func updateMedication(_ medication: Medication, scheduleTimes: [String]?) async throws {
         try await gate()
-        guard let index = hub.medications.firstIndex(where: { $0.id == medication.id }) else { throw APIError.http(404) }
-        hub.medications[index] = medication
+        guard let index = hub.medications.firstIndex(where: { $0.id == medication.id }) else { throw APIError.notFound }
+        var updated = medication
+        if let scheduleTimes {
+            updated.scheduleTimes = scheduleTimes
+            updated.dosesPerDay = scheduleTimes.count
+        } else {
+            // The hub only takes new dose times through `schedule_times`.
+            updated.scheduleTimes = hub.medications[index].scheduleTimes
+            updated.dosesPerDay = hub.medications[index].dosesPerDay
+        }
+        hub.medications[index] = updated
     }
 
     func stopTracking(medicationID: Int) async throws {
         try await gate()
         hub.medications.removeAll { $0.id == medicationID }
-        hub.slots.removeAll { $0.medicationId == medicationID }
+        hub.doses.removeAll { $0.medicationId == medicationID }
+        hub.skips.removeAll { $0.medicationId == medicationID }
+        hub.reminders.removeAll { $0.medicationId == medicationID }
         hub.labels[medicationID] = nil
     }
 
@@ -89,19 +116,31 @@ final class MockAPI: MedCheckAPI {
 
     func startScan(photo: Data?) async throws -> Scan {
         try await gate()
-        return hub.startScan(hasPhoto: photo != nil)
+        return withDemoVerification(hub.startScan(hasPhoto: photo != nil))
     }
 
     func addPhoto(scanID: Int, photo _: Data) async throws -> Scan {
         try await gate()
-        guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.http(404) }
-        return scan
+        guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.notFound }
+        return withDemoVerification(scan)
     }
 
     func scan(id: Int) async throws -> Scan {
         try await gate()
-        guard let scan = hub.scans.first(where: { $0.id == id }) else { throw APIError.http(404) }
+        guard let scan = hub.scans.first(where: { $0.id == id }) else { throw APIError.notFound }
+        return withDemoVerification(scan)
+    }
+
+    /// The demo hub reads no labels, so it has no bottle check of its own. Debug builds can attach one
+    /// (`-medcheck.verification due_now`) to look at each of the six outcomes.
+    private func withDemoVerification(_ scan: Scan) -> Scan {
+        #if DEBUG
+        var scan = scan
+        if let verification = DebugLaunch.verification { scan.verification = verification }
         return scan
+        #else
+        return scan
+        #endif
     }
 
     func requestRescan(scanID _: Int) async throws {
@@ -113,9 +152,9 @@ final class MockAPI: MedCheckAPI {
         hub.scans.removeAll { $0.id == id }
     }
 
-    func completeScan(id: Int, fields: [ScanField]) async throws {
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] {
         try await gate()
-        hub.complete(scanID: id, fields: fields)
+        return try hub.complete(scanID: id, fields: fields, dosageForm: dosageForm)
     }
 
     // MARK: History, settings, privacy
@@ -136,29 +175,31 @@ final class MockAPI: MedCheckAPI {
         return settings
     }
 
-    func pauseCamera() async throws {
+    func setCameraPaused(_ paused: Bool) async throws {
         try await gate()
-        hub.cameraPaused = true
+        hub.settings.cameraPaused = paused
     }
 
     func exportData() async throws -> Data {
         try await gate()
         struct Export: Encodable {
             var medications: [Medication]
-            var doses: [DoseSlot]
+            var doses: [DoseRecord]
             var alerts: [Alert]
             var settings: AppSettings
         }
         let encoder = APICoding.makeEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(Export(medications: hub.medications, doses: hub.slots.filter { $0.status != .upcoming },
+        return try encoder.encode(Export(medications: hub.medications, doses: hub.doses,
                                          alerts: hub.alerts, settings: hub.settings))
     }
 
     func deleteAllData() async throws {
         try await gate()
         hub.medications = []
-        hub.slots = []
+        hub.doses = []
+        hub.skips = []
+        hub.reminders = []
         hub.scans = []
         hub.alerts = []
         hub.events = []

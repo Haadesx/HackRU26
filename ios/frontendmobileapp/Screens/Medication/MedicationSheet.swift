@@ -75,6 +75,10 @@ struct MedicationSheet: View {
                 try? await Task.sleep(for: .seconds(1.5))
                 scrollPosition.scrollTo(y: y)
             }
+            if DebugLaunch.openEdit {
+                try? await Task.sleep(for: .seconds(1))
+                showEditForm = true
+            }
             #endif
         }
         .sheet(isPresented: $showCountForm) {
@@ -89,11 +93,11 @@ struct MedicationSheet: View {
             }
         }
         .sheet(isPresented: $showEditForm) {
-            MedicationEditForm(medication: med) { updated in
+            MedicationEditForm(medication: med) { updated, scheduleTimes in
                 showEditForm = false
                 Task {
                     busy = true
-                    _ = await store.updateMedication(updated)
+                    _ = await store.updateMedication(updated, scheduleTimes: scheduleTimes)
                     await reload()
                     busy = false
                 }
@@ -142,7 +146,8 @@ struct MedicationSheet: View {
                 .accessibilityLabel("Close")
             }
 
-            Text(Fmt.scheduleSentence(amount: med.doseAmount, times: med.scheduleTimes, purpose: med.purpose))
+            Text(Fmt.scheduleSentence(amount: med.doseAmount, times: med.scheduleTimes, purpose: med.purpose,
+                                      noun: med.dosageForm.noun(fallback: .tablet)))
                 .font(MCFont.body)
                 .foregroundStyle(MC.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
@@ -162,8 +167,8 @@ struct MedicationSheet: View {
         let refills = med.refillsRemaining.map(String.init) ?? "N/A"
         let columnCount = statColumnCount
         let tiles: [(String, String, Color)] = [
-            ("Pills left", String(Int(med.pillsLeft.rounded())), hot),
-            ("Runs out", Fmt.dayShort(store.runOutDate(for: med)), hot),
+            ("Pills left", med.stockKnown ? String(Int(med.pillsLeft.rounded())) : "Not counted", hot),
+            ("Runs out", med.stockKnown ? Fmt.dayShort(store.runOutDate(for: med)) : "Unknown", hot),
             ("Refills left", refills, med.refillsRemaining == 0 ? SupplyStatus.urgent.text : MC.ink),
             ("This week", detail?.weekText ?? "…", MC.ink),
         ]
@@ -238,8 +243,15 @@ struct MedicationSheet: View {
     // MARK: Actions
 
     private func actions(_ med: Medication, _ status: SupplyStatus) -> some View {
-        FlowLayout(spacing: 10, lineSpacing: 10) {
-            Button("Log a dose") {
+        // Same two rules as the web panel: "extra" once every dose of the day is in, and off for an empty bottle.
+        let takenToday = store.doses.filter {
+            $0.medicationId == med.id && Fmt.calendar.isDate($0.takenAt, inSameDayAs: store.now)
+        }.count
+        let isExtra = takenToday >= med.dosesPerDay
+        let tooFew = med.stockKnown && med.pillsLeft < med.doseAmount
+
+        return FlowLayout(spacing: 10, lineSpacing: 10) {
+            Button(isExtra ? "Log an extra dose" : "Log a dose") {
                 Task {
                     busy = true
                     if await store.logDose(med) { doseLogged += 1 }
@@ -248,6 +260,7 @@ struct MedicationSheet: View {
                 }
             }
             .buttonStyle(.capsule(.primary))
+            .disabled(tooFew)
 
             Button("Correct pill count") { showCountForm = true }
                 .buttonStyle(.capsule(.secondary))
@@ -306,35 +319,38 @@ struct MedicationSheet: View {
     }
 
     private func recentRow(_ slot: DoseSlot, med: Medication) -> some View {
-        let missed = slot.status == .notTaken
         var day = Fmt.dayShort(slot.scheduledAt)
         if med.dosesPerDay > 1 {
             let hour = Fmt.time(slot.scheduledAt).replacingOccurrences(of: ":00", with: "")
             day += ", \(hour)"
         }
-        var text = "Missed"
-        if !missed {
-            let method: String
-            switch slot.method {
-            case "voice": method = ", by voice"
-            case "button": method = ", button"
-            case "dashboard": method = ", logged by you"
-            default: method = ""
-            }
-            text = "Taken \(slot.takenAt.map { Fmt.time($0) } ?? "")\(method)"
-        }
+        let (text, color, highlighted) = recentSummary(for: slot)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(day).font(MCFont.body).foregroundStyle(MC.ink)
             Spacer(minLength: 8)
             Text(text)
                 .font(MCFont.bodyBold)
-                .foregroundStyle(missed ? SupplyStatus.refillSoon.text : SupplyStatus.onTrack.text)
+                .foregroundStyle(color)
                 .multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(missed ? MC.butter : MC.card)
+        .background(highlighted ? MC.butter : MC.card)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Words, text color and whether the row is highlighted. Anything due that was not confirmed is "Missed".
+    private func recentSummary(for slot: DoseSlot) -> (String, Color, Bool) {
+        switch slot.status {
+        case .taken:
+            let method = DoseMethod.phrase(for: slot.method)
+            let time = slot.takenAt.map { Fmt.time($0) } ?? ""
+            return (method.isEmpty ? "Taken \(time)" : "Taken \(time), \(method)", SupplyStatus.onTrack.text, false)
+        case .skipped:
+            return ("Skipped", MC.inkSoft, false)
+        case .late, .reminded, .missed, .upcoming:
+            return ("Missed", SupplyStatus.refillSoon.text, true)
+        }
     }
 
     private func labelFields() -> some View {
@@ -459,34 +475,37 @@ struct PillCountForm: View {
         .background(MC.card.ignoresSafeArea())
         .presentationDetents([.height(330), .medium])
         .presentationDragIndicator(.visible)
-        .onAppear { text = String(Int(medication.pillsLeft.rounded())) }
+        .onAppear { text = medication.stockKnown ? String(Int(medication.pillsLeft.rounded())) : "" }
     }
 }
 
 // MARK: - Edit details
 
-/// Edits what MedCheck stores for a medication. Saved through `PUT /medications/{id}` (assumed endpoint).
+/// Edits what the hub can save (`PATCH /medications/{id}`): dose times, instructions, the count in the bottle,
+/// refills left, prescriber and pharmacy phone. The hub clears "hard to read" on what changes.
+///
+/// Dose times are 24-hour times separated by commas, checked here with the same rule as the web app's
+/// `parseTimes` and sent only when they changed. The hub starts a new prescription version for them; doses
+/// already taken keep their history.
 struct MedicationEditForm: View {
     let medication: Medication
-    let onSave: (Medication) -> Void
+    let onSave: (Medication, [String]?) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var strength = ""
-    @State private var amount = ""
     @State private var times = ""
-    @State private var pharmacy = ""
-    @State private var pharmacyPhone = ""
+    @State private var instructions = ""
+    @State private var quantity = ""
+    @State private var refills = ""
     @State private var prescriber = ""
+    @State private var pharmacyPhone = ""
 
-    private var parsedTimes: [String] {
-        times.components(separatedBy: CharacterSet(charactersIn: ",&"))
-            .compactMap { Fmt.parseClock($0) }
-            .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
-    }
+    private var parsedTimes: [String]? { Fmt.strictClockList(times) }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && Int(amount) != nil && !parsedTimes.isEmpty
+        guard parsedTimes != nil,
+              let count = Int(quantity.trimmingCharacters(in: .whitespaces)), count >= 0 else { return false }
+        let trimmed = refills.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty || Int(trimmed) != nil
     }
 
     var body: some View {
@@ -497,19 +516,23 @@ struct MedicationEditForm: View {
                     .foregroundStyle(MC.ink)
                     .accessibilityAddTraits(.isHeader)
 
-                CapsuleTextField(title: "Medication name", text: $name)
-                CapsuleTextField(title: "Strength", text: $strength)
-                CapsuleTextField(title: "Tablets per dose", text: $amount).numericKeyboard()
-                CapsuleTextField(title: "Dose times", text: $times, placeholder: "8:00 AM, 8:00 PM",
-                                 hint: "Separate times with a comma.")
-                CapsuleTextField(title: "Pharmacy", text: $pharmacy)
-                CapsuleTextField(title: "Pharmacy phone", text: $pharmacyPhone).phoneKeyboard()
+                CapsuleTextField(
+                    title: "Dose times (24-hour, separated by commas)", text: $times, placeholder: "08:00, 20:00",
+                    appearance: parsedTimes == nil ? .missing : .normal,
+                    hint: parsedTimes == nil ? "Enter dose times as 24-hour times separated by commas, like 08:00, 20:00." : nil)
+                CapsuleTextField(title: "Instructions", text: $instructions)
+                CapsuleTextField(title: "\(medication.dosageForm.pluralLabel(fallback: .tablet)) in bottle", text: $quantity)
+                    .numericKeyboard()
+                CapsuleTextField(title: "Refills left", text: $refills,
+                                 hint: medication.isOverTheCounter ? "Leave blank for over the counter." : nil)
+                    .numericKeyboard()
                 CapsuleTextField(title: "Prescriber", text: $prescriber)
+                CapsuleTextField(title: "Pharmacy phone", text: $pharmacyPhone).phoneKeyboard()
 
                 HStack(spacing: 10) {
                     Spacer()
                     Button("Cancel") { dismiss() }.buttonStyle(.capsule(.secondary))
-                    Button("Save") { save() }
+                    Button("Save details") { save() }
                         .buttonStyle(.capsule(.primary))
                         .disabled(!canSave)
                 }
@@ -522,26 +545,27 @@ struct MedicationEditForm: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear {
-            name = medication.name
-            strength = medication.strength
-            amount = String(medication.doseAmount)
-            times = medication.scheduleTimes.map { Fmt.clockLabel($0) }.joined(separator: ", ")
-            pharmacy = medication.pharmacyName ?? ""
-            pharmacyPhone = medication.pharmacyPhone ?? ""
+            times = medication.scheduleTimes.joined(separator: ", ")
+            instructions = medication.instructions ?? ""
+            quantity = String(medication.quantityStart)
+            refills = medication.refillsRemaining.map(String.init) ?? ""
             prescriber = medication.prescriber ?? ""
+            pharmacyPhone = medication.pharmacyPhone ?? ""
         }
     }
 
     private func save() {
         var updated = medication
-        updated.name = name.trimmingCharacters(in: .whitespaces)
-        updated.strength = strength.trimmingCharacters(in: .whitespaces)
-        updated.doseAmount = Int(amount) ?? medication.doseAmount
-        updated.scheduleTimes = parsedTimes
-        updated.dosesPerDay = parsedTimes.count
-        updated.pharmacyName = pharmacy.isEmpty ? nil : pharmacy
-        updated.pharmacyPhone = pharmacyPhone.isEmpty ? nil : pharmacyPhone
-        updated.prescriber = prescriber.isEmpty ? nil : prescriber
-        onSave(updated)
+        updated.instructions = instructions.trimmingCharacters(in: .whitespaces)
+        updated.quantityStart = Int(quantity.trimmingCharacters(in: .whitespaces)) ?? medication.quantityStart
+        let trimmedRefills = refills.trimmingCharacters(in: .whitespaces)
+        updated.refillsRemaining = trimmedRefills.isEmpty ? nil : Int(trimmedRefills)
+        updated.prescriber = prescriber.trimmingCharacters(in: .whitespaces)
+        updated.pharmacyPhone = pharmacyPhone.trimmingCharacters(in: .whitespaces)
+
+        // Only send dose times that changed, as the web does: an unchanged list is not a new prescription version.
+        var newTimes: [String]?
+        if let parsed = parsedTimes, parsed != medication.scheduleTimes.sorted() { newTimes = parsed }
+        onSave(updated, newTimes)
     }
 }

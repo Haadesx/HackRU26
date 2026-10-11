@@ -1,51 +1,43 @@
 import SwiftUI
 
 /// One scheduled dose: time, medication, and what happened. Used by Home and the History day breakdown.
+/// Track has its own, richer row (`TrackDoseRow`) with the actions.
 struct DoseRow: View {
     @Environment(AppStore.self) private var store
+
     let slot: DoseSlot
-    /// The clock the row is judged against, so "Not taken yet" (today) differs from "Missed" (earlier days).
-    let now: Date
     var showsRemind = true
     /// Stacked puts time on the left and the details beneath each other; wide is a single line.
     /// `DoseList` picks one for every row so a column never mixes the two.
     var stacked = true
     var onRemind: (() -> Void)?
 
-    private var isToday: Bool { Fmt.calendar.isDate(slot.scheduledAt, inSameDayAs: now) }
     private var name: (name: String, strength: String) { store.label(for: slot) }
-
-    private var methodText: String {
-        switch slot.method {
-        case "voice": "by voice"
-        case "button": "button"
-        case "dashboard": "logged by you"
-        case .some(let other): other
-        case nil: ""
-        }
-    }
 
     private var statusText: String {
         switch slot.status {
         case .taken:
             let time = slot.takenAt.map { Fmt.timeBare($0) } ?? ""
-            return methodText.isEmpty ? "Taken \(time)" : "Taken \(time), \(methodText)"
-        case .notTaken:
-            return isToday ? "Not taken yet" : "Missed"
-        case .upcoming:
-            return "Upcoming"
+            let method = DoseMethod.phrase(for: slot.method)
+            return method.isEmpty ? "Taken \(time)" : "Taken \(time), \(method)"
+        case .skipped: return "Skipped"
+        case .late: return "Not taken yet"
+        case .reminded: return "Reminder sent"
+        case .missed: return "Missed"
+        case .upcoming: return "Upcoming"
         }
     }
 
     private var statusColor: Color {
         switch slot.status {
         case .taken: SupplyStatus.onTrack.text
-        case .notTaken: SupplyStatus.refillSoon.text
-        case .upcoming: MC.inkSoft
+        case .late, .missed: SupplyStatus.refillSoon.text
+        case .reminded: MC.navy
+        case .skipped, .upcoming: MC.inkSoft
         }
     }
 
-    private var canRemind: Bool { slot.status == .notTaken && isToday && showsRemind }
+    private var canRemind: Bool { slot.status == .late && showsRemind }
 
     var body: some View {
         Group {
@@ -70,7 +62,7 @@ struct DoseRow: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(slot.status == .notTaken ? MC.butter : Color.clear)
+        .background(slot.status == .late || slot.status == .missed ? MC.butter : Color.clear)
     }
 
     private var time: some View {
@@ -88,7 +80,7 @@ struct DoseRow: View {
 
     private var status: some View {
         Text(statusText)
-            .font(slot.status == .upcoming ? MCFont.body : MCFont.bodyBold)
+            .font(slot.status == .upcoming || slot.status == .skipped ? MCFont.body : MCFont.bodyBold)
             .foregroundStyle(statusColor)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -105,7 +97,6 @@ struct DoseRow: View {
 /// White card holding a column of `DoseRow`s separated by hairlines.
 struct DoseList: View {
     let slots: [DoseSlot]
-    let now: Date
     var onRemind: ((DoseSlot) -> Void)?
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -117,7 +108,7 @@ struct DoseList: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
-                DoseRow(slot: slot, now: now, stacked: stacked, onRemind: { onRemind?(slot) })
+                DoseRow(slot: slot, stacked: stacked, onRemind: { onRemind?(slot) })
                 if index < slots.count - 1 {
                     Rectangle().fill(MC.lineSoft).frame(height: 1)
                 }

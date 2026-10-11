@@ -17,7 +17,9 @@ struct AddedView: View {
 
     private var detailText: String {
         var parts: [String] = []
-        if let quantity = summary.quantity { parts.append("\(quantity) tablets") }
+        if let quantity = summary.quantity {
+            parts.append("\(quantity) \(summary.form.noun(plural: quantity != 1))")
+        }
         if let until = summary.lastsUntil { parts.append("lasts until about \(Fmt.monthDay(until))") }
         return parts.joined(separator: ", ")
     }

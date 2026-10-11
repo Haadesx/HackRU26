@@ -1,6 +1,11 @@
 import Foundation
 
 /// Date and copy helpers. Everything is en_US so the demo reads the same on any device.
+extension String {
+    /// Capitalizes only the first letter, unlike `capitalized`, which lowercases the rest.
+    var capitalizingFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
 enum Fmt {
     static let calendar: Calendar = {
         var c = Calendar(identifier: .gregorian)
@@ -90,6 +95,27 @@ enum Fmt {
         return (hour, minute)
     }
 
+    /// "8:00" or "08:00" as the hub's "08:00", or nil unless it is a 24-hour time. Stricter than `parseClock`
+    /// on purpose: this is what the hub itself accepts (`^([01]?\d|2[0-3]):([0-5]\d)$`), so "9am" is refused.
+    static func strictClock(_ text: String) -> String? {
+        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, (1...2).contains(parts[0].count), parts[1].count == 2,
+              parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+              let hour = Int(parts[0]), let minute = Int(parts[1]), hour < 24, minute < 60 else { return nil }
+        return String(format: "%02d:%02d", hour, minute)
+    }
+
+    /// "8:00, 20:00" as ["08:00", "20:00"] (sorted, no repeats), or nil when any entry isn't a 24-hour time or
+    /// there are none. Port of `parseTimes` in the web app's medication panel.
+    static func strictClockList(_ text: String) -> [String]? {
+        var times: [String] = []
+        for part in text.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !part.isEmpty {
+            guard let time = strictClock(part) else { return nil }
+            if !times.contains(time) { times.append(time) }
+        }
+        return times.isEmpty ? nil : times.sorted()
+    }
+
     /// "8:00 AM" for a stored "08:00" schedule time.
     static func clockLabel(_ stored: String) -> String {
         guard let (h, m) = parseClock(stored) else { return stored }
@@ -112,9 +138,21 @@ enum Fmt {
         return "evening"
     }
 
+    /// "08:00" for a date, the hub's slot format.
+    static func slotKey(_ date: Date) -> String {
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
+    /// "1", "2" or "0.5": a dose amount without a trailing ".0".
+    static func amountText(_ amount: Double) -> String {
+        amount == amount.rounded() ? String(Int(amount)) : String(format: "%g", amount)
+    }
+
     /// Plain-language schedule: "1 tablet every morning at 8:00 AM, for blood pressure".
-    static func scheduleSentence(amount: Int, times: [String], purpose: String?) -> String {
-        let unit = amount == 1 ? "1 tablet" : "\(amount) tablets"
+    /// `noun` is singular ("tablet", "capsule"); the web app's medication panel says "tablet" for every bottle.
+    static func scheduleSentence(amount: Double, times: [String], purpose: String?, noun: String = "tablet") -> String {
+        let unit = amount == 1 ? "1 \(noun)" : "\(amountText(amount)) \(noun)s"
         let labels = times.map { clockLabel($0) }
         var core: String
         switch labels.count {
@@ -128,7 +166,7 @@ enum Fmt {
         default:
             core = "\(unit) \(labels.count) times a day"
         }
-        if let purpose, !purpose.isEmpty { core += ", for \(purpose)" }
+        if let purpose, !purpose.isEmpty { core += ", \(purpose)" }
         return core
     }
 }

@@ -13,6 +13,9 @@ struct SettingsView: View {
     @State private var editing: CaregiverEdit?
     @State private var confirmDelete = false
 
+    /// The patient's first name from `state.patient`, as the web Settings page shows it.
+    private var patientName: String { store.patientName }
+
     var body: some View {
         @Bindable var store = store
 
@@ -36,9 +39,7 @@ struct SettingsView: View {
                 reminders(store: $store)
                 privacy
 
-                #if DEBUG
                 HubConnectionCard()
-                #endif
             }
         }
         .onChange(of: store.settings) { _, _ in store.settingsDidChange() }
@@ -52,7 +53,7 @@ struct SettingsView: View {
                 editing = nil
             }
         }
-        .alert("Delete all of Rosa's data?", isPresented: $confirmDelete) {
+        .alert("Delete all of \(patientName)'s data?", isPresented: $confirmDelete) {
             Button("Cancel", role: .cancel) {
                 // Nothing to do: a cancel-role button only dismisses the alert.
             }
@@ -70,7 +71,7 @@ struct SettingsView: View {
         MCCard(padding: 20, radius: 14) {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(title: "People who get texts",
-                              helper: "Only these people ever hear from MedCheck. Rosa chose them.")
+                              helper: "Only these people ever hear from MedCheck. \(patientName) chose them.")
 
                 VStack(spacing: 0) {
                     ForEach(store.settings.caregivers) { person in
@@ -129,6 +130,16 @@ struct SettingsView: View {
                     DaysField(title: "Urgent", days: store.settings.urgentDays)
                 }
 
+                if let problem = self.store.settingsProblem {
+                    Text(problem)
+                        .font(MCFont.bodyBold)
+                        .foregroundStyle(SupplyStatus.urgent.text)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(MC.coralTint))
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
+
                 VStack(spacing: 0) {
                     Toggle("Text me when Rosa misses a dose by more than 1 hour",
                            isOn: store.settings.textMissedDoses)
@@ -147,8 +158,8 @@ struct SettingsView: View {
     private func reminders(store: Bindable<AppStore>) -> some View {
         MCCard(padding: 20, radius: 14) {
             VStack(alignment: .leading, spacing: 16) {
-                SectionHeader(title: "Rosa's reminders",
-                              helper: "How MedCheck speaks to Rosa through the wearable.")
+                SectionHeader(title: "\(patientName)'s reminders",
+                              helper: "How MedCheck speaks to \(patientName) through the wearable.")
 
                 CapsuleMenuPicker(
                     title: "Remind again if a dose is missed",
@@ -171,21 +182,26 @@ struct SettingsView: View {
         MCCard(padding: 20, radius: 14) {
             VStack(alignment: .leading, spacing: 16) {
                 SectionHeader(title: "Privacy",
-                              helper: "Everything is processed on the hub in Rosa's home. Camera images are never saved.")
+                              helper: "Everything is processed on the hub in \(patientName)'s home. Camera images are never saved.")
 
                 InfoBox(title: "What MedCheck stores",
                         message: "Medication names and label details, when each dose was taken, pill counts, and the texts it sent.")
 
+                if store.settings.cameraPaused {
+                    NoticeBanner(
+                        status: .refillSoon, title: "The camera is paused",
+                        message: "MedCheck won't check bottles or confirm doses until you turn it back on.")
+                }
+
                 FlowLayout(spacing: 10, lineSpacing: 10) {
-                    Button(store.cameraPaused ? "Camera paused" : "Pause the camera") {
-                        Task { await store.pauseCamera() }
+                    Button(store.settings.cameraPaused ? "Turn the camera back on" : "Pause the camera") {
+                        Task { await store.setCameraPaused(!store.settings.cameraPaused) }
                     }
                     .buttonStyle(.capsule(.secondary))
-                    .disabled(store.cameraPaused)
 
                     ShareLink(item: RosaDataExport(fetch: { try await store.exportData() }),
-                              preview: SharePreview("Rosa's MedCheck data")) {
-                        Text("Download Rosa's data")
+                              preview: SharePreview("\(patientName)'s MedCheck data")) {
+                        Text("Download \(patientName)'s data")
                     }
                     .buttonStyle(.capsule(.secondary))
 
@@ -251,9 +267,10 @@ private struct CaregiverForm: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// A name, and a phone the hub can text (10 digits, 11 starting with 1, or +country code). The hub refuses
+    /// anything else with "…'s phone number doesn't look right", so it is caught here first.
     private var canSave: Bool {
-        !caregiver.name.trimmingCharacters(in: .whitespaces).isEmpty
-            && caregiver.phone.filter(\.isNumber).count >= 7
+        !caregiver.name.trimmingCharacters(in: .whitespaces).isEmpty && AppSettings.isTextablePhone(caregiver.phone)
     }
 
     var body: some View {
@@ -309,35 +326,59 @@ nonisolated struct RosaDataExport: Transferable {
     }
 }
 
-// MARK: - Debug
+// MARK: - Hub connection
 
-#if DEBUG
-/// Developer-only: switch between demo data and a real hub, and simulate it going offline.
+/// Choose demo data or a real hub. A real hub is the team's backend under `/hub` (port 8000) or the reference
+/// adapter (port 8500), reached over the local network or Tailscale; it has no login, so keep it off the internet.
 private struct HubConnectionCard: View {
     @Environment(AppStore.self) private var store
     @State private var useDemo = AppConfig.useDemoData
     @State private var address = AppConfig.savedBaseURL
+    @State private var isApplying = false
+    #if DEBUG
     @State private var offline = false
+    #endif
 
     var body: some View {
         MCCard(padding: 20, radius: 14) {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(title: "Hub connection",
-                              helper: "Debug builds only. Demo data runs without a hub.")
+                              helper: "Demo data runs without a hub. To use the real one, turn demo data off and enter its address.")
 
                 Toggle("Use demo data", isOn: $useDemo)
                     .toggleStyle(MCToggleStyle())
 
                 if !useDemo {
-                    CapsuleTextField(title: "Hub address", text: $address, placeholder: "Address of Rosa's hub",
-                                     hint: "Start with http:// and add the hub's IP address and port.")
+                    CapsuleTextField(title: "Hub address", text: $address, placeholder: "http://192.168.1.20:8000/hub",
+                                     hint: "The computer running the MedCheck hub, on the same network. Port 8000 is the backend; MedCheck adds /hub if you leave it off.")
+                        .urlKeyboard()
                 }
 
-                Button("Apply") {
-                    Task { await store.configureHub(useDemo: useDemo, baseURL: address) }
+                Button {
+                    Task {
+                        isApplying = true
+                        await store.configureHub(useDemo: useDemo, baseURL: address)
+                        address = AppConfig.savedBaseURL
+                        isApplying = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isApplying { ProgressView().tint(MC.navy) }
+                        Text(isApplying ? "Connecting" : "Apply")
+                    }
                 }
                 .buttonStyle(.capsule(.secondary))
+                .disabled(isApplying)
 
+                if let message = store.hubConfigMessage {
+                    Text(message)
+                        .font(MCFont.regular(15, relativeTo: .footnote))
+                        .foregroundStyle(store.hubConnected ? SupplyStatus.onTrack.text : SupplyStatus.urgent.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
+
+                #if DEBUG
                 if store.isDemo {
                     Toggle("Simulate the hub being offline", isOn: $offline)
                         .toggleStyle(MCToggleStyle())
@@ -346,8 +387,8 @@ private struct HubConnectionCard: View {
                             Task { await store.refresh() }
                         }
                 }
+                #endif
             }
         }
     }
 }
-#endif

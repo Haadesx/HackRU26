@@ -1,55 +1,73 @@
 import Foundation
 
-/// The contract between the app and the MedCheck hub. `MockAPI` and `LiveAPI` implement it with the
-/// same function names, so screens never know which one they are talking to (like `client.js` on web).
+/// What the app needs from the MedCheck hub. `MockAPI` (demo data) and `LiveAPI` (the shared hub contract,
+/// `frontend/docs/api-contract.md`) implement it, so screens never know which one they are talking to.
 ///
-/// Endpoints marked "assumed" are used by buttons in the design but are not in the handoff's endpoint
-/// table. They are listed in `README-iOS.md` for the backend teammate to confirm.
+/// `LiveAPI` derives several of these from the hub's single `GET /state`, exactly as the web app does,
+/// because the hub has no separate medication, dose or settings reads.
 protocol MedCheckAPI: AnyObject {
     /// True for the in-memory demo hub.
     var isDemo: Bool { get }
+    /// Whether the hub can ask Rosa to scan a bottle again. The shared contract has no such endpoint.
+    var supportsRescan: Bool { get }
 
-    func health() async throws -> HubHealth                                   // GET  /health
-    func state() async throws -> HubState                                     // GET  /state
-    func medication(id: Int) async throws -> MedicationDetail                 // GET  /medications/{id}
-    func doses(medicationID: Int) async throws -> [DoseSlot]                  // GET  /doses?medication_id=
-    func doses(on date: Date) async throws -> [DoseSlot]                      // GET  /doses?date=
-    func logDose(medicationID: Int) async throws                              // POST /medications/{id}/doses
-    func correctCount(medicationID: Int, count: Int) async throws             // POST /medications/{id}/counts
-    func markRefillPickedUp(medicationID: Int) async throws                   // POST /medications/{id}/refill
-    func remindRosa(medicationID: Int) async throws                           // POST /medications/{id}/remind   (assumed)
-    func updateMedication(_ medication: Medication) async throws              // PUT  /medications/{id}          (assumed)
-    func stopTracking(medicationID: Int) async throws                         // DELETE /medications/{id}        (assumed)
+    func health() async throws -> HubHealth                                   // GET    /health
+    func state() async throws -> HubState                                     // GET    /state
+    func medication(id: Int) async throws -> MedicationDetail                 // derived from /state
+    func doses(medicationID: Int) async throws -> [DoseSlot]                  // derived from /state
+    func doses(on date: Date) async throws -> [DoseSlot]                      // derived from /state
+    /// `slot` nil lets the hub pick the next untaken slot today.
+    func logDose(medicationID: Int, slot: String?, method: DoseMethod) async throws // POST /medications/{id}/doses
+    func skipDose(medicationID: Int, slot: String) async throws               // POST   /medications/{id}/skip
+    /// Identifies the bottle in the photo and compares it with what is due. Records nothing.
+    /// `demoMedicationID` only means something to the demo hub: it decides what the photo "shows".
+    func matchDose(photo: Data, demoMedicationID: Int?) async throws -> DoseMatch // POST /doses/scan
+    func correctCount(medicationID: Int, count: Int) async throws             // POST   /medications/{id}/counts
+    func markRefillPickedUp(medicationID: Int) async throws                   // POST   /medications/{id}/refill
+    func remindRosa(medicationID: Int, slot: String) async throws             // POST   /medications/{id}/remind
+    /// Saves the label details the hub can edit. `scheduleTimes` is the new dose times, or nil to leave them alone
+    /// (the hub starts a new prescription version when they change).
+    func updateMedication(_ medication: Medication, scheduleTimes: [String]?) async throws // PATCH /medications/{id}
+    func stopTracking(medicationID: Int) async throws                         // DELETE /medications/{id}
 
-    func startScan(photo: Data?) async throws -> Scan                         // POST /scans (nil photo = manual entry, assumed)
-    func addPhoto(scanID: Int, photo: Data) async throws -> Scan              // POST /scans/{id}/photos
-    func scan(id: Int) async throws -> Scan                                   // GET  /scans/{id}
-    func requestRescan(scanID: Int) async throws                              // POST /scans/{id}/rescan         (assumed)
-    func discardScan(id: Int) async throws                                    // DELETE /scans/{id}              (assumed)
-    func completeScan(id: Int, fields: [ScanField]) async throws              // POST /scans/{id}/complete (exactly once)
+    func startScan(photo: Data?) async throws -> Scan                         // POST   /scans (photo, or {manual:true})
+    func addPhoto(scanID: Int, photo: Data) async throws -> Scan              // POST   /scans/{id}/photos
+    func scan(id: Int) async throws -> Scan                                   // GET    /scans/{id}
+    func requestRescan(scanID: Int) async throws                              // not in the contract
+    func discardScan(id: Int) async throws                                    // DELETE /scans/{id}
+    /// `dosageForm` is the caregiver's choice, sent only when the label didn't say. Returns the hub's `warnings`.
+    @discardableResult
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] // POST /scans/{id}/complete (once)
 
-    func adherence(month: String) async throws -> AdherenceMonth              // GET  /adherence?month=2026-10
-    func settings() async throws -> AppSettings                               // GET  /settings
-    func updateSettings(_ settings: AppSettings) async throws -> AppSettings  // PUT  /settings
+    func adherence(month: String) async throws -> AdherenceMonth              // GET    /adherence?month=2026-10
+    func settings() async throws -> AppSettings                               // from /state
+    func updateSettings(_ settings: AppSettings) async throws -> AppSettings  // PUT    /settings
+    func setCameraPaused(_ paused: Bool) async throws                         // PUT    /settings {camera_paused}
 
-    func pauseCamera() async throws                                           // POST /camera/pause
-    func exportData() async throws -> Data                                    // GET  /export
+    func exportData() async throws -> Data                                    // GET    /export
     func deleteAllData() async throws                                         // DELETE /data
 
-    func advanceDemo(days: Int) async throws                                  // POST /demo/advance
-    func resetDemo() async throws                                             // POST /demo/reset
+    func advanceDemo(days: Int) async throws                                  // POST   /demo/advance
+    func resetDemo() async throws                                             // POST   /demo/reset
+}
+
+extension APIError {
+    static let notFound = APIError.server(status: 404, message: "That item is no longer on the hub.")
 }
 
 enum APIError: LocalizedError {
     case unreachable
-    case http(Int)
+    /// The hub answered with an error. `message` is its readable `detail` when it sent one.
+    case server(status: Int, message: String)
     case badResponse
+    case unsupported
 
     var errorDescription: String? {
         switch self {
         case .unreachable: "The MedCheck hub didn't respond."
-        case .http(let code): "The MedCheck hub returned an error (\(code))."
+        case .server(_, let message): message
         case .badResponse: "The MedCheck hub sent something the app couldn't read."
+        case .unsupported: "This hub doesn't support that yet."
         }
     }
 }
