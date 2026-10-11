@@ -266,4 +266,5 @@ Before the demo: items 1–4 at minimum, plus the hub reachable from the phone's
 ### Pushed SHAs
 
 - `feat/ios-aparajita` base (code unchanged from `feat/frontend-ios`): `d5e922e`.
-- Handoff commit: recorded below after the push is verified on GitHub.
+- Handoff commit `b503d96` (docs only): verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
+- A later docs-only commit that records this line carries a new SHA; `git log feat/ios-aparajita` is authoritative.
