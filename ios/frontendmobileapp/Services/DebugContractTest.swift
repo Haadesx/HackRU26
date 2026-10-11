@@ -109,7 +109,142 @@ enum DebugContractTest {
             check("read scan-complete-request.json", false)
         }
 
+        _ = runRealHubShapes()
+
         print("CONTRACT FIXTURES DONE failures=\(failures)")
+    }
+
+    // MARK: What the real /hub sends beyond the shared fixtures
+
+    /// Shapes the Flask `/hub` on `feat/integrate-track-tab` produces (read from `backend/app/hub/state.py`,
+    /// `verify.py` and `dose_scan.py`) that the shared fixtures don't cover. Returns the number of failures.
+    @discardableResult
+    static func runRealHubShapes() -> Int {
+        let before = failures
+        let decoder = APICoding.makeDecoder()
+        func decode<T: Decodable>(_ json: String, as _: T.Type) -> T? {
+            do { return try decoder.decode(T.self, from: Data(json.utf8)) } catch {
+                check("real hub shape decodes", false, "\(error)")
+                return nil
+            }
+        }
+
+        // State: stock never counted (`pills_left: null`), a half tablet, the form, the patient, a settings row
+        // that predates `camera_paused`, and a scan carrying the extras.
+        let state = """
+        {"now":"2026-10-11T12:00:00.123456Z","patient":{"name":"Ada","caregiver":"Elena"},"hub":{"connected":true},
+         "medications":[
+          {"id":7,"name":"Fluoxetine","strength":"20 mg","purpose":"","dose_amount":0.5,"dosage_form":"capsule",
+           "dose_unit":"capsule","doses_per_day":2,"schedule_times":["08:00","20:00"],"quantity_start":30,
+           "pills_left":null,"refills_remaining":null,"fill_date":null,"instructions":"","prescriber":null,
+           "prescriber_phone":null,"pharmacy_name":null,"pharmacy_phone":null,"confidence":{},"otc":true,
+           "medication_uuid":"x","prescription_item_id":"y"},
+          {"id":8,"name":"Metformin","strength":"500 mg","purpose":"","dose_amount":1,"dosage_form":"",
+           "dose_unit":"","doses_per_day":1,"schedule_times":["08:00"],"quantity_start":60,"pills_left":22,
+           "refills_remaining":3,"fill_date":"2026-09-21","instructions":"Take 1 tablet daily.","prescriber":"Dr. Rao",
+           "prescriber_phone":"","pharmacy_name":"CVS","pharmacy_phone":"(732) 555-0123","confidence":{}}],
+         "doses":[],"reminders":[],"skips":[],"alerts":[],"events":[],
+         "scans":[{"id":3,"status":"needs_caregiver","photos":2,"created_at":"2026-10-11T11:00:00Z",
+           "fields":{"name":{"value":"Lisinopril","state":"filled"},"strength":{"value":"10 mg","state":"filled"}},
+           "history":[],"guidance":"Hold the bottle closer.","dosage_form":"tablets","dose_unit":"tablet",
+           "verification":{"status":"due_now","can_log":true,"message":"It's time for Lisinopril 10 mg.",
+                           "medication":{"id":5,"name":"Lisinopril","strength":"10 mg"},"strength_match":true}}],
+         "settings":{"thresholds":{"first":7,"second":5,"urgent":3},"alert_missed":true,"alert_no_refills":true,
+                     "alert_wrong_bottle":false,"remind_again":"30","voice_language":"English","caregivers":[]}}
+        """
+        if let dto = decode(state, as: HubContract.StateDTO.self) {
+            let mapped = HubContract.hubState(dto)
+            check("shape: both medications survive", mapped.medications.count == 2, "\(mapped.medications.count)")
+            if let fluoxetine = mapped.medications.first(where: { $0.id == 7 }) {
+                check("shape: null pills_left is not-counted, not zero-and-dropped",
+                      !fluoxetine.stockKnown && fluoxetine.daysLeft == Medication.unknownDaysLeft)
+                check("shape: fractional dose_amount", fluoxetine.doseAmount == 0.5)
+                check("shape: dosage form from the medication", fluoxetine.dosageForm == .capsule)
+            }
+            check("shape: unknown dosage form stays unknown", mapped.medications.first { $0.id == 8 }?.dosageForm == nil)
+            check("shape: patient and caregiver names", mapped.patientName == "Ada" && mapped.caregiverName == "Elena")
+            check("shape: settings default camera_paused", dto.settings.map { HubContract.settings($0).cameraPaused } == false)
+            let scan = mapped.pendingScans.first
+            check("shape: scan form from dosage_form", scan?.dosageForm == .tablet)
+            check("shape: scan guidance", scan?.guidance == "Hold the bottle closer.")
+            check("shape: verification due_now can be logged",
+                  scan?.verification?.status == .dueNow && scan?.verification?.canLog == true
+                    && scan?.verification?.medicationID == 5)
+        }
+
+        // Verification fails closed: an unknown status is uncertain, and only due_now with can_log may be logged.
+        func verification(_ json: String) -> ScanVerification? {
+            decode(json, as: HubContract.VerificationDTO.self).flatMap { HubContract.verification($0) }
+        }
+        check("verification: unknown status is uncertain",
+              verification(#"{"status":"mystery","can_log":true,"message":"?"}"#)?.status == .uncertain)
+        check("verification: can_log false stays false",
+              verification(#"{"status":"due_now","can_log":false,"message":"m","medication":{"id":1}}"#)?.canLog == false)
+        check("verification: only due_now can be logged",
+              verification(#"{"status":"already_taken","can_log":true,"message":"m"}"#)?.canLog == false)
+        check("verification: no message is dropped",
+              verification(#"{"status":"due_now","can_log":true}"#) == nil)
+
+        // Dose scanner answers the shared fixtures don't have.
+        func match(_ json: String) -> DoseMatch? {
+            decode(json, as: HubContract.DoseMatchDTO.self).flatMap { try? HubContract.doseMatch($0) }
+        }
+        let untracked = match("""
+        {"status":"wrong_bottle","medication_id":null,"name":"Ibuprofen","strength":"200 mg",
+         "expected":{"medication_id":5,"name":"Vitamin D3","slot":"08:00"},"reason":"wrong_medication",
+         "message":"Ibuprofen isn't a medication you're tracking."}
+        """)
+        if case .wrongBottle(let bottle, let expected, let reason, let message)? = untracked {
+            check("scanner: an untracked bottle is a wrong bottle, not an unreadable answer",
+                  bottle.medicationID == nil && bottle.name == "Ibuprofen" && expected.medicationID == 5
+                    && reason == "wrong_medication" && message?.contains("isn't a medication") == true)
+        } else {
+            check("scanner: an untracked bottle is a wrong bottle", false, "\(String(describing: untracked))")
+        }
+        let strength = match("""
+        {"status":"wrong_bottle","medication_id":null,"name":"Lisinopril","strength":"20 mg",
+         "expected":{"medication_id":null,"name":"Metformin","slot":"08:00"},"reason":"strength_mismatch","message":"m"}
+        """)
+        if case .wrongBottle(_, let expected, let reason, _)? = strength {
+            check("scanner: expected medication may have no id", expected.medicationID == nil && reason == "strength_mismatch")
+        } else {
+            check("scanner: strength mismatch decodes", false)
+        }
+        if case .alreadyTaken(_, let slot, let takenAt)? = match("""
+        {"status":"already_taken","medication_id":4,"name":"Lisinopril","strength":"10 mg","slot":"08:00",
+         "taken_at":"2026-10-11T12:05:00.123456Z","message":"m"}
+        """) {
+            check("scanner: already taken with microsecond timestamp", slot == "08:00" && takenAt != nil)
+        } else {
+            check("scanner: already taken decodes", false)
+        }
+        if case .notScheduled(let message)? = match("""
+        {"status":"not_scheduled","name":"Ibuprofen","strength":"200 mg","reason":"wrong_medication","message":"Nothing is due."}
+        """) {
+            check("scanner: not_scheduled with extras", message == "Nothing is due.")
+        } else {
+            check("scanner: not_scheduled with extras decodes", false)
+        }
+
+        // Adherence: a missed dose whose medication the dashboard doesn't track has no id.
+        if let adherence = decode("""
+        {"year":2026,"month":9,"due":2,"taken":1,"missed":1,"days":[
+          {"date":"2026-10-09","due":2,"missed":1,"future":false,
+           "missedList":[{"medication_id":null,"name":"Zinc","slot":"20:00"}]}]}
+        """, as: HubContract.AdherenceDTO.self) {
+            check("shape: adherence with a missed dose of an untracked medication",
+                  HubContract.adherence(adherence).days.first?.missed == 1)
+        }
+
+        // Complete: the medication, and the hub's warnings.
+        if let done = decode("""
+        {"medication":{"id":9,"name":"Losartan","strength":"25 mg","dose_amount":1,"doses_per_day":1,
+         "schedule_times":["08:00"],"quantity_start":30,"pills_left":30},"warnings":["Check the strength with a pharmacist."]}
+        """, as: HubContract.CompleteDTO.self) {
+            check("shape: complete warnings", done.warnings == ["Check the strength with a pharmacist."])
+        }
+
+        return failures - before
     }
 
     private static func checkDoseScanFixtures(directory: String, decoder: JSONDecoder) {
@@ -131,7 +266,7 @@ enum DebugContractTest {
             check("dose-scan-match: Vitamin D3 at 08:00, late",
                   bottle.name == "Vitamin D3" && bottle.medicationID == 5 && slot == "08:00" && late)
         }
-        if case .wrongBottle(let bottle, let expected)? = match("dose-scan-wrong-bottle.json") {
+        if case .wrongBottle(let bottle, let expected, _, _)? = match("dose-scan-wrong-bottle.json") {
             check("dose-scan-wrong-bottle: Metformin seen, Vitamin D3 expected at 08:00",
                   bottle.name == "Metformin" && expected.name == "Vitamin D3" && expected.slot == "08:00")
         }
@@ -176,8 +311,28 @@ enum DebugContractTest {
             }
         }
 
+        // Typing only the host and port of the backend must find the hub under /hub.
+        if url.lastPathComponent == "hub" {
+            let bare = url.deletingLastPathComponent()
+            let found = await AppConfig.locateHub(from: bare)
+            check("locateHub: host and port alone finds /hub", found?.absoluteString == url.absoluteString,
+                  found?.absoluteString ?? "nil")
+        }
+
+        // The /demo endpoints exist on the web mock and the reference adapter, not on the backend's /hub.
+        func demo(_ name: String, _ work: () async throws -> Void) async {
+            do {
+                try await work()
+                check(name, true)
+            } catch let APIError.server(status, _) where status == 404 || status == 405 {
+                print("CONTRACT NOTE \(name): this hub has no demo endpoints (\(status)); fine")
+            } catch {
+                check(name, false, "\(error)")
+            }
+        }
+
         // Start from a known state when the hub supports it.
-        _ = await attempt("POST /demo/reset") { try await api.resetDemo() }
+        await demo("POST /demo/reset") { try await api.resetDemo() }
 
         _ = await attempt("GET /health ok") { try await api.health() }.map { check("health.ok", $0.ok) }
 
@@ -200,8 +355,15 @@ enum DebugContractTest {
         _ = await attempt("derived day breakdown") { try await api.doses(on: state.now) }
 
         let before = med.pillsLeft
-        _ = await attempt("POST /medications/{id}/doses") {
+        // The real hub refuses a dose that is not due yet (409 NOT_DUE) or already logged: its sentence is the answer.
+        do {
             try await api.logDose(medicationID: med.id, slot: nil, method: .dashboard)
+            check("POST /medications/{id}/doses", true)
+        } catch let APIError.server(status, message) where status == 409 || status == 422 {
+            check("POST /medications/{id}/doses refused with a readable sentence", !message.isEmpty, message)
+            print("CONTRACT NOTE hub refused the dose (\(status)): \(message)")
+        } catch {
+            check("POST /medications/{id}/doses", false, "\(error)")
         }
         let afterDose = try? await api.state()
         check("state still decodes after logging a dose", afterDose != nil)
@@ -256,7 +418,7 @@ enum DebugContractTest {
         _ = await attempt("PATCH /medications/{id}") {
             var edited = med
             edited.prescriber = "Dr. Contract Test"
-            try await api.updateMedication(edited)
+            try await api.updateMedication(edited, scheduleTimes: nil)
         }
 
         // Manual entry, complete, then a second complete must be rejected with a readable sentence.
@@ -270,11 +432,14 @@ enum DebugContractTest {
                 ScanKey.pharmacyName: "CVS Pharmacy", ScanKey.pharmacyPhone: "(732) 555-0123", ScanKey.prescriber: "Dr. Test",
             ]
             let fields = values.map { ScanField(key: $0.key, value: $0.value, state: .filled) }
-            _ = await attempt("POST /scans/{id}/complete") { try await api.completeScan(id: scan.id, fields: fields) }
+            // A manual scan has no form from the label, so the caregiver's choice goes along, as in the app.
+            _ = await attempt("POST /scans/{id}/complete") {
+                try await api.completeScan(id: scan.id, fields: fields, dosageForm: .tablet)
+            }
             let after = try? await api.state()
             check("completed medication appears", after?.medications.contains { $0.name == "Contract Test" } == true)
             do {
-                try await api.completeScan(id: scan.id, fields: fields)
+                _ = try await api.completeScan(id: scan.id, fields: fields, dosageForm: .tablet)
                 // The contract says 409; a hub that accepts it twice is a hub deviation, not a client failure.
                 print("CONTRACT NOTE hub accepted a second complete (contract says 409)")
             } catch let APIError.server(status, message) {
@@ -310,8 +475,8 @@ enum DebugContractTest {
         }
 
         _ = await attempt("GET /export") { try await api.exportData() }.map { check("export not empty", !$0.isEmpty) }
-        _ = await attempt("POST /demo/advance") { try await api.advanceDemo(days: 1) }
-        _ = await attempt("POST /demo/reset") { try await api.resetDemo() }
+        await demo("POST /demo/advance") { try await api.advanceDemo(days: 1) }
+        await demo("POST /demo/reset") { try await api.resetDemo() }
 
         print("CONTRACT LIVE DONE failures=\(failures)")
     }

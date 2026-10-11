@@ -1,20 +1,24 @@
 # iOS app handoff — Aparajita
 
 > Single handoff file for the iOS component. Branch: `feat/ios-aparajita`. Code lives in [`ios/`](../ios/).
-> Last updated: 2026-10-11 (third milestone: Track tab and dose scanner, from Sinchana's note `MedCheck-iOS-Update.md`,
-> which is a local source file and is not committed). Status vocabulary: **verified** (I ran it and saw the result),
+> Last updated: 2026-10-11 (fourth milestone: parity with the integrated web app and backend on
+> `feat/integrate-track-tab`; third was the Track tab and dose scanner from Sinchana's note
+> `MedCheck-iOS-Update.md`, a local source file that is not committed). Status vocabulary: **verified** (I ran it and saw the result),
 > **unverified** (written but not run/observed), **not built**.
 
 ## Current state in one paragraph
 
-A native SwiftUI iPhone/iPad app that mirrors the caregiver web UI: five tabs (Home, Scan, **Track**, History,
+A native SwiftUI iPhone/iPad app that mirrors the caregiver web UI: five tabs (Home, Scan, Track, History,
 Settings) plus the medication sheet and the Scan → Verify → Preview → Added flow. It builds and runs on a real
 iPhone 15 (iOS 18.5) and in the simulator, on built-in demo data by default. The network client speaks the
-shared hub contract (`frontend/docs/api-contract.md`), including the Track additions (`skips`, `method: "scan"`,
-`POST /medications/{id}/skip`, `POST /doses/scan`). It decodes every repo fixture, including the new
-`dose-scan-*.json`, and passed a 35-check live run against the reference `tools/hub_adapter`. **Neither
-reference hub nor the backend has `/doses/scan` or `/skip` yet**, so against a real hub the scanner and Skip show
-"This hub can't ... yet" until the backend adds them. Not yet verified against Urvi's `/hub` or on a phone.
+shared hub contract **and the extras the backend's `/hub` really sends on `feat/integrate-track-tab`**: the
+bottle check (`verification`) with "Log this dose now", the dosage form (tablet/capsule, never guessed), editable
+dose times, `pills_left: null`, fractional doses, a wrong bottle that is not a tracked medicine
+(`medication_id: null`), `warnings`, patient and caregiver names from `state.patient`, and the hub's own 409/422
+sentences. It was checked against decoded fixtures, a stub that reproduces the real hub's wire shapes, and the
+reference `tools/hub_adapter` earlier. **It has not been run against the real Flask `/hub`** (no
+Postgres/TimescaleDB here) **or on a phone since these changes.** See section I.0 for what still differs from the
+web app and why.
 
 ---
 
@@ -216,9 +220,9 @@ Run from the `ios/` directory. "Verified" means I ran it and it succeeded.
 | Compile for device, unsigned | `… -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build` | verified |
 | Signed build + install on iPhone | set your own Team in Signing & Capabilities, then Run (or `xcodebuild … -destination 'id=<udid>' -allowProvisioningUpdates`, `xcrun devicectl device install app`) | verified on an iPhone 15, iOS 18.5 |
 | Demo mode | nothing to do | verified |
-| Point at a hub | set `MEDCHECK_API_URL=http://<host>:8000/hub` in the scheme (`:8500` for `tools/hub_adapter`) | verified against `tools/hub_adapter` from the simulator; `/hub` and a phone **unverified** |
+| Point at a hub | Settings, Hub connection (any build): demo data off, type `<mac-ip>:8000` and Apply (MedCheck finds `/hub`), or set `MEDCHECK_API_URL=http://<host>:8000/hub` in the scheme (`:8500` for `tools/hub_adapter`). The backend must listen on `0.0.0.0`, not `127.0.0.1` | verified against `tools/hub_adapter` and a wire-shape stub from the simulator; real `/hub` and a phone **unverified** |
 | Screenshot a physical device (Debug) | `xcrun devicectl device process launch --device <udid> --terminate-existing <bundle id> -- -medcheck.snapshot 1 -medcheck.scrollY 880`, wait about 10 s with the phone **unlocked**, then `xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier <bundle id> --source Documents/medcheck-snapshot.png --destination out.png` | verified on iPhone 15 |
-| In-app demo self-test (40 checks) | `xcrun simctl launch --console-pty booted <bundle id> -medcheck.selfTest 1` | verified, 40/40 against `MockAPI` |
+| In-app demo self-test (106 checks) | `xcrun simctl launch --console-pty booted <bundle id> -medcheck.selfTest 1` | verified, 106/106 against `MockAPI` |
 | Contract fixtures (32 checks) | `… launch --console-pty booted <bundle id> -medcheck.fixtures <repo>/frontend/docs/fixtures` | verified |
 | Live hub (34 checks) | start the adapter (below), then `SIMCTL_CHILD_MEDCHECK_API_URL=http://127.0.0.1:8500 xcrun simctl launch --console-pty booted <bundle id> -medcheck.liveTest 1` | verified |
 | Reference hub for the live test | from a checkout with `tools/hub_adapter` (`feat/integration`): `uv venv --python 3.11 .venv-hub && uv pip install --python .venv-hub/bin/python fastapi "uvicorn[standard]" httpx python-multipart`, then `HUB_MODE=demo HUB_STATE_FILE=/tmp/hub/state.json HUB_SCANS_DIR=/tmp/hub/scans .venv-hub/bin/python -m uvicorn tools.hub_adapter.app:app --host 127.0.0.1 --port 8500` | verified |
@@ -233,12 +237,14 @@ change them). Debug launch arguments are listed in `ios/README.md`.
 |---|---|
 | Simulator build (iPhone 17, iOS 27 runtime), macOS build, generic iOS device compile (min 18.0), **Release configuration** | all pass, 0 warnings (2026-10-11) |
 | Signed build installed and launched on iPhone 15 (`iPhone15,4`, iOS 18.5) | passes (first milestone build); Aparajita reported it "looks good". The contract-conforming build has **not** been reinstalled on the phone yet |
-| In-app demo self-test (`-medcheck.selfTest 1`) | 68/68 against `MockAPI` (the original 40 plus Track: day tally, parts of the day, remind, scanner match / wrong bottle / already taken / nothing left, a scan records no dose, confirm records a `scan` dose and takes a pill, same slot twice is rejected, skip is not missed, error-detail parsing) |
+| In-app demo self-test (`-medcheck.selfTest 1`) | 106/106 against `MockAPI`: the earlier 68 (incl. Track) plus parity checks: strict 24-hour times, dosage-form reading and wording, form rejection vs count errors, half doses, uncounted stock, settings the hub would refuse, phone rule, hub address normalisation, editing dose times, and decoding of the real `/hub` shapes below |
+| Real-`/hub` wire shapes (`DebugContractTest.runRealHubShapes`, runs inside the self-test) | all pass: `pills_left: null`, `dose_amount: 0.5`, `dosage_form`/`dose_unit`, settings without `camera_paused`, scan extras (`guidance`, `dosage_form`, `verification` incl. unknown status and `can_log: false` failing closed), `wrong_bottle` with `medication_id: null` and `expected.medication_id: null`, `already_taken` with microsecond timestamp, `not_scheduled` extras, adherence `missedList` with a null id, `complete` with `warnings`. Shapes were read from `backend/app/hub/{state,verify,dose_scan,routes}.py` at `e5e9ed5`, **not** captured from a running backend |
+| Live client against a stub of `/hub` (`-medcheck.liveTest 1`) | all requests accepted and decoded, `locateHub` finds `/hub` from the bare host:port; the 2 "failures" are the stub not keeping state. Stub is test scaffolding, not the backend |
 | Contract fixtures (`-medcheck.fixtures <frontend/docs/fixtures>`) | 38/38 using `feat/frontend-ui` @ `7427487`: `state` (with `skips`), `settings`, three scans, `scan-complete-*`, `adherence` and the three `dose-scan-*` fixtures decode and map; settings re-encode to contract keys |
 | Live hub (`-medcheck.liveTest 1`, `MEDCHECK_API_URL`) against `tools/hub_adapter` in demo mode, from the simulator | 35 pass, 0 failures, 4 hub-side notes (see I). Covers health, state, dose (also `method: "scan"` with a slot), remind, count, refill, PATCH, manual scan, GET scan, complete, adherence, settings PUT, camera pause/resume, export, demo advance/reset, photo field name. `/skip` and `/doses/scan` answered 404, reported as notes |
 | Visual QA on live data | Home, medication sheet, Verify, Preview, History, Settings rendered from the adapter |
 | Visual QA of Track | iPhone 17e and iPad Pro 11" simulators: today, an earlier day (Wed, Oct 7: 2 missed, read-only), the late row's three actions, low-supply line, and all four scanner results plus "Marked as taken" |
-| Merge check | `feat/ios-aparajita` merges with **0 conflicts** into `feat/inference-medcheck`, `feat/integration`, `feat/frontend-ui`, `feat/backend-urvi` and `main` (scratch worktrees, nothing pushed). My change touches only `ios/` and this file; the project file `project.pbxproj` is unchanged |
+| Merge check | `feat/ios-aparajita` merges with **0 conflicts** into `feat/inference-medcheck`, `feat/integration`, `feat/frontend-ui`, `feat/backend-urvi` and `main` (scratch worktrees, nothing pushed). My change touches only `ios/` and this file (inside `ios/`: the project file gains `INFOPLIST_FILE` and a new `ios/Config/MedCheck-Info.plist` with `NSAllowsLocalNetworking`) |
 | SonarCloud | 1 bug + 39 smells fixed in `d5e922e`; no new analysis seen yet |
 
 **Not tested:** Track and the dose scanner **on a physical iPhone**; real camera capture for a dose scan; the
@@ -250,6 +256,36 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
 **Known failures:** none in what is tested.
 
 ## I. Integration-relevant issues
+
+0. **iOS vs the integrated web app (`feat/integrate-track-tab` @ `e5e9ed5`).** What matches, what was changed to
+   match, and what is still different:
+
+   | Area | Web + `/hub` | iOS now |
+   |---|---|---|
+   | Buttons → endpoints | `doses`, `skip`, `doses/scan`, `remind`, `counts`, `refill`, `PATCH`, `DELETE`, scans, `complete`, `adherence`, `settings`, `export`, `data` | same paths and bodies; Log a dose / Mark as taken / Rosa took it (`method: "scan"`) / Skip / Remind Rosa / count / refill / edit / stop / add / settings / export / delete data |
+   | "Log this dose now" on a scan check | `verification.due_now` + `can_log`, one tap, normal dose endpoint | added: `VerificationCard`, six outcomes, never auto-logs, fails closed on unknown status |
+   | Dosage form | chooser when the label didn't say; `dosage_form` sent; 422 `FORM_UNCONFIRMED` shown at the chooser; "Tablets/Capsules/Units" labels | added, incl. form-aware Found so far, Verify, Preview, Added, medication sheet |
+   | Edit details | adds `schedule_times` (24-hour, only if changed) | added, same validation sentence |
+   | Dose scanner | wrong bottle may have `medication_id: null` | fixed: this used to be read as an unreadable answer; hub's reason sentence now shown for unknown medicine / wrong strength |
+   | Stock never counted | `pills_left: null` (web shows 0 / "out of") | not dropped; shown as "Not counted"; Mark as taken stays on. **Deliberately differs from web** |
+   | Fractional doses | number | `Double`; was an Int that would have dropped the medication |
+   | Names | `state.patient` in greeting and Settings; "Rosa/Elena" hard-coded elsewhere | greeting and Settings use `state.patient`; the rest stays hard-coded exactly like web |
+   | Alerts / events | "Texts sent to you" (5 newest, empty text), "Mistakes caught" | same; no OS push in either client |
+   | Settings | explicit Save; hub 422 on thresholds / phone | autosave, but values the hub would refuse are held back with the hub's sentence; phone rule copied from `to_e164` |
+   | Hub address | `VITE_API_URL=…/hub` | Settings card in all builds; host:port alone is enough (`/hub` is found); `NSAllowsLocalNetworking` |
+   | Live updates | polls `/state` every 4 s | polls every 5 s while Home is visible; Track and others refresh after each action |
+
+   **Still different or missing (not fixable in the iOS app alone):**
+   - The hub must be reachable from the phone: `run_ui_demo.sh` binds `127.0.0.1:8000`; it needs `0.0.0.0` (or
+     Tailscale). `/hub` is unauthenticated, so LAN/Tailscale only.
+   - **No iOS push.** The hub's reminders and supply/mistake texts go to in-app inbox/SMS (Twilio, never tested
+     with real credentials) and web push; `docs/backend-urvi.md` says iOS push is not supported (no paid Apple
+     Developer account). The iOS app shows the same in-app lists as the web, nothing at the OS level.
+   - **Not verified against the running Flask hub or a real inference scan** from iOS. Only decoded shapes.
+   - Time zone: the app derives "today" in the device's zone, like the browser. If the patient's zone differs from
+     the phone's, slots can read shifted. The state has no zone field.
+   - "Rosa" is hard-coded in many strings on both clients (backend doc, "known limitations").
+   - "Ask Rosa to scan again" still has no endpoint.
 
 1. **`/hub` is unauthenticated** and documented for localhost. A phone needs it on the LAN or Tailscale. Either
    bind it to a LAN address for the demo or add a token (needs Urvi's and Sinchana's agreement).
@@ -267,7 +303,8 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
    non-UTC time zone the derived "Taken 4:14" can look shifted (same on web). The backend should send times
    whose local reading matches the slot, or include the patient's time zone.
 4. **No `rescan` endpoint** for "Ask Rosa to scan again" (hidden against a real hub).
-4a. **The backend lacks the two Track endpoints.** `POST /medications/{id}/skip` and `POST /doses/scan` return 404
+4a. **(Superseded for `feat/integrate-track-tab`, which has both endpoints: `POST /hub/doses/scan`, `POST
+   /hub/medications/{id}/skip`, `skips` in state.)** Earlier finding: the backend lacked the two Track endpoints. `POST /medications/{id}/skip` and `POST /doses/scan` return 404
    on the reference `tools/hub_adapter` (`{"detail":"Not Found"}`, verified), and the update from Sinchana says the
    same for Urvi's `/hub` (not verified by me). Contract: `frontend/docs/api-contract.md` ("Skip", "Dose match",
    `fixtures/dose-scan-*.json`). The adapter's `GET /state` also has no `skips` key. A wrong bottle must add a
@@ -286,10 +323,10 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
 | # | Task | Status |
 |---|---|---|
 | 0 | Backend adds `POST /doses/scan` and `POST /medications/{id}/skip`; then rerun the live test and try a real scan | needs Urvi / orchestrator |
-| 1 | Run the live test against Urvi's `/hub` (`HUB_ENABLED=true`, port 8000) and fix any difference from the adapter | next |
+| 1 | Run the live test against Urvi's `/hub` (`HUB_ENABLED=true`, bound to `0.0.0.0:8000`) **on a machine with the backend stack** and fix any difference. Careful: `-medcheck.liveTest` writes (count, refill, a "Contract Test" medication, settings) | next |
 | 2 | Reinstall the contract-conforming build on the iPhone 15 and run it against a hub on the LAN | next (needs the hub bound to a LAN/Tailscale address) |
 | 3 | Real-device test of Track and the dose scanner: camera sheet, capture, a real bottle through the hub | not started |
-| 4 | Dosage-form-aware labels, patient/caregiver names from `state.patient` | optional parity with web |
+| 4 | ~~Dosage-form-aware labels, patient/caregiver names~~ | done (fourth milestone); "Rosa" elsewhere stays hard-coded like web |
 | 5 | Decide "Ask Rosa to scan again" (needs a backend endpoint or removal from the design) | needs team input |
 | 6 | App icon, VoiceOver pass, dark mode | before demo if time |
 
@@ -313,6 +350,8 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | Added Debug-only `-medcheck.snapshot 1` (writes `Documents/medcheck-snapshot.png`) to screenshot a physical device; used it to confirm two bottles on the iPhone 15 | simulator widths are not a substitute for the real device | see "Pushed SHAs" |
 | 2026-10-11 | **Track tab and dose scanner** (commit `8e8df9d`) from `MedCheck-iOS-Update.md`: `DayDoses` (port of `buildDay`), raw dose/skip/reminder records in `HubState`, `DoseStatus` now taken / skipped / late / reminded / missed / upcoming, `skipDose` and `matchDose` in the API, `method: "scan"`, `TrackView`, `TrackDoseRow`, `DoseScannerCard`, shared `CameraViewfinder` and `ScanSourcePicker` extracted from `ScanView`, Home's Track button, `MockHub` rebuilt on records with skip, scanner and double-dose rules | the web app added Track; the iOS app is meant to match it | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
+
+| 2026-10-11 | **Parity with `feat/integrate-track-tab`**: `VerificationCard` + "Log this dose now"; dosage-form chooser and form-aware copy; `schedule_times` in Edit details; `dosage_form` in `complete`, `warnings` shown; `medication_id: null` on a wrong bottle; null `pills_left` and fractional `dose_amount` no longer drop a medication; tolerant settings decoding; names from `state.patient`; alerts capped at 5 with empty text; settings validation before autosave; Hub connection card in all builds with `/hub` discovery; `NSAllowsLocalNetworking`; scan GET asks the hub like web; demo hub applies the real hub's completion rules | the app had been built from the shared contract only; the integrated hub sends more and is stricter | see "Pushed SHAs" |
 
 ### Pushed SHAs
 

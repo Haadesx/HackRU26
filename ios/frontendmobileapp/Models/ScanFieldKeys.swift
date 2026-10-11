@@ -20,23 +20,32 @@ enum ScanKey {
     /// Preview stays disabled until each of these has a value (refills may be left blank).
     static let required: Set<String> = [name, strength, doseAmount, scheduleTimes, quantityStart]
 
+    /// Labels that don't depend on what the bottle holds. See `label(for:form:)` for the two that do.
     static let labels: [String: String] = [
         name: "Medication name",
         strength: "Strength",
-        doseAmount: "Tablets per dose",
+        doseAmount: "Units per dose",
         scheduleTimes: "Dose times",
-        quantityStart: "Tablets in bottle",
+        quantityStart: "Units in bottle",
         refillsRemaining: "Refills left",
         pharmacyName: "Pharmacy",
         pharmacyPhone: "Pharmacy phone",
         prescriber: "Prescriber",
     ]
 
+    /// A field's label. The two countable fields follow the dosage form: "Tablets per dose", "Capsules in bottle",
+    /// or "Units" until the form is known, as in the web app's `fieldLabel`.
+    static func label(for key: String, form: DosageForm?) -> String {
+        switch key {
+        case doseAmount: "\(form.pluralLabel) per dose"
+        case quantityStart: "\(form.pluralLabel) in bottle"
+        default: labels[key] ?? key
+        }
+    }
+
     /// Short labels for the "Found so far" card.
-    static var foundLabels: [String: String] {
-        var short = labels
-        short[name] = "Name"
-        return short
+    static func foundLabel(for key: String, form: DosageForm?) -> String {
+        key == name ? "Name" : label(for: key, form: form)
     }
 }
 

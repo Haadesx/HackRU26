@@ -30,6 +30,27 @@ enum DebugLaunch {
         defaults.object(forKey: "medcheck.scanDemo") == nil ? nil : defaults.integer(forKey: "medcheck.scanDemo")
     }
 
+    /// Verify: attach this bottle check to every demo scan (`due_now`, `already_taken`, `not_due`,
+    /// `wrong_medication`, `strength_mismatch`, `uncertain`), as the real hub does for a scan it could read.
+    static var verification: ScanVerification? {
+        guard let raw = defaults.string(forKey: "medcheck.verification"),
+              let status = ScanVerification.Status(rawValue: raw) else { return nil }
+        let message: String
+        switch status {
+        case .dueNow: message = "It's time for Lisinopril 10 mg (morning \u{2014} 08:00). Confirm after taking it \u{2014} a scan never records a dose."
+        case .alreadyTaken: message = "Lisinopril 10 mg was already logged today at 08:14. You're all set \u{2014} don't take another dose."
+        case .notDue: message = "Lisinopril 10 mg matches your prescription, but it isn't due yet \u{2014} next dose tomorrow at 08:00."
+        case .wrongMedication: message = "Ibuprofen isn't a medication you're tracking. Scan the right bottle, or add this one as a new prescription if the doctor prescribed it."
+        case .strengthMismatch: message = "This bottle is 20 mg, but the prescription you're tracking is Lisinopril 10 mg. Don't take it until a pharmacist or doctor checks."
+        case .uncertain: message = "We read \u{201C}Lisinopril\u{201D}, but not clearly enough to be sure which medication this is. Take another photo, or check the label against the bottle."
+        }
+        return ScanVerification(status: status, message: message, canLog: status == .dueNow,
+                                medicationID: status == .dueNow ? 4 : nil)
+    }
+
+    /// With `openMedication`: open "Edit details" straight away.
+    static var openEdit: Bool { defaults.integer(forKey: "medcheck.edit") == 1 }
+
     /// With `scanDemo`: press "Rosa took it" on a match.
     static var scanConfirm: Bool { defaults.integer(forKey: "medcheck.scanConfirm") == 1 }
 

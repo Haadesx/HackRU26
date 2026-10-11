@@ -126,6 +126,7 @@ struct DoseScannerCard: View {
         let due = store.doseDueNow.map { " (\(store.label(for: $0).name))" } ?? ""
         options.append((nil, "The one that's due\(due)"))
         for med in store.medications { options.append((med.id, "\(med.name) \(med.strength)")) }
+        options.append((MockHub.untrackedBottle, "A bottle MedCheck doesn't track"))
         return CapsuleMenuPicker(title: "Demo: which bottle is in view?", selection: $demoMedicationID, options: options)
     }
     #endif
@@ -167,10 +168,10 @@ struct DoseScannerCard: View {
                     .disabled(isConfirming)
                 }
             }
-        case .wrongBottle(let bottle, let expected):
+        case .wrongBottle(let bottle, let expected, let reason, let hubMessage):
             NoticeBanner(
                 tone: .urgent, title: "Wrong bottle",
-                message: "That's \(bottle.name). \(expected.name) is due now, at \(Fmt.clockLabel(expected.slot)). Put this one back."
+                message: wrongBottleMessage(bottle, expected: expected, reason: reason, hubMessage: hubMessage)
             ) {
                 Button("Scan again") { reset() }.buttonStyle(.capsule(.secondary))
             }
@@ -189,6 +190,19 @@ struct DoseScannerCard: View {
         }
     }
 
+    /// "That's X. Y is due now, at 8:00 AM. Put this one back." as on the web. When the hub says why the bottle
+    /// isn't one it tracks (an unknown medicine, or the right medicine at another strength), its sentence follows,
+    /// because "Don't take it until a pharmacist or doctor checks" is worth reading.
+    private func wrongBottleMessage(_ bottle: DoseMatch.Bottle, expected: DoseMatch.Expected,
+                                    reason: String?, hubMessage: String?) -> String {
+        let seen = [bottle.name, bottle.strength].filter { !$0.isEmpty }.joined(separator: " ")
+        var text = "That's \(seen). \(expected.name) is due now, at \(Fmt.clockLabel(expected.slot)). Put this one back."
+        if let hubMessage, reason == "wrong_medication" || reason == "strength_mismatch" {
+            text += "\n\n\(hubMessage)"
+        }
+        return text
+    }
+
     // MARK: Actions
 
     private func check(_ photo: Data) async {
@@ -205,11 +219,13 @@ struct DoseScannerCard: View {
     }
 
     private func confirm(_ bottle: DoseMatch.Bottle, slot: String) async {
+        // A match always names a tracked medication; without one there is nothing to record.
+        guard let medicationID = bottle.medicationID else { return }
         isConfirming = true
         errorMessage = nil
         defer { isConfirming = false }
         do {
-            try await store.confirmScannedDose(medicationID: bottle.medicationID, slot: slot)
+            try await store.confirmScannedDose(medicationID: medicationID, slot: slot)
             phase = .done(name: bottle.name, at: store.now)
             confirmations += 1
         } catch {

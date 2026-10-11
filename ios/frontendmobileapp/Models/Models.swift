@@ -12,7 +12,8 @@ struct Medication: Codable, Identifiable, Hashable {
     let id: Int
     var name: String
     var strength: String
-    var doseAmount: Int
+    /// Units per dose. Usually whole, but the hub sends a fraction for a half tablet.
+    var doseAmount: Double
     var dosesPerDay: Int
     var scheduleTimes: [String]       // "08:00"
     var quantityStart: Int
@@ -28,12 +29,79 @@ struct Medication: Codable, Identifiable, Hashable {
     var instructions: String?
     var otc: Bool?                    // over the counter; falls back to "no refill count"
     var confidence: [String: String]? // label fields the scan was unsure of, e.g. ["prescriber": "unsure"]
+    /// "tablet" or "capsule", from the label or the caregiver's choice. nil when the hub doesn't know.
+    var dosageForm: DosageForm?
+    /// False when the hub has never been given a pill count (`pills_left: null`). The web app reads that
+    /// as zero; here it means "not counted yet" so a bottle nobody counted isn't called empty.
+    var stockKnown = true
 
     var isOverTheCounter: Bool { otc ?? (refillsRemaining == nil) }
 
+    /// Days of pills left. A bottle nobody has counted is never "running out", so it reports a long time.
     var daysLeft: Double {
-        pillsLeft / Double(max(doseAmount * dosesPerDay, 1))
+        guard stockKnown else { return Self.unknownDaysLeft }
+        let perDay = doseAmount * Double(dosesPerDay)
+        return perDay > 0 ? max(0, pillsLeft) / perDay : Self.unknownDaysLeft
     }
+
+    /// Stands in for "no end in sight" (a medication with no dose times, or a bottle nobody has counted).
+    static let unknownDaysLeft = 9_999.0
+}
+
+// MARK: - Dosage form
+
+/// What the bottle holds. The hub never guesses it: when the label doesn't say, the caregiver chooses
+/// before the medication can be added, and until then copy says "unit(s)".
+enum DosageForm: String, Codable, CaseIterable, Hashable, Identifiable {
+    case tablet
+    case capsule
+
+    var id: String { rawValue }
+
+    /// Reads the hub's `dosage_form`, then `dose_unit` ("tablets", "caps"), as the web app's `scanForm` does.
+    static func read(form: String?, unit: String?) -> DosageForm? {
+        parse(form) ?? parse(unit)
+    }
+
+    private static func parse(_ raw: String?) -> DosageForm? {
+        switch raw?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "tablet", "tablets", "tab", "tabs": .tablet
+        case "capsule", "capsules", "cap", "caps": .capsule
+        default: nil
+        }
+    }
+
+    /// "Tablets" or "Capsules", for choosing.
+    var pluralLabel: String { self == .tablet ? "Tablets" : "Capsules" }
+
+    /// True when a 422 from `POST /scans/{id}/complete` is about the dosage form (missing, or contradicting the
+    /// label), which is fixed where the form is chosen. The web app's test is `/form|tablet|capsule/i`; messages
+    /// about the counts ("Tablets per dose must be a whole number") are not about the form.
+    static func isRejection(status: Int, message: String) -> Bool {
+        guard status == 422 else { return false }
+        let countMessage = ["per dose", "in the bottle", "whole number", "is required"].contains {
+            message.localizedCaseInsensitiveContains($0)
+        }
+        return !countMessage && ["form", "tablet", "capsule"].contains { message.localizedCaseInsensitiveContains($0) }
+    }
+}
+
+extension Optional where Wrapped == DosageForm {
+    /// "tablet", "tablets", "capsule", "capsules", or "unit(s)" while the form isn't known.
+    /// `fallback` is used instead of "unit" where the web app has always said "tablets" (the medication sheet).
+    func noun(plural: Bool = false, fallback: DosageForm? = nil) -> String {
+        let base = (self ?? fallback)?.rawValue ?? "unit"
+        return plural ? "\(base)s" : base
+    }
+
+    /// "Tablets", "Capsules" or "Units": the start of "Tablets per dose" and "Tablets in bottle".
+    var pluralLabel: String { noun(plural: true).capitalizingFirst }
+
+    /// Like `pluralLabel`, but says `fallback` instead of "Units" when the form isn't known.
+    func pluralLabel(fallback: DosageForm) -> String { noun(plural: true, fallback: fallback).capitalizingFirst }
+
+    /// "Tablet", "Capsule" or "Unit".
+    var singularLabel: String { noun().capitalizingFirst }
 }
 
 // MARK: - Doses
@@ -147,19 +215,21 @@ enum DayPart: String, CaseIterable, Identifiable {
 /// What the dose scanner decided about the bottle in the photo. A match never records a dose.
 enum DoseMatch: Equatable {
     struct Bottle: Equatable {
-        var medicationID: Int
+        /// nil for a bottle the hub doesn't track (a different medicine, or the right one at another strength).
+        var medicationID: Int?
         var name: String
         var strength: String
     }
 
     struct Expected: Equatable {
-        var medicationID: Int
+        var medicationID: Int?
         var name: String
         var slot: String
     }
 
     case match(Bottle, slot: String, late: Bool)
-    case wrongBottle(Bottle, expected: Expected)
+    /// `reason` and `message` are the hub's own words ("wrong_medication", "strength_mismatch", "not_due").
+    case wrongBottle(Bottle, expected: Expected, reason: String?, message: String?)
     case alreadyTaken(Bottle, slot: String?, takenAt: Date?)
     case notScheduled(message: String)
 }
@@ -229,6 +299,32 @@ struct ScanEvent: Codable, Hashable, Identifiable {
     var id: String { "\(step)-\(at.timeIntervalSince1970)" }
 }
 
+/// The hub's read-only check of a scan against what is being tracked (`scan.verification`).
+/// It never records a dose: the only write is the caregiver pressing "Log this dose now".
+struct ScanVerification: Codable, Hashable {
+    enum Status: String, Codable {
+        case dueNow = "due_now"
+        case alreadyTaken = "already_taken"
+        case notDue = "not_due"
+        case wrongMedication = "wrong_medication"
+        case strengthMismatch = "strength_mismatch"
+        /// Anything the hub couldn't confirm, and any status this app doesn't know: fail closed.
+        case uncertain
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Status(rawValue: raw) ?? .uncertain
+        }
+    }
+
+    var status: Status
+    var message: String
+    /// True only for `due_now`. The hub checks again when the dose is logged.
+    var canLog: Bool
+    /// The tracked medication this bottle matched (hub id), when it matched one.
+    var medicationID: Int?
+}
+
 struct Scan: Codable, Identifiable, Hashable {
     var id: Int
     var status: ScanStatus
@@ -238,6 +334,12 @@ struct Scan: Codable, Identifiable, Hashable {
     var events: [ScanEvent]
     var labelImageUrl: String?
     var manual: Bool?                 // UI addition: created by "Enter the details by hand"
+    /// "tablet" or "capsule" when the label said so (`dosage_form`, else `dose_unit`). Never guessed.
+    var dosageForm: DosageForm?
+    /// Camera tips from the last photo ("Hold the bottle closer"), when the hub sends them.
+    var guidance: String?
+    /// Whether the scan matches a tracked prescription, and what to do about it.
+    var verification: ScanVerification?
 
     var missingFields: [ScanField] { fields.filter { $0.state == .missing } }
 
@@ -258,6 +360,9 @@ extension Scan {
         events = try c.decodeIfPresent([ScanEvent].self, forKey: .events) ?? []
         labelImageUrl = try c.decodeIfPresent(String.self, forKey: .labelImageUrl)
         manual = try c.decodeIfPresent(Bool.self, forKey: .manual)
+        dosageForm = try c.decodeIfPresent(DosageForm.self, forKey: .dosageForm)
+        guidance = try c.decodeIfPresent(String.self, forKey: .guidance)
+        verification = try c.decodeIfPresent(ScanVerification.self, forKey: .verification)
     }
 }
 
@@ -273,6 +378,9 @@ struct HubState {
     var pendingScans: [Scan] = []
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
+    /// `state.patient`: the first name the hub has for the patient and for the caregiver using the app.
+    var patientName: String?
+    var caregiverName: String?
     /// The hub's clock (the demo clock in demo mode).
     var now: Date
 }
@@ -372,6 +480,28 @@ struct AppSettings: Codable, Equatable {
     var remindAgain: RemindAgain
     var voiceLanguage: VoiceLanguage
     var cameraPaused = false
+
+    /// Why these settings can't be saved yet, in the hub's own words, or nil. The hub refuses them with 422, so
+    /// checking first keeps half-typed values (a first reminder lower than the second) from becoming error toasts.
+    var problem: String? {
+        guard firstReminderDays >= secondReminderDays, secondReminderDays >= urgentDays, urgentDays >= 0 else {
+            return "Thresholds must go from most days to fewest: first \u{2265} second \u{2265} urgent."
+        }
+        for person in caregivers {
+            if person.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Every caregiver needs a name." }
+            if !person.phone.isEmpty, !Self.isTextablePhone(person.phone) {
+                return "\(person.name)'s phone number doesn't look right."
+            }
+        }
+        return nil
+    }
+
+    /// The hub's rule for a number it can text: 10 digits (US), 11 starting with 1, or "+" and 8 to 15 digits.
+    static func isTextablePhone(_ phone: String) -> Bool {
+        let digits = phone.filter { $0.isASCII && $0.isNumber }
+        if phone.trimmingCharacters(in: .whitespaces).hasPrefix("+") { return (8...15).contains(digits.count) }
+        return digits.count == 10 || (digits.count == 11 && digits.hasPrefix("1"))
+    }
 
     static let standard = AppSettings(
         caregivers: [],

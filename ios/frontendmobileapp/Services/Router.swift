@@ -11,6 +11,10 @@ struct AddedSummary: Hashable {
     var quantity: Int?
     var lastsUntil: Date?
     var firstReminder: Date?
+    /// "tablet" or "capsule": the label's, or the caregiver's choice.
+    var form: DosageForm?
+    /// Things the hub wants the caregiver to know about the medication it just added.
+    var warnings: [String] = []
 }
 
 enum ScanRoute: Hashable {

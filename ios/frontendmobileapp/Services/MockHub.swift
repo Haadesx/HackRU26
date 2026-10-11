@@ -248,6 +248,9 @@ struct MockHub {
 
     // MARK: Mutations
 
+    /// Demo picker value for "a bottle MedCheck doesn't track".
+    static let untrackedBottle = -1
+
     mutating func newID() -> Int {
         nextID += 1
         return nextID
@@ -273,12 +276,12 @@ struct MockHub {
         if slot != nil, takenToday(target) {
             throw APIError.server(status: 409, message: "\(med.name) was already taken at this time today.")
         }
-        guard med.pillsLeft >= Double(med.doseAmount) else {
+        guard med.pillsLeft >= med.doseAmount else {
             throw APIError.server(status: 422, message: "There are no \(med.name) pills left to log.")
         }
 
         doses.append(DoseRecord(id: newID(), medicationId: med.id, slot: target, takenAt: now, method: method.rawValue))
-        medications[index].pillsLeft = med.pillsLeft - Double(med.doseAmount)
+        medications[index].pillsLeft = med.pillsLeft - med.doseAmount
     }
 
     /// Skip on purpose. A skipped slot is not missed.
@@ -316,6 +319,22 @@ struct MockHub {
 
         let allOpen = nearest(medications.flatMap { open($0) })
         let expected = allOpen.first { $0.due <= now } ?? allOpen.first
+
+        // `Self.untrackedBottle` is a medicine the hub doesn't track: the real hub answers wrong_bottle with no id.
+        if demoMedicationID == Self.untrackedBottle {
+            guard let expected else { return .notScheduled(message: "No doses are left today.") }
+            let message = "Ibuprofen isn't a medication you're tracking. Scan the right bottle, or add this one as a new "
+                + "prescription if the doctor prescribed it."
+            events.insert(SafetyEvent(
+                id: newID(), type: "wrong_bottle",
+                message: "Picked up Ibuprofen 200 mg when \(expected.med.name) was due. MedCheck caught it before it was taken.",
+                occurredAt: now), at: 0)
+            return .wrongBottle(DoseMatch.Bottle(medicationID: nil, name: "Ibuprofen", strength: "200 mg"),
+                                expected: DoseMatch.Expected(medicationID: expected.med.id, name: expected.med.name,
+                                                             slot: expected.slot),
+                                reason: "wrong_medication", message: message)
+        }
+
         let seen = demoMedicationID.flatMap { id in medications.first { $0.id == id } } ?? expected?.med
         guard let seen else { return .notScheduled(message: "No doses are left today.") }
 
@@ -331,7 +350,9 @@ struct MockHub {
                 message: "Picked up \(seen.name) when \(expected.med.name) was due. MedCheck caught it before it was taken.",
                 occurredAt: now), at: 0)
             return .wrongBottle(bottle, expected: DoseMatch.Expected(
-                medicationID: expected.med.id, name: expected.med.name, slot: expected.slot))
+                medicationID: expected.med.id, name: expected.med.name, slot: expected.slot),
+                                reason: "not_due",
+                                message: "\(seen.name) \(seen.strength) isn't due now. \(expected.med.name) is due at \(expected.slot).")
         }
         return .match(bottle, slot: openMine.slot, late: openMine.due <= now)
     }
@@ -391,24 +412,53 @@ struct MockHub {
         ]
     }
 
-    mutating func complete(scanID: Int, fields: [ScanField]) {
-        guard let scanIndex = scans.firstIndex(where: { $0.id == scanID }) else { return }
+    /// The real hub's `POST /scans/{id}/complete`, with its rules and its wording: a name, a strength, a dosage form
+    /// that is never guessed, 24-hour dose times and whole numbers. Anything else is a readable 422.
+    mutating func complete(scanID: Int, fields: [ScanField], dosageForm chosen: DosageForm?) throws -> [String] {
+        guard let scanIndex = scans.firstIndex(where: { $0.id == scanID }) else { throw APIError.notFound }
         var values: [String: String] = [:]
-        for field in fields { if let v = field.value, !v.isEmpty { values[field.key] = v } }
+        for field in fields {
+            if let v = field.value?.trimmingCharacters(in: .whitespaces), !v.isEmpty { values[field.key] = v }
+        }
+        func invalid(_ message: String) -> APIError { .server(status: 422, message: message) }
 
-        let name = values[ScanKey.name] ?? "Medication"
-        let amount = Int(values[ScanKey.doseAmount] ?? "") ?? 1
-        let times = (values[ScanKey.scheduleTimes] ?? "8:00 AM")
-            .components(separatedBy: CharacterSet(charactersIn: ",&"))
-            .flatMap { $0.components(separatedBy: " and ") }
-            .compactMap { Fmt.parseClock($0) }
-            .map { String(format: "%02d:%02d", $0.hour, $0.minute) }
-        let quantity = Int(values[ScanKey.quantityStart] ?? "") ?? 30
-        let refills = Int(values[ScanKey.refillsRemaining] ?? "")
+        guard let name = values[ScanKey.name] else { throw invalid("Add the medication name.") }
+        guard let strength = values[ScanKey.strength] else { throw invalid("Add the strength, like 25 mg.") }
+        guard let form = scans[scanIndex].dosageForm ?? chosen else {
+            throw invalid("The label didn't show whether these are tablets or capsules. Choose the form to continue — "
+                          + "MedCheck won't guess.")
+        }
+        let noun = form.pluralLabel
+        func whole(_ key: String, _ label: String, minimum: Int) throws -> Int {
+            guard let text = values[key] else { throw invalid("\(label) is required.") }
+            guard let n = Int(text) else { throw invalid("\(label) must be a whole number.") }
+            guard n >= minimum else { throw invalid("\(label) must be a whole number of at least \(minimum).") }
+            return n
+        }
+        let amount = try whole(ScanKey.doseAmount, "\(noun) per dose", minimum: 1)
+
+        var times: [String] = []
+        for part in (values[ScanKey.scheduleTimes] ?? "").split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) })
+        where !part.isEmpty {
+            guard let time = Fmt.strictClock(part) else {
+                throw invalid("\u{201C}\(part)\u{201D} isn't a time. Use 24-hour times like 08:00, 20:00.")
+            }
+            if !times.contains(time) { times.append(time) }
+        }
+        guard !times.isEmpty else { throw invalid("Add at least one time of day, like 08:00.") }
+        times.sort()
+
+        let quantity = try whole(ScanKey.quantityStart, "\(noun) in the bottle", minimum: 1)
+        var refills: Int?
+        if let text = values[ScanKey.refillsRemaining] {
+            guard let n = Int(text), n >= 0 else { throw invalid("Refills must be a whole number of at least 0.") }
+            refills = n
+        }
 
         if let existing = medications.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            medications[existing].strength = values[ScanKey.strength] ?? medications[existing].strength
-            medications[existing].doseAmount = amount
+            medications[existing].strength = strength
+            medications[existing].dosageForm = form
+            medications[existing].doseAmount = Double(amount)
             medications[existing].quantityStart = quantity
             medications[existing].refillsRemaining = refills
             medications[existing].pharmacyName = values[ScanKey.pharmacyName] ?? medications[existing].pharmacyName
@@ -416,16 +466,18 @@ struct MockHub {
             medications[existing].prescriber = values[ScanKey.prescriber] ?? medications[existing].prescriber
         } else {
             let med = Medication(
-                id: newID(), name: name, strength: values[ScanKey.strength] ?? "", doseAmount: amount,
-                dosesPerDay: max(times.count, 1), scheduleTimes: times.isEmpty ? ["08:00"] : times,
+                id: newID(), name: name, strength: strength, doseAmount: Double(amount),
+                dosesPerDay: times.count, scheduleTimes: times,
                 quantityStart: quantity, pillsLeft: Double(quantity), fillDate: Fmt.dateKey(now),
                 refillsRemaining: refills, pharmacyName: values[ScanKey.pharmacyName],
                 pharmacyPhone: values[ScanKey.pharmacyPhone], prescriber: values[ScanKey.prescriber],
                 prescriberPhone: nil, purpose: nil,
-                instructions: "Take \(amount) tablet\(amount == 1 ? "" : "s")\(times.count > 1 ? " \(times.count) times daily" : " daily")")
+                instructions: "Take \(amount) \(form.rawValue)\(amount == 1 ? "" : "s")\(times.count > 1 ? " \(times.count) times daily" : " daily")",
+                dosageForm: form)
             medications.append(med)
         }
         scans.remove(at: scanIndex)
+        return []
     }
 
     mutating func advance(days: Int) {
@@ -446,7 +498,7 @@ struct MockHub {
                           !hasRecord(medicationID: med.id, slot: time, on: day) else { continue }
                     doses.append(DoseRecord(id: newID(), medicationId: med.id, slot: time,
                                             takenAt: due.addingTimeInterval(8 * 60), method: DoseMethod.voice.rawValue))
-                    used[med.id, default: 0] += Double(med.doseAmount)
+                    used[med.id, default: 0] += med.doseAmount
                 }
             }
         }

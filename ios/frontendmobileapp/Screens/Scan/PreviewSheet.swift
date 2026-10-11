@@ -4,6 +4,8 @@ import SwiftUI
 struct PreviewSheet: View {
     let draft: ScanDraft
     let onAdded: (AddedSummary) -> Void
+    /// The hub refused the add because of the dosage form. The sheet closes and the message is shown by the chooser.
+    let onFormRejected: (String) -> Void
 
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -110,7 +112,8 @@ struct PreviewSheet: View {
         let supply = draft.lastsUntil(from: store.now).map { "Lasts until about \(Fmt.monthDay($0))" } ?? "Not known yet"
 
         return VStack(spacing: 0) {
-            row("Tablets in bottle", draft.value(ScanKey.quantityStart), badge: draft.editBadge(for: ScanKey.quantityStart))
+            row(draft.label(for: ScanKey.quantityStart), draft.value(ScanKey.quantityStart),
+                badge: draft.editBadge(for: ScanKey.quantityStart))
             row("Refills left", draft.value(ScanKey.refillsRemaining), badge: draft.editBadge(for: ScanKey.refillsRemaining))
             row("Prescriber", draft.value(ScanKey.prescriber).isEmpty ? "None" : draft.value(ScanKey.prescriber),
                 badge: draft.editBadge(for: ScanKey.prescriber))
@@ -147,7 +150,7 @@ struct PreviewSheet: View {
             let days = store.settings.firstReminderDays
             let textDate = Fmt.calendar.date(byAdding: .day, value: -days, to: runOut) ?? runOut
             let amount = days == 7 ? "about a week" : "about \(days) days"
-            message += " You'll get a text around \(Fmt.monthDay(textDate)), when \(amount) of tablets is left."
+            message += " You'll get a text around \(Fmt.monthDay(textDate)), when \(amount) of \(draft.form.noun(plural: true)) is left."
         }
         return InfoBox(title: "After you add it", message: message, fill: SupplyStatus.onTrack.fill)
     }
@@ -162,7 +165,8 @@ struct PreviewSheet: View {
         defer { isAdding = false }
 
         do {
-            try await store.completeScan(id: draft.scanID, fields: draft.payload)
+            let warnings = try await store.completeScan(id: draft.scanID, fields: draft.payload,
+                                                        dosageForm: draft.formToSend)
             didAdd = true
             addedCount += 1
             onAdded(AddedSummary(
@@ -170,10 +174,16 @@ struct PreviewSheet: View {
                 strength: draft.value(ScanKey.strength),
                 quantity: draft.quantity,
                 lastsUntil: draft.lastsUntil(from: store.now),
-                firstReminder: draft.firstReminder(after: store.now)))
+                firstReminder: draft.firstReminder(after: store.now),
+                form: draft.form,
+                warnings: warnings))
         } catch {
-            if case APIError.server(_, let message) = error {
-                errorMessage = "\(message) Your details are kept."
+            if case APIError.server(let status, let message) = error {
+                if DosageForm.isRejection(status: status, message: message) {
+                    onFormRejected(message)
+                } else {
+                    errorMessage = "\(message) Your details are kept."
+                }
             } else {
                 errorMessage = "The MedCheck hub didn't respond. Your details are kept, so try again."
             }

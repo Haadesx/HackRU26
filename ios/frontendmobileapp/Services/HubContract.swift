@@ -94,16 +94,22 @@ enum HubContract {
         var connected: Bool?
     }
 
+    /// One tracked medication. Everything but `id` and `name` falls back to a sensible value, because the real
+    /// `/hub` can send `pills_left: null` (stock never counted) and a fractional `dose_amount`, and one such
+    /// medication must not make the whole list vanish.
     struct MedicationDTO: Decodable {
         var id: FlexibleInt
         var name: String
-        var strength: String
+        var strength: String?
         var purpose: String?
-        var doseAmount: Int
-        var dosesPerDay: Int
-        var scheduleTimes: [String]
-        var quantityStart: Int
-        var pillsLeft: Double
+        var doseAmount: Double?
+        var dosesPerDay: Int?
+        var scheduleTimes: [String]?
+        var quantityStart: Int?
+        /// null means no count has been recorded yet.
+        var pillsLeft: Double?
+        var dosageForm: String?
+        var doseUnit: String?
         var refillsRemaining: Int?
         var otc: Bool?
         var fillDate: String?
@@ -140,12 +146,13 @@ enum HubContract {
     /// `POST /doses/scan`. Which fields are present depends on `status`.
     struct DoseMatchDTO: Decodable {
         struct ExpectedDTO: Decodable {
-            var medicationId: FlexibleInt
+            var medicationId: FlexibleInt?
             var name: String
             var slot: String
         }
 
         var status: String
+        /// null for a bottle the hub doesn't track (`wrong_bottle` of an unknown medicine or strength).
         var medicationId: FlexibleInt?
         var name: String?
         var strength: String?
@@ -153,6 +160,8 @@ enum HubContract {
         var late: Bool?
         var takenAt: Date?
         var expected: ExpectedDTO?
+        /// `wrong_medication`, `strength_mismatch` or `not_due`, on a `wrong_bottle`.
+        var reason: String?
         var message: String?
     }
 
@@ -182,6 +191,18 @@ enum HubContract {
         var detail: String?
     }
 
+    /// `scan.verification`: the hub's read-only check of a scan against the tracked medications.
+    struct VerificationDTO: Decodable {
+        struct MedicationRefDTO: Decodable {
+            var id: FlexibleInt
+        }
+
+        var status: String
+        var message: String?
+        var canLog: Bool?
+        var medication: MedicationRefDTO?
+    }
+
     struct ScanDTO: Decodable {
         var id: FlexibleInt
         var status: ScanStatus
@@ -190,6 +211,11 @@ enum HubContract {
         var createdAt: Date?
         var fields: [String: ScanFieldDTO]?
         var history: [HistoryStepDTO]?
+        // Extras the real /hub adds beyond the shared contract.
+        var dosageForm: String?
+        var doseUnit: String?
+        var guidance: String?
+        var verification: VerificationDTO?
     }
 
     struct CaregiverDTO: Codable {
@@ -215,10 +241,16 @@ enum HubContract {
         var voiceLanguage: String
         var cameraPaused: Bool
         var caregivers: [CaregiverDTO]
+
+        fileprivate enum CodingKeys: String, CodingKey {
+            case thresholds, alertMissed, alertNoRefills, alertWrongBottle, remindAgain, voiceLanguage
+            case cameraPaused, caregivers
+        }
     }
 
     struct MissedDTO: Decodable {
-        var medicationId: FlexibleInt
+        /// null when the missed dose belongs to a medication the dashboard doesn't track.
+        var medicationId: FlexibleInt?
         var name: String
         var slot: String
     }
@@ -241,9 +273,11 @@ enum HubContract {
         var days: [AdherenceDayDTO]
     }
 
-    /// `POST /scans/{id}/complete` answers `{ "medication": Medication }`.
+    /// `POST /scans/{id}/complete` answers `{ "medication": Medication, "warnings": [String] }`.
+    /// `warnings` is an extra the real /hub adds; the shared contract has only `medication`.
     struct CompleteDTO: Decodable {
         var medication: MedicationDTO
+        var warnings: [String]?
     }
 
     // MARK: Basic mapping
@@ -254,14 +288,20 @@ enum HubContract {
     }
 
     static func medication(_ dto: MedicationDTO) -> Medication {
-        Medication(
-            id: dto.id.value, name: dto.name, strength: dto.strength, doseAmount: dto.doseAmount,
-            dosesPerDay: dto.dosesPerDay, scheduleTimes: dto.scheduleTimes, quantityStart: dto.quantityStart,
-            pillsLeft: dto.pillsLeft, fillDate: clean(dto.fillDate), refillsRemaining: dto.refillsRemaining,
+        let times = dto.scheduleTimes ?? []
+        return Medication(
+            id: dto.id.value, name: dto.name, strength: dto.strength ?? "",
+            doseAmount: dto.doseAmount.flatMap { $0 > 0 ? $0 : nil } ?? 1,
+            dosesPerDay: dto.dosesPerDay ?? times.count, scheduleTimes: times,
+            quantityStart: dto.quantityStart ?? 0,
+            pillsLeft: max(0, dto.pillsLeft ?? 0), fillDate: clean(dto.fillDate),
+            refillsRemaining: dto.refillsRemaining,
             pharmacyName: clean(dto.pharmacyName), pharmacyPhone: clean(dto.pharmacyPhone),
             prescriber: clean(dto.prescriber), prescriberPhone: clean(dto.prescriberPhone),
             purpose: clean(dto.purpose), instructions: clean(dto.instructions),
-            otc: dto.otc, confidence: dto.confidence)
+            otc: dto.otc, confidence: dto.confidence,
+            dosageForm: DosageForm.read(form: dto.dosageForm, unit: dto.doseUnit),
+            stockKnown: dto.pillsLeft != nil)
     }
 
     /// The nine contract fields in display order. A key the hub omitted counts as missing.
@@ -273,7 +313,18 @@ enum HubContract {
         }
         let events = (dto.history ?? []).map { ScanEvent(step: $0.step, at: $0.at, detail: clean($0.detail)) }
         return Scan(id: dto.id.value, status: dto.status, fields: fields, photoCount: dto.photos ?? 0,
-                    createdAt: dto.createdAt, events: events, manual: dto.manual)
+                    createdAt: dto.createdAt, events: events, manual: dto.manual,
+                    dosageForm: DosageForm.read(form: dto.dosageForm, unit: dto.doseUnit),
+                    guidance: clean(dto.guidance), verification: dto.verification.flatMap { verification($0) })
+    }
+
+    /// A verification the app can't make sense of is dropped, never shown as a confident answer.
+    static func verification(_ dto: VerificationDTO) -> ScanVerification? {
+        guard let message = clean(dto.message) else { return nil }
+        let status = ScanVerification.Status(rawValue: dto.status) ?? .uncertain
+        return ScanVerification(status: status, message: message,
+                                canLog: status == .dueNow && (dto.canLog ?? false),
+                                medicationID: dto.medication?.id.value)
     }
 
     static func settings(_ dto: SettingsDTO) -> AppSettings {
@@ -324,6 +375,7 @@ enum HubContract {
                       sentAt: $0.sentAt)
             },
             events: dto.events.map { SafetyEvent(id: $0.id.value, type: $0.type, message: $0.message, occurredAt: $0.at) },
+            patientName: clean(dto.patient?.name), caregiverName: clean(dto.patient?.caregiver),
             now: dto.now)
     }
 
@@ -336,9 +388,11 @@ enum HubContract {
             guard let bottle = bottle(dto), let slot = dto.slot else { throw APIError.badResponse }
             return .match(bottle, slot: slot, late: dto.late ?? false)
         case "wrong_bottle":
-            guard let bottle = bottle(dto), let expected = dto.expected else { throw APIError.badResponse }
+            guard let name = dto.name, let expected = dto.expected else { throw APIError.badResponse }
+            let bottle = DoseMatch.Bottle(medicationID: dto.medicationId?.value, name: name, strength: dto.strength ?? "")
             return .wrongBottle(bottle, expected: DoseMatch.Expected(
-                medicationID: expected.medicationId.value, name: expected.name, slot: expected.slot))
+                medicationID: expected.medicationId?.value, name: expected.name, slot: expected.slot),
+                                reason: clean(dto.reason), message: clean(dto.message))
         case "already_taken":
             guard let bottle = bottle(dto) else { throw APIError.badResponse }
             return .alreadyTaken(bottle, slot: dto.slot, takenAt: dto.takenAt)
@@ -349,6 +403,7 @@ enum HubContract {
         }
     }
 
+    /// A bottle the hub identified as one it tracks. `match` and `already_taken` always have an id.
     private static func bottle(_ dto: DoseMatchDTO) -> DoseMatch.Bottle? {
         guard let id = dto.medicationId?.value, let name = dto.name else { return nil }
         return DoseMatch.Bottle(medicationID: id, name: name, strength: dto.strength ?? "")
@@ -368,7 +423,7 @@ enum HubContract {
         let pharmacy = [med.pharmacyName, med.pharmacyPhone].compactMap { $0 }.joined(separator: ", ")
         let fields = [
             labelField("instructions", "Instructions", med.instructions ?? "Not on the label", med),
-            labelField("quantity_start", "Quantity", "\(med.quantityStart) tablets", med),
+            labelField("quantity_start", "Quantity", "\(med.quantityStart) \(med.dosageForm.noun(plural: true, fallback: .tablet))", med),
             labelField("fill_date", otc ? "Bought" : "Filled", filled, med),
             labelField("refills_remaining", "Refills", med.refillsRemaining.map(String.init) ?? "Not needed", med),
             labelField("pharmacy_name", otc ? "Store" : "Pharmacy", pharmacy.isEmpty ? "None" : pharmacy, med),
@@ -413,5 +468,20 @@ enum HubContract {
         return AdherenceMonth(month: String(format: "%04d-%02d", dto.year, dto.month + 1),
                               dosesDue: dto.due, dosesTaken: dto.taken, days: days,
                               missedNote: note, suggestion: suggestion)
+    }
+}
+
+extension HubContract.SettingsDTO {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        thresholds = try c.decodeIfPresent(HubContract.ThresholdsDTO.self, forKey: .thresholds)
+            ?? HubContract.ThresholdsDTO(first: 7, second: 5, urgent: 3)
+        alertMissed = try c.decodeIfPresent(Bool.self, forKey: .alertMissed) ?? true
+        alertNoRefills = try c.decodeIfPresent(Bool.self, forKey: .alertNoRefills) ?? true
+        alertWrongBottle = try c.decodeIfPresent(Bool.self, forKey: .alertWrongBottle) ?? false
+        remindAgain = try c.decodeIfPresent(String.self, forKey: .remindAgain) ?? "30"
+        voiceLanguage = try c.decodeIfPresent(String.self, forKey: .voiceLanguage) ?? "English"
+        cameraPaused = try c.decodeIfPresent(Bool.self, forKey: .cameraPaused) ?? false
+        caregivers = try c.decodeIfPresent([HubContract.CaregiverDTO].self, forKey: .caregivers) ?? []
     }
 }

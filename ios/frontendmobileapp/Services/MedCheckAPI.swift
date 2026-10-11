@@ -25,7 +25,9 @@ protocol MedCheckAPI: AnyObject {
     func correctCount(medicationID: Int, count: Int) async throws             // POST   /medications/{id}/counts
     func markRefillPickedUp(medicationID: Int) async throws                   // POST   /medications/{id}/refill
     func remindRosa(medicationID: Int, slot: String) async throws             // POST   /medications/{id}/remind
-    func updateMedication(_ medication: Medication) async throws              // PATCH  /medications/{id}
+    /// Saves the label details the hub can edit. `scheduleTimes` is the new dose times, or nil to leave them alone
+    /// (the hub starts a new prescription version when they change).
+    func updateMedication(_ medication: Medication, scheduleTimes: [String]?) async throws // PATCH /medications/{id}
     func stopTracking(medicationID: Int) async throws                         // DELETE /medications/{id}
 
     func startScan(photo: Data?) async throws -> Scan                         // POST   /scans (photo, or {manual:true})
@@ -33,7 +35,9 @@ protocol MedCheckAPI: AnyObject {
     func scan(id: Int) async throws -> Scan                                   // GET    /scans/{id}
     func requestRescan(scanID: Int) async throws                              // not in the contract
     func discardScan(id: Int) async throws                                    // DELETE /scans/{id}
-    func completeScan(id: Int, fields: [ScanField]) async throws              // POST   /scans/{id}/complete (once)
+    /// `dosageForm` is the caregiver's choice, sent only when the label didn't say. Returns the hub's `warnings`.
+    @discardableResult
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] // POST /scans/{id}/complete (once)
 
     func adherence(month: String) async throws -> AdherenceMonth              // GET    /adherence?month=2026-10
     func settings() async throws -> AppSettings                               // from /state

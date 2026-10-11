@@ -17,7 +17,9 @@ struct AddedView: View {
 
     private var detailText: String {
         var parts: [String] = []
-        if let quantity = summary.quantity { parts.append("\(quantity) tablets") }
+        if let quantity = summary.quantity {
+            parts.append("\(quantity) \(summary.form.noun(plural: quantity != 1))")
+        }
         if let until = summary.lastsUntil { parts.append("lasts until about \(Fmt.monthDay(until))") }
         return parts.joined(separator: ", ")
     }
@@ -51,6 +53,12 @@ struct AddedView: View {
                         .foregroundStyle(MC.inkSoft)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if !summary.warnings.isEmpty {
+                        NoticeBanner(tone: .low, title: "Worth a look",
+                                     message: summary.warnings.joined(separator: " "))
+                            .accessibilityElement(children: .combine)
+                    }
 
                     MCCard(padding: 16, radius: 12) {
                         HStack(alignment: .top, spacing: 12) {

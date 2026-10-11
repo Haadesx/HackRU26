@@ -19,6 +19,17 @@ extension View {
         #endif
     }
 
+    /// URL keyboard with no autocapitalization or autocorrection, for the hub address.
+    func urlKeyboard() -> some View {
+        #if os(iOS)
+        self.keyboardType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+        #else
+        self.autocorrectionDisabled()
+        #endif
+    }
+
     func sentenceCapitalization() -> some View {
         #if os(iOS)
         self.textInputAutocapitalization(.sentences)

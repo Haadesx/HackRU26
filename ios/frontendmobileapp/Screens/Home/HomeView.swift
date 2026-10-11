@@ -67,7 +67,7 @@ struct HomeView: View {
 
     private var greeting: String {
         let hour = Fmt.calendar.component(.hour, from: store.now)
-        return "Good \(Fmt.dayPart(forHour: hour)), Elena. Here's how Rosa is doing."
+        return "Good \(Fmt.dayPart(forHour: hour)), \(store.caregiverName). Here's how \(store.patientName) is doing."
     }
 
     private var header: some View {
@@ -137,10 +137,16 @@ struct HomeView: View {
 
     private var aside: some View {
         VStack(alignment: .leading, spacing: 28) {
-            if !store.alerts.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(title: "Texts sent to you")
-                    ForEach(store.alerts) { alert in
+            // Always shown, newest five, as on the web: "No texts yet" says nothing has gone out, not that none can.
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Texts sent to you")
+                if store.alerts.isEmpty {
+                    Text("No texts yet. You'll get one when any medication drops below a week's supply.")
+                        .font(MCFont.body)
+                        .foregroundStyle(MC.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(store.alerts.prefix(5)) { alert in
                         AlertRow(alert: alert, now: store.now)
                     }
                 }
@@ -235,7 +241,7 @@ private extension Alert {
         case "no_refills": "New prescription needed"
         case "low_3": "Refill now"
         case "low_5", "low_7": "Refill soon"
-        default: "Heads up"
+        default: "Alert"
         }
     }
 

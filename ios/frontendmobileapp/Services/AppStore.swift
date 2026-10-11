@@ -37,12 +37,17 @@ final class AppStore {
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
     var now: Date = MockHub.demoStart
+    /// `state.patient`: first names the hub has for the patient and the caregiver. Rosa and Elena until it says.
+    var patientName = "Rosa"
+    var caregiverName = "Elena"
 
     // Settings (`GET /settings`)
     var settings: AppSettings = .standard
     var settingsJustSaved = false
     @ObservationIgnored private var syncedSettings: AppSettings?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The hub's check of each scan, remembered because older hubs leave it off `GET /scans/{id}`.
+    @ObservationIgnored private var verifications: [Int: ScanVerification] = [:]
 
     // UI
     var toast: Toast?
@@ -60,13 +65,34 @@ final class AppStore {
     /// Hides "Ask Rosa to scan again" on hubs that have no such endpoint (the shared contract has none).
     var supportsRescan: Bool { api.supportsRescan }
 
-    /// Debug only: point the app at a real hub, or back to demo data.
+    /// How the last "Apply" in Settings went, in a sentence for the Hub connection card.
+    var hubConfigMessage: String?
+
+    /// Point the app at a real hub, or back to demo data. The address may be just the host and port: the hub is
+    /// looked for there and under `/hub`, and the address that answered is the one kept.
     func configureHub(useDemo: Bool, baseURL: String) async {
+        var address = baseURL
+        hubConfigMessage = nil
+        if !useDemo {
+            if let typed = AppConfig.normalizedURL(from: baseURL) {
+                if let found = await AppConfig.locateHub(from: typed) {
+                    address = found.absoluteString
+                    hubConfigMessage = "Found the hub at \(address)."
+                } else {
+                    address = typed.absoluteString
+                    hubConfigMessage = "Couldn't reach a MedCheck hub at \(address). Check that it is running, that it listens "
+                        + "on the network (0.0.0.0, not only 127.0.0.1) and that this device is on the same network."
+                }
+            } else {
+                hubConfigMessage = "That doesn't look like an address. Try http://192.168.1.20:8000/hub."
+            }
+        }
         AppConfig.useDemoData = useDemo
-        AppConfig.savedBaseURL = baseURL
+        AppConfig.savedBaseURL = address
         api = AppConfig.makeAPI()
         isLoaded = false
         syncedSettings = nil
+        verifications = [:]
         await refresh()
         await loadSettings()
     }
@@ -94,6 +120,8 @@ final class AppStore {
             alerts = state.alerts
             events = state.events
             now = state.now
+            if let name = state.patientName { patientName = name }
+            if let name = state.caregiverName { caregiverName = name }
             hubConnected = true
         } catch {
             hubConnected = false
@@ -123,6 +151,13 @@ final class AppStore {
 
     func bottle(for med: Medication) -> ShelfBottle {
         let status = status(for: med)
+        guard med.stockKnown else {
+            return ShelfBottle(
+                id: med.id, name: med.name, strength: med.strength, status: status,
+                pillCount: PillBottleView.pillCount(forDaysLeft: med.daysLeft),
+                daysText: "Not counted", runsOutText: "Count the pills",
+                accessibilityText: "\(med.name), pills not counted yet. Button.")
+        }
         let days = Fmt.daysText(med.daysLeft)
         let runOut = runOutDate(for: med)
         return ShelfBottle(
@@ -307,6 +342,13 @@ final class AppStore {
         return match
     }
 
+    /// "Log this dose now" on a bottle check (Verify): the normal dose endpoint, once, for the next open slot.
+    /// Throws so the card can show the hub's own sentence ("The 08:00 dose of Lisinopril is already logged.").
+    func logCheckedDose(medicationID: Int) async throws {
+        try await api.logDose(medicationID: medicationID, slot: nil, method: .dashboard)
+        await refresh()
+    }
+
     /// "Rosa took it": the only thing that turns a scan into a recorded dose.
     func confirmScannedDose(medicationID: Int, slot: String) async throws {
         try await api.logDose(medicationID: medicationID, slot: slot, method: .scan)
@@ -346,9 +388,10 @@ final class AppStore {
         }
     }
 
-    func updateMedication(_ med: Medication) async -> Bool {
+    /// Saves edited label details. `scheduleTimes` is the new dose times, or nil when they weren't changed.
+    func updateMedication(_ med: Medication, scheduleTimes: [String]? = nil) async -> Bool {
         let ok = await perform(failure: "Couldn't save the changes. The hub didn't respond.") {
-            try await api.updateMedication(med)
+            try await api.updateMedication(med, scheduleTimes: scheduleTimes)
         }
         if ok {
             showToast("Saved changes to \(med.name).")
@@ -376,9 +419,9 @@ final class AppStore {
         defer { scanSession.isReading = false }
         do {
             if let current = scanSession.scan {
-                scanSession.scan = try await api.addPhoto(scanID: current.id, photo: data)
+                scanSession.scan = remember(try await api.addPhoto(scanID: current.id, photo: data))
             } else {
-                scanSession.scan = try await api.startScan(photo: data)
+                scanSession.scan = remember(try await api.startScan(photo: data))
             }
             scanSession.photos.append(data)
         } catch {
@@ -389,7 +432,7 @@ final class AppStore {
     /// "Enter the details by hand": an empty scan, so Verify can reuse the same form.
     func beginManualEntry() async -> Scan? {
         do {
-            let scan = try await api.startScan(photo: nil)
+            let scan = remember(try await api.startScan(photo: nil))
             scanSession.scan = scan
             return scan
         } catch {
@@ -398,11 +441,27 @@ final class AppStore {
         }
     }
 
-    /// The scan for Verify: the one in progress, one the hub handed over, or fetched by id.
+    /// Keeps the hub's check of a scan, and puts it back on a copy that arrived without one.
+    private func remember(_ scan: Scan) -> Scan {
+        var scan = scan
+        if let verification = scan.verification {
+            verifications[scan.id] = verification
+        } else {
+            scan.verification = verifications[scan.id]
+        }
+        return scan
+    }
+
+    /// The scan for Verify. Like the web app it asks the hub, because only `GET /scans/{id}` carries the
+    /// bottle check for a scan Rosa handed over. If the hub can't be asked, the copy already in hand is used.
     func loadScan(id: Int) async throws -> Scan {
-        if let local = scanSession.scan, local.id == id { return local }
-        if let pending = pendingScans.first(where: { $0.id == id }) { return pending }
-        return try await api.scan(id: id)
+        do {
+            return remember(try await api.scan(id: id))
+        } catch {
+            if let local = scanSession.scan, local.id == id { return remember(local) }
+            if let pending = pendingScans.first(where: { $0.id == id }) { return remember(pending) }
+            throw error
+        }
     }
 
     func requestRescan(_ scan: Scan) async {
@@ -424,10 +483,14 @@ final class AppStore {
     }
 
     /// `POST /scans/{id}/complete`. Throws so the Preview sheet can show the failure inline.
-    func completeScan(id: Int, fields: [ScanField]) async throws {
-        try await api.completeScan(id: id, fields: fields)
+    /// Returns the hub's `warnings` about the new medication, usually none.
+    @discardableResult
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] {
+        let warnings = try await api.completeScan(id: id, fields: fields, dosageForm: dosageForm)
         if scanSession.scan?.id == id { scanSession = ScanSession() }
+        verifications[id] = nil
         await refresh()
+        return warnings
     }
 
     // MARK: History
@@ -456,10 +519,19 @@ final class AppStore {
         syncedSettings = loaded
     }
 
+    /// Why the settings on screen aren't being saved, if they can't be. Cleared once they are valid again.
+    var settingsProblem: String?
+
     /// Called whenever `settings` changes; saves after a short pause so typing isn't a request per key.
+    /// Values the hub would refuse are held back and explained, instead of being sent and bounced.
     func settingsDidChange() {
-        guard let synced = syncedSettings, settings != synced else { return }
+        guard let synced = syncedSettings, settings != synced else {
+            settingsProblem = nil
+            return
+        }
         saveTask?.cancel()
+        settingsProblem = settings.problem
+        guard settingsProblem == nil else { return }
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled, let self else { return }
@@ -476,6 +548,7 @@ final class AppStore {
             try? await Task.sleep(for: .seconds(1.8))
             settingsJustSaved = false
         } catch {
+            if case APIError.server(_, let message) = error { settingsProblem = message }
             report(error, fallback: "Couldn't save your settings. The hub didn't respond.")
         }
     }

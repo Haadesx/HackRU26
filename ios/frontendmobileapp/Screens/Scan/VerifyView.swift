@@ -15,6 +15,8 @@ struct VerifyView: View {
     @State private var showPreview = false
     @State private var confirmDiscard = false
     @State private var confirmManual = false
+    /// Set when the hub refused the add because the dosage form is missing or contradicts the label.
+    @State private var formError: String?
 
     var body: some View {
         ZStack {
@@ -79,6 +81,10 @@ struct VerifyView: View {
                     timeline(draft)
                 }
 
+                if let verification = draft.verification {
+                    VerificationCard(verification: verification)
+                }
+
                 if sizeClass == .regular {
                     HStack(alignment: .top, spacing: 28) {
                         labelPhoto(draft).frame(width: 320)
@@ -110,10 +116,14 @@ struct VerifyView: View {
         .scrollBounceBehavior(.basedOnSize)
         .dismissKeyboardOnScroll()
         .sheet(isPresented: $showPreview) {
-            PreviewSheet(draft: draft) { summary in
+            PreviewSheet(draft: draft, onAdded: { summary in
                 showPreview = false
                 router.scanPath = [.added(summary)]
-            }
+            }, onFormRejected: { message in
+                // Keep every typed value; ask for the form right where the chooser is.
+                showPreview = false
+                formError = message
+            })
         }
         .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard scan", role: .destructive) {
@@ -256,10 +266,12 @@ struct VerifyView: View {
             : [GridItem(.flexible(), alignment: .top)]
 
         return VStack(alignment: .leading, spacing: 20) {
+            dosageForm(draft)
+
             LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                 ForEach(ScanKey.form, id: \.self) { key in
                     CapsuleTextField(
-                        title: ScanKey.labels[key],
+                        title: draft.label(for: key),
                         text: binding(draft, key),
                         placeholder: Self.placeholder(for: key),
                         appearance: draft.appearance(for: key),
@@ -280,9 +292,10 @@ struct VerifyView: View {
             }
 
             if !draft.isComplete {
-                Text("Fill in the highlighted details to preview.")
-                    .font(MCFont.caption)
-                    .foregroundStyle(MC.inkSoft)
+                let count = draft.missingCount
+                Text("Fill in \(count) more required \(count == 1 ? "detail" : "details") to continue.")
+                    .font(MCFont.captionBold)
+                    .foregroundStyle(SupplyStatus.urgent.text)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
@@ -290,6 +303,87 @@ struct VerifyView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14).fill(MC.card))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(MC.line, lineWidth: 1))
+    }
+
+    // MARK: Dosage form
+
+    /// The label's form is shown as read; when the label didn't say, the caregiver chooses. MedCheck never guesses
+    /// between tablets and capsules, and the hub won't add the medication until it is known.
+    @ViewBuilder private func dosageForm(_ draft: ScanDraft) -> some View {
+        if let read = draft.readForm {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("Dosage form:").font(MCFont.body).foregroundStyle(MC.inkSoft)
+                    Text(read.rawValue.capitalizingFirst).font(MCFont.bodyBold).foregroundStyle(MC.ink)
+                    Text("from the label").font(MCFont.captionBold).foregroundStyle(MC.inkSoft)
+                }
+                .accessibilityElement(children: .combine)
+                if let formError { formErrorText(formError) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14).fill(MC.page))
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Dosage form")
+                    .font(MCFont.bold(18, relativeTo: .headline))
+                    .foregroundStyle(MC.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("The label did not say whether these are tablets or capsules. Choose one before adding.")
+                    .font(MCFont.body)
+                    .foregroundStyle(MC.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(spacing: 8) {
+                    ForEach(DosageForm.allCases) { option in
+                        formOption(option, selected: draft.chosenForm == option) {
+                            draft.chosenForm = option
+                            formError = nil
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Dosage form")
+
+                if let formError { formErrorText(formError) }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14).fill(MC.page))
+        }
+    }
+
+    private func formOption(_ option: DosageForm, selected: Bool, choose: @escaping () -> Void) -> some View {
+        Button(action: choose) {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 22))
+                    .foregroundStyle(MC.navy)
+                    .accessibilityHidden(true)
+                Text(option.pluralLabel)
+                    .font(MCFont.bodyBold)
+                    .foregroundStyle(MC.ink)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 22).fill(selected ? MC.mist : MC.card))
+            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(selected ? MC.navy : MC.line, lineWidth: selected ? 2 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func formErrorText(_ message: String) -> some View {
+        Text(message)
+            .font(MCFont.bodyBold)
+            .foregroundStyle(SupplyStatus.urgent.text)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(MC.coralTint))
+            .accessibilityAddTraits(.updatesFrequently)
     }
 
     private func binding(_ draft: ScanDraft, _ key: String) -> Binding<String> {
@@ -300,7 +394,7 @@ struct VerifyView: View {
         switch key {
         case ScanKey.quantityStart: "Check the label, e.g. 30"
         case ScanKey.refillsRemaining: "Check the label, e.g. 2"
-        case ScanKey.scheduleTimes: "8:00 AM"
+        case ScanKey.scheduleTimes: "08:00, 20:00"
         case ScanKey.doseAmount: "1"
         default: ""
         }
@@ -309,7 +403,7 @@ struct VerifyView: View {
     private func whatHappensNext(_ draft: ScanDraft) -> String {
         let times = draft.scheduleTimes.map { Fmt.clockLabel($0) }
         let when = times.isEmpty ? "every day" : "every day at \(times.joined(separator: " and "))"
-        return "Remind Rosa \(when), and text you when fewer than \(store.settings.firstReminderDays) days of tablets are left. Rosa will hear \u{201C}\(draft.value(ScanKey.name).isEmpty ? "It" : draft.name) is all set\u{201D} on her wearable."
+        return "Remind Rosa \(when), and text you when fewer than \(store.settings.firstReminderDays) days of \(draft.form.noun(plural: true)) are left. Rosa will hear \u{201C}\(draft.value(ScanKey.name).isEmpty ? "It" : draft.name) is all set\u{201D} on her wearable."
     }
 }
 

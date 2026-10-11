@@ -35,7 +35,7 @@ struct TrackDoseRow: View {
 
     /// The bottle is nearly empty and this dose is still to be taken.
     private var lowSupplyLine: String? {
-        guard let med = medication, slot.status != .taken, store.status(for: med) == .urgent else { return nil }
+        guard let med = medication, med.stockKnown, slot.status != .taken, store.status(for: med) == .urgent else { return nil }
         let pills = max(0, Int(med.pillsLeft.rounded()))
         return "Only \(Fmt.plural(pills, "pill")) left. Refill needed."
     }
@@ -154,10 +154,11 @@ struct TrackDoseRow: View {
         .accessibilityLabel("Skip \(label.name)?")
     }
 
-    /// "Mark as taken" is off when the bottle has fewer pills than one dose.
+    /// "Mark as taken" is off when the bottle has fewer pills than one dose. A bottle nobody has counted isn't
+    /// empty, so it stays on and the hub decides.
     private var canTake: Bool {
-        guard let med = medication else { return true }
-        return med.pillsLeft >= Double(med.doseAmount)
+        guard let med = medication, med.stockKnown else { return true }
+        return med.pillsLeft >= med.doseAmount
     }
 
     private func actionButton(_ title: String, kind: CapsuleButtonStyle.Kind, action: Action,

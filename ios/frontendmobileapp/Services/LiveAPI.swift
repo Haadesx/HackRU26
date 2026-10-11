@@ -232,15 +232,18 @@ final class LiveAPI: MedCheckAPI {
         try await write("POST", "medications/\(medicationID)/remind", body: ["slot": slot])
     }
 
-    /// The hub saves only these five fields; it clears `confidence` for the ones that changed.
-    func updateMedication(_ medication: Medication) async throws {
-        let body: [String: Any] = [
+    /// The same body the web app's "Save details" sends: five label fields, plus `schedule_times` only when the
+    /// dose times changed. The hub clears `confidence` for the fields that changed and answers a bad time with
+    /// a readable 422 (`“9am” isn't a time. Use 24-hour times like 08:00, 20:00.`).
+    func updateMedication(_ medication: Medication, scheduleTimes: [String]?) async throws {
+        var body: [String: Any] = [
             "instructions": medication.instructions ?? "",
             "quantity_start": medication.quantityStart,
             "refills_remaining": medication.refillsRemaining.map { $0 as Any } ?? NSNull(),
             "prescriber": medication.prescriber ?? "",
             "pharmacy_phone": medication.pharmacyPhone ?? "",
         ]
+        if let scheduleTimes { body["schedule_times"] = scheduleTimes }
         try await write("PATCH", "medications/\(medication.id)", body: body)
     }
 
@@ -277,15 +280,19 @@ final class LiveAPI: MedCheckAPI {
         try await write("DELETE", "scans/\(id)")
     }
 
-    /// Body is the nine fields as typed, all strings. The hub converts them and answers `{ "medication": ... }`;
-    /// 409 means it was already added and 422 carries a readable `detail`.
-    func completeScan(id: Int, fields: [ScanField]) async throws {
+    /// Body is the nine fields as typed, all strings, plus `dosage_form` when the caregiver chose one. The hub
+    /// answers `{ "medication": ..., "warnings": [...] }`; 409 means it was already added and 422 carries a
+    /// readable `detail` (including "The label didn't show whether these are tablets or capsules...").
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] {
         var body: [String: Any] = [:]
         for key in ScanKey.form {
             body[key] = fields.first { $0.key == key }?.value ?? ""
         }
-        _ = try await request("POST", "scans/\(id)/complete", body: try jsonBody(body))
+        if let dosageForm { body["dosage_form"] = dosageForm.rawValue }
+        let data = try await request("POST", "scans/\(id)/complete", body: try jsonBody(body))
         cached = nil
+        return (try? decoder.decode(HubContract.CompleteDTO.self, from: data))?.warnings?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
     }
 
     // MARK: History, settings, privacy

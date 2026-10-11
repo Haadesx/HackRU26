@@ -88,10 +88,19 @@ final class MockAPI: MedCheckAPI {
         hub.remind(medicationID: medicationID, slot: slot)
     }
 
-    func updateMedication(_ medication: Medication) async throws {
+    func updateMedication(_ medication: Medication, scheduleTimes: [String]?) async throws {
         try await gate()
         guard let index = hub.medications.firstIndex(where: { $0.id == medication.id }) else { throw APIError.notFound }
-        hub.medications[index] = medication
+        var updated = medication
+        if let scheduleTimes {
+            updated.scheduleTimes = scheduleTimes
+            updated.dosesPerDay = scheduleTimes.count
+        } else {
+            // The hub only takes new dose times through `schedule_times`.
+            updated.scheduleTimes = hub.medications[index].scheduleTimes
+            updated.dosesPerDay = hub.medications[index].dosesPerDay
+        }
+        hub.medications[index] = updated
     }
 
     func stopTracking(medicationID: Int) async throws {
@@ -107,19 +116,31 @@ final class MockAPI: MedCheckAPI {
 
     func startScan(photo: Data?) async throws -> Scan {
         try await gate()
-        return hub.startScan(hasPhoto: photo != nil)
+        return withDemoVerification(hub.startScan(hasPhoto: photo != nil))
     }
 
     func addPhoto(scanID: Int, photo _: Data) async throws -> Scan {
         try await gate()
         guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.notFound }
-        return scan
+        return withDemoVerification(scan)
     }
 
     func scan(id: Int) async throws -> Scan {
         try await gate()
         guard let scan = hub.scans.first(where: { $0.id == id }) else { throw APIError.notFound }
+        return withDemoVerification(scan)
+    }
+
+    /// The demo hub reads no labels, so it has no bottle check of its own. Debug builds can attach one
+    /// (`-medcheck.verification due_now`) to look at each of the six outcomes.
+    private func withDemoVerification(_ scan: Scan) -> Scan {
+        #if DEBUG
+        var scan = scan
+        if let verification = DebugLaunch.verification { scan.verification = verification }
         return scan
+        #else
+        return scan
+        #endif
     }
 
     func requestRescan(scanID _: Int) async throws {
@@ -131,9 +152,9 @@ final class MockAPI: MedCheckAPI {
         hub.scans.removeAll { $0.id == id }
     }
 
-    func completeScan(id: Int, fields: [ScanField]) async throws {
+    func completeScan(id: Int, fields: [ScanField], dosageForm: DosageForm?) async throws -> [String] {
         try await gate()
-        hub.complete(scanID: id, fields: fields)
+        return try hub.complete(scanID: id, fields: fields, dosageForm: dosageForm)
     }
 
     // MARK: History, settings, privacy

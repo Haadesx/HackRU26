@@ -192,7 +192,13 @@ struct ScanView: View {
 
                 if let scan = session.scan {
                     ForEach(ScanKey.form, id: \.self) { key in
-                        foundRow(key: key, field: scan.field(key))
+                        foundRow(key: key, field: scan.field(key), form: scan.dosageForm)
+                    }
+                    if let tip = scan.guidance {
+                        Text(tip)
+                            .font(MCFont.bodyBold)
+                            .foregroundStyle(SupplyStatus.refillSoon.text)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if scan.field(ScanKey.quantityStart)?.state != .filled || scan.field(ScanKey.refillsRemaining)?.state != .filled {
                         Text("Try the back of the label, where the quantity is usually printed.")
@@ -220,8 +226,8 @@ struct ScanView: View {
         }
     }
 
-    private func foundRow(key: String, field: ScanField?) -> some View {
-        let title = ScanKey.foundLabels[key] ?? key
+    private func foundRow(key: String, field: ScanField?, form: DosageForm?) -> some View {
+        let title = ScanKey.foundLabel(for: key, form: form)
         let state = field?.state ?? .missing
         return HStack(alignment: .center, spacing: 12) {
             Text(title).font(MCFont.body).foregroundStyle(MC.ink)
@@ -230,7 +236,9 @@ struct ScanView: View {
             case .filled:
                 PillBadge(text: field?.value ?? "Found", fill: SupplyStatus.onTrack.fill, textColor: SupplyStatus.onTrack.text)
             case .unsure:
-                PillBadge(text: "Unclear", fill: SupplyStatus.refillSoon.fill, textColor: SupplyStatus.refillSoon.text)
+                // What was read is shown with a nudge to check it, as the web app does. "Unclear" if nothing legible.
+                PillBadge(text: "\(field?.value ?? "Unclear") \u{00B7} check", fill: SupplyStatus.refillSoon.fill,
+                          textColor: SupplyStatus.refillSoon.text)
             case .missing:
                 PillBadge(text: "Not found yet", fill: SupplyStatus.urgent.fill, textColor: SupplyStatus.urgent.text)
             }

@@ -79,7 +79,7 @@ enum DebugSelfTest {
 
             let eventsBefore = store.events.count
             let wrong = try await store.matchDose(photo: Data([1]), demoMedicationID: 3)
-            if case .wrongBottle(let bottle, let expected) = wrong {
+            if case .wrongBottle(let bottle, let expected, _, _) = wrong {
                 check("scanner: Metformin is the wrong bottle for Vitamin D3",
                       bottle.name == "Metformin" && expected.name == "Vitamin D3" && expected.slot == "08:00")
             } else {
@@ -163,16 +163,33 @@ enum DebugSelfTest {
             draft.values[ScanKey.quantityStart] = "30"
             draft.values[ScanKey.refillsRemaining] = "2"
             draft.values[ScanKey.prescriber] = "Dr. Patel"
-            check("preview allowed once filled", draft.isComplete)
+            check("preview still blocked: the dosage form is not known", !draft.isComplete && draft.needsFormChoice)
+            check("form counted as one more detail", draft.missingCount == 1, "\(draft.missingCount)")
+            check("labels say Units until the form is known",
+                  draft.label(for: ScanKey.doseAmount) == "Units per dose" && draft.label(for: ScanKey.quantityStart) == "Units in bottle")
+            draft.chosenForm = .capsule
+            check("preview allowed once filled and the form is chosen", draft.isComplete)
+            check("labels follow the chosen form", draft.label(for: ScanKey.quantityStart) == "Capsules in bottle")
+            check("chosen form is sent", draft.formToSend == .capsule)
+            check("dose times go out as the hub reads them", draft.scheduleTimesPayload == "08:00", draft.scheduleTimesPayload)
             check("added badge", draft.editBadge(for: ScanKey.quantityStart) == "Added by you")
             check("corrected badge", draft.editBadge(for: ScanKey.prescriber) == "Corrected by you")
             check("lasts until Nov 9", draft.lastsUntil(from: store.now).map { Fmt.monthDay($0) } == "Nov 9")
             check("first reminder tomorrow", draft.firstReminder(after: store.now).map { Fmt.relativeAt($0, now: store.now) } == "tomorrow at 8:00 AM")
             do {
-                try await store.completeScan(id: pending.id, fields: draft.payload)
+                // The hub never guesses the form: without one it refuses with a sentence the form chooser can use.
+                do {
+                    try await store.completeScan(id: pending.id, fields: draft.payload, dosageForm: nil)
+                    check("complete without a dosage form is refused", false, "it succeeded")
+                } catch let APIError.server(status, message) {
+                    check("complete without a dosage form is a form rejection", DosageForm.isRejection(status: status, message: message),
+                          "\(status) \(message)")
+                }
+                try await store.completeScan(id: pending.id, fields: draft.payload, dosageForm: draft.formToSend)
                 check("complete removes pending scan", !store.pendingScans.contains { $0.id == pending.id })
                 check("own scan is not offered as needing help", store.scansNeedingHelp.isEmpty)
                 check("complete updates refills", store.medication(id: 4)?.refillsRemaining == 2)
+                check("complete records the chosen form", store.medication(id: 4)?.dosageForm == .capsule)
             } catch {
                 check("complete scan", false, "\(error)")
             }
@@ -221,7 +238,95 @@ enum DebugSelfTest {
         check("settings saved", store.settings.firstReminderDays == 9)
         await store.resetDemo()
 
+        failures += await runParityChecks(store: store)
+
         print("SELFTEST DONE failures=\(failures)")
+    }
+
+    // MARK: Parity with the integrated web app and hub
+
+    /// Behaviours added to match `feat/integrate-track-tab`: the hub's strict dose times, the dosage form,
+    /// fractional doses, uncounted stock, settings the hub would refuse, and editing dose times.
+    @MainActor private static func runParityChecks(store: AppStore) async -> Int {
+        var failures = 0
+        func check(_ name: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+            print("SELFTEST \(ok ? "PASS" : "FAIL") \(name)\(ok ? "" : " :: \(detail())")")
+            if !ok { failures += 1 }
+        }
+
+        // Dose times: the hub accepts 24-hour times only, like the web's parseTimes.
+        check("times: 8:00 is 08:00", Fmt.strictClock("8:00") == "08:00")
+        check("times: 9am is not a 24-hour time", Fmt.strictClock("9am") == nil)
+        check("times: 24:00 is refused", Fmt.strictClock("24:00") == nil)
+        check("times: 08:5 is refused", Fmt.strictClock("08:5") == nil)
+        check("times: list is sorted and deduped", Fmt.strictClockList("20:00, 8:00, 08:00") == ["08:00", "20:00"])
+        check("times: empty list is nil", Fmt.strictClockList("  ") == nil)
+        check("times: one bad entry spoils the list", Fmt.strictClockList("08:00, nine") == nil)
+
+        // Dosage form: dosage_form first, then dose_unit, never guessed.
+        check("form: tablets", DosageForm.read(form: "Tablets", unit: nil) == .tablet)
+        check("form: caps from the unit", DosageForm.read(form: "", unit: "caps") == .capsule)
+        check("form: the form wins over the unit", DosageForm.read(form: "capsule", unit: "tablet") == .capsule)
+        check("form: unknown stays unknown", DosageForm.read(form: "", unit: "mL") == nil)
+        let unknown: DosageForm? = nil
+        check("form: unit(s) while unknown", unknown.noun() == "unit" && unknown.noun(plural: true) == "units"
+              && unknown.pluralLabel == "Units")
+        check("form: medication sheet falls back to tablets", unknown.noun(plural: true, fallback: .tablet) == "tablets")
+        check("form: rejections are told from count errors",
+              DosageForm.isRejection(status: 422, message: "The label didn't show whether these are tablets or capsules. Choose the form to continue.")
+              && !DosageForm.isRejection(status: 422, message: "Tablets per dose must be a whole number.")
+              && !DosageForm.isRejection(status: 409, message: "tablets or capsules"))
+
+        // Doses can be fractional, and a bottle nobody counted is not empty.
+        let half = Medication(id: 99, name: "Half", strength: "5 mg", doseAmount: 0.5, dosesPerDay: 2,
+                              scheduleTimes: ["08:00", "20:00"], quantityStart: 30, pillsLeft: 10)
+        check("half tablet twice a day: 10 pills last 10 days", half.daysLeft == 10, "\(half.daysLeft)")
+        check("dose amount text", Fmt.amountText(0.5) == "0.5" && Fmt.amountText(2) == "2")
+        check("schedule sentence with a half capsule",
+              Fmt.scheduleSentence(amount: 0.5, times: ["08:00", "20:00"], purpose: nil, noun: "capsule")
+              == "0.5 capsules twice a day, 8:00 AM and 8:00 PM")
+        var uncounted = half
+        uncounted.stockKnown = false
+        check("uncounted stock is never running out", uncounted.daysLeft == Medication.unknownDaysLeft)
+        check("uncounted bottle says so", store.bottle(for: uncounted).daysText == "Not counted")
+
+        // Settings the hub would refuse are held back and explained in the hub's own words.
+        var settings = AppSettings.standard
+        check("settings: defaults are valid", settings.problem == nil)
+        settings.firstReminderDays = 4
+        check("settings: first below second", settings.problem?.hasPrefix("Thresholds must go from most days to fewest") == true)
+        settings = .standard
+        settings.caregivers = [Caregiver(id: 1, name: "Ana", phone: "555-0187", scope: .all, isYou: false)]
+        check("settings: a number the hub can't text", settings.problem == "Ana's phone number doesn't look right.", settings.problem ?? "nil")
+        check("phone: US formats", AppSettings.isTextablePhone("(732) 555-0187") && AppSettings.isTextablePhone("1 732 555 0187")
+              && AppSettings.isTextablePhone("+44 20 7946 0958") && !AppSettings.isTextablePhone("12345"))
+
+        // The hub address: scheme added, trailing slash dropped, junk refused.
+        check("address: scheme added", AppConfig.normalizedURL(from: "192.168.1.20:8000")?.absoluteString == "http://192.168.1.20:8000")
+        check("address: trailing slash dropped", AppConfig.normalizedURL(from: " http://mac.local:8000/hub/ ")?.absoluteString == "http://mac.local:8000/hub")
+        check("address: empty and non-http are refused", AppConfig.normalizedURL(from: "") == nil && AppConfig.normalizedURL(from: "ftp://x") == nil)
+
+        // Editing dose times sends them only when they changed, and the hub rebuilds the schedule.
+        await store.resetDemo()
+        if let med = store.medication(id: 4) {
+            _ = await store.updateMedication(med, scheduleTimes: nil)
+            check("edit without times keeps them", store.medication(id: 4)?.scheduleTimes == ["08:00"])
+            _ = await store.updateMedication(med, scheduleTimes: ["07:00", "19:00"])
+            let after = store.medication(id: 4)
+            check("edit dose times", after?.scheduleTimes == ["07:00", "19:00"] && after?.dosesPerDay == 2,
+                  "\(String(describing: after?.scheduleTimes))")
+        } else {
+            check("lisinopril exists", false)
+        }
+
+        // What the real hub sends that the shared fixtures don't show.
+        check("real hub shapes decode and map", DebugContractTest.runRealHubShapes() == 0)
+
+        // A name the hub knows, a name the web shows.
+        check("patient names default to Rosa and Elena", store.patientName == "Rosa" && store.caregiverName == "Elena")
+
+        await store.resetDemo()
+        return failures
     }
 }
 #endif
