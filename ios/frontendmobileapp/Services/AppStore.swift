@@ -49,14 +49,6 @@ final class AppStore {
     /// The hub's check of each scan, remembered because older hubs leave it off `GET /scans/{id}`.
     @ObservationIgnored private var verifications: [Int: ScanVerification] = [:]
 
-    // Role and caregiver activity
-    /// nil until the first-launch question has been answered.
-    private(set) var role: AppRole? = AppConfig.role
-    /// Pop-ups on the caregiver's phone, newest last. Each goes away by itself or when dismissed.
-    private(set) var activity: [ActivityNotice] = []
-    @ObservationIgnored private var watcher = ActivityWatcher()
-    @ObservationIgnored private var activityTasks: [String: Task<Void, Never>] = [:]
-
     // UI
     var toast: Toast?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
@@ -72,41 +64,6 @@ final class AppStore {
 
     /// Hides "Ask Rosa to scan again" on hubs that have no such endpoint (the shared contract has none).
     var supportsRescan: Bool { api.supportsRescan }
-
-    // MARK: Role
-
-    func setRole(_ newRole: AppRole) {
-        guard newRole != role else { return }
-        role = newRole
-        AppConfig.role = newRole
-        watcher.reset()
-        activity = []
-        if newRole == .caregiver { Task { await LocalNotifier.requestAuthorization() } }
-    }
-
-    func dismissActivity(_ id: String) {
-        activityTasks[id]?.cancel()
-        activityTasks[id] = nil
-        activity.removeAll { $0.id == id }
-    }
-
-    /// Compares what the hub says now with the last look and pops up whatever is new (caregiver phone only).
-    private func announceNewActivity() {
-        guard role == .caregiver else { return }
-        let fresh = watcher.notices(patient: patientName, medications: medications, doses: doses, skips: skips,
-                                    reminders: reminders, alerts: alerts, events: events, now: now)
-        for notice in fresh.suffix(6) {
-            activity.removeAll { $0.id == notice.id }
-            activity.append(notice)
-            LocalNotifier.post(notice)
-            activityTasks[notice.id] = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(12))
-                guard !Task.isCancelled else { return }
-                self?.dismissActivity(notice.id)
-            }
-        }
-        if activity.count > 4 { activity.removeFirst(activity.count - 4) }
-    }
 
     /// How the last "Apply" in Settings went, in a sentence for the Hub connection card.
     var hubConfigMessage: String?
@@ -136,8 +93,6 @@ final class AppStore {
         isLoaded = false
         syncedSettings = nil
         verifications = [:]
-        watcher.reset()
-        activity = []
         await refresh()
         await loadSettings()
     }
@@ -168,7 +123,6 @@ final class AppStore {
             if let name = state.patientName { patientName = name }
             if let name = state.caregiverName { caregiverName = name }
             hubConnected = true
-            announceNewActivity()
         } catch {
             hubConnected = false
         }
@@ -353,11 +307,10 @@ final class AppStore {
     }
 
     /// Track: "Mark as taken" for one slot. Never called for a scan alone: a scan only identifies the bottle.
-    /// The patient's phone logs it as `button`, the caregiver's dashboard as `dashboard`.
-    func markTaken(_ slot: DoseSlot, method: DoseMethod = .dashboard) async -> Bool {
+    func markTaken(_ slot: DoseSlot) async -> Bool {
         let name = label(for: slot).name
         let ok = await perform(failure: "Couldn't mark \(name) as taken. The hub didn't respond.") {
-            try await api.logDose(medicationID: slot.medicationId, slot: slot.slot, method: method)
+            try await api.logDose(medicationID: slot.medicationId, slot: slot.slot, method: .dashboard)
         }
         if ok {
             showToast("\(name) marked as taken.")

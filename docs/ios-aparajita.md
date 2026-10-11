@@ -337,20 +337,6 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
   The durable fix is more names in the OCR lexicon (the OCR owner's file; not changed here).
 - **`/hub/health` and the app never fall back to demo silently**; a real hub that is unreachable shows the red chip.
 
-### I.9 Two-phone demo and notifications (2026-10-11)
-
-- **No real push.** APNs needs the paid Apple Developer Program (the project uses a personal team) and a sender on the
-  hub. What exists: in-app pop-ups plus local notifications, raised only while the caregiver app is running (it keeps
-  the screen awake). With the phone locked or the app killed nothing arrives. The hub's SMS to the caregiver contacts
-  (Twilio) is the lock-screen channel; it was never exercised with real credentials.
-- **Skipped / missed are now saved in the hub** as events (`type: skipped|missed`). Missed is written by the worker
-  (`python -m app.jobs.worker`, must be running) two hours after a dose time; the caregiver app's own
-  "hasn't taken it yet" notice comes at 30 minutes. A skip is announced from `state.skips`, which works on any hub.
-- **Everything is polled**, every 3 s, so a notice can lag by that much. Unverified: battery, many hours of polling,
-  and the camera on two physical phones at once. Rehearsed on two simulators against the real hub (curl as the
-  patient phone): a skip and a refill-now alert both popped up on the caregiver simulator.
-- The patient phone logs doses as `button`; the Meta glasses will post `voice` to the same endpoints.
-
 ## J. Outstanding work
 
 | # | Task | Status |
@@ -389,7 +375,6 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | **Track shows the live camera in the card** (no "open camera" sheet), and on iPhone the scanner comes right after the progress card; the status chip says **"Demo data. No hub connected."** in demo mode (it used to say "Connected to Rosa's hub", which hid that scans were scripted); hub `warnings` (objects `{code, medication, message}`) are decoded and shown | a tester on the phone was still on demo data and saw "Vitamin D3" for every bottle | see "Pushed SHAs" |
 | 2026-10-11 | **Red "Don't take this yet" advisory** in the dose scanner: a tracked medicine scanned before its time (hub `not_scheduled` with a `medication_id`), one with no doses left today, and an unknown or wrong-strength bottle with nothing due now show a red tile with the hub's own sentence, a warning haptic and a hand icon, instead of the calm blue "Nothing due". Demo hub now uses the real hub's half-hour due window; self-test 108/108 | a caregiver scanned fluoxetine at 5 a.m. (due 8:30) and got a neutral "Nothing due" | see "Pushed SHAs" |
 | 2026-10-11 | **App icon**: `AppIcon-1024.png` (the web's pink heart-pill) as the app icon (`Assets.xcassets/AppIcon`, `ASSETCATALOG_COMPILER_APPICON_NAME`) and as a 30 pt logo beside "MedCheck" in the top bar (`BrandIcon`, 192 px copy) | match the web app's branding | see "Pushed SHAs" |
-| 2026-10-11 | **Patient / caregiver mode and live caregiver notifications.** First launch asks who is using the phone (`RoleChooserView`, also lets you enter the hub address); change it in Settings (`RolePickerCard`) or the patient's "Phone setup". **Patient phone** (`PatientView`): the camera scanner ("I took it"), today's doses with I took it / Skip. **Caregiver phone**: the dashboard plus `ActivityBanner` pop-ups and local notifications from `ActivityWatcher`, which compares each poll (every 3 s, both roles) with the last: doses taken, skips, supply alerts, wrong bottle / double dose / missed, and a dose still untaken 30 minutes after its time. Screens stay awake. Backend (branch `feat/integrate-ios` only): skipped and missed doses are saved as hub events (migration `0006_hub_event_types`, `skipped` and `missed` event types, 3 tests, 137 pass); web "Mistakes caught" labels them | demo with two iPhones: patient/glasses side and caregiver side | see "Pushed SHAs" |
 
 ### Pushed SHAs
 
