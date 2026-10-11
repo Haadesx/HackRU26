@@ -6,7 +6,7 @@
 | Component | React web dashboard (caregiver app) |
 | Branch | `feat/frontend-ui` |
 | Code location | `frontend/` |
-| Latest UI code commit | **Track tab** commit (SHA: 31f286e). Previous: `c733e0c` "UI(React+Tailwind+Vite)" |
+| Latest UI code commit | **Track tab** commit (SHA: b69a166). Previous: `c733e0c` "UI(React+Tailwind+Vite)" |
 | This file | `docs/ui-sinchana.md` |
 | Status | Ready for integration. New since `c733e0c`: the **Track** tab and dose scanner (needs two small hub endpoints, see I). |
 
@@ -282,5 +282,5 @@ No test command exists (no unit test suite in this component).
 |---|---|---|---|---|---|---|---|
 | 2026-10-10 | Initial UI: Home with pill-bottle shelf and medication pop-up, Scan with webcam, Verify/Preview/Added, History, Settings, capsule design system, mock backend | First full build of the finalized designs | `frontend/**` | React 18, Vite 5, Tailwind 3, React Router 6 | Defines the hub contract (`frontend/docs/api-contract.md`) | Build ✅; headless browser walkthrough ✅ | `c733e0c` |
 | 2026-10-10 | FastAPI-style error parsing (`detail`), API contract + inference contract docs, JSON fixtures, README integration section, `.env.example` notes | So backend and inference can integrate without reading UI code | `src/api/client.js`, `docs/**`, `README.md`, `.env.example` | none | none (docs only) | Build ✅ | included in `c733e0c` |
-| 2026-10-11 | **Track tab**: TrackPage, DoseRow, DoseScanner; shared `lib/doses.js`; Track in nav; Home links to Track; `CameraView`/`SourcePicker` take props; mock `matchDose`, `skipDose`, `skips`, `logDose(method)`; client `matchDose`, `skipDose`; contract + 3 dose-scan fixtures | Track what was taken vs still due, confirmed by scanning | `src/pages/Track/**`, `src/lib/doses.js`, `src/App.jsx`, `src/layout/TopNav.jsx`, `src/pages/Home/TodayDoses.jsx`, `src/pages/Scan/CameraView.jsx`, `src/pages/Scan/SourcePicker.jsx`, `src/api/*.js`, `docs/**`, `README.md` | none | **New:** `POST /doses/scan`, `POST /medications/{id}/skip`, `skips` in state, dose `method: "scan"` | Build ✅; headless Track walkthrough ✅ | *31f286e* |
+| 2026-10-11 | **Track tab**: TrackPage, DoseRow, DoseScanner; shared `lib/doses.js`; Track in nav; Home links to Track; `CameraView`/`SourcePicker` take props; mock `matchDose`, `skipDose`, `skips`, `logDose(method)`; client `matchDose`, `skipDose`; contract + 3 dose-scan fixtures | Track what was taken vs still due, confirmed by scanning | `src/pages/Track/**`, `src/lib/doses.js`, `src/App.jsx`, `src/layout/TopNav.jsx`, `src/pages/Home/TodayDoses.jsx`, `src/pages/Scan/CameraView.jsx`, `src/pages/Scan/SourcePicker.jsx`, `src/api/*.js`, `docs/**`, `README.md` | none | **New:** `POST /doses/scan`, `POST /medications/{id}/skip`, `skips` in state, dose `method: "scan"` | Build ✅; headless Track walkthrough ✅ | *b69a166* |
 | 2026-10-11 | Added this handoff file and `frontend/AGENTS.md` | Team handoff process | `docs/ui-sinchana.md`, `frontend/AGENTS.md` | none | none | n/a (docs) | *31f286e* |
