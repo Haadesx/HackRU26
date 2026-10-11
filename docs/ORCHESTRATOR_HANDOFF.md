@@ -3,7 +3,8 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~01:10 UTC (post UI-pass dispatch, chain verification)
+> **Last updated:** 2026-10-11 ~02:10 UTC (safety P0 pass + wide-screen UI + fallback demo)
+> **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
 >
@@ -18,27 +19,44 @@
 MedCheck is an integrated, working three-system product: **React dashboard (Sinchana) →
 Flask/TimescaleDB backend + `/hub` compatibility layer (Urvi) → OCR-first inference gateway
 (Apollo's agent fleet)**. The complete chain — camera/photo → inference → medication evidence →
-backend verification → dashboard feedback → explicit confirmation → persisted state — was
-**independently verified** live this pass (see §G).
+backend verification → dashboard feedback → explicit confirmation → persisted state — is
+**independently verified** (see §G).
 
-**Working and verified now:** scan → 9/9 fields from real inference (YOLO11n bottle detection,
-RapidOCR, multi-frame fusion, Qwen3-VL escalation only when needed); duplicate add → 409; a scan
-never records ingestion; dose confirm only when due; inventory/refill/adherence; dashboard
-renders real backend data; local scanner console; ElevenLabs TTS sample.
+**Working and verified now:** scan → 9-field reads from real inference (YOLO11n bottle
+detection, RapidOCR, multi-frame fusion, Qwen3-VL escalation only when needed); duplicate add →
+409; a scan never records ingestion; dose confirm only when due; double-log blocked; inventory/
+refill/adherence; dashboard renders hub data; local scanner console; ElevenLabs TTS sample.
 
-**Suite status (independently re-run):** inference **522/522** (vision 118 · ocr 164 · vlm 134 ·
-api 102 · integration 4); backend **76/76** (incl. 15 `/hub`).
+**Suite status (independently re-run):** inference **523/523** (vision · ocr · vlm · api ·
+integration) and backend **81/81** (incl. 20 `/hub` tests). Frontend build clean.
 
-**Critical open items (this pass):**
-1. **New UI from Sinchana has not landed on the remote** (still `c733e0c`); the requested UI/UX
-   design pass is running on the current UI in an isolated branch (portable to the new UI).
-2. **P0/P1 stabilization items are owned by Hermes's mission** (`NEXT-MISSION-2-STABILIZATION.md`):
-   schedule-interpretation safety, dose-unit/form correctness, launcher reliability, `/hub`
-   exposure containment, dose-state consistency, real-photo corpus, iOS decision. The
-   orchestrator's own P0 fix this pass: the macOS gunicorn fork crash that periodically killed
-   the demo backend (§C).
-3. **Real-photo accuracy is still synthetic-only** — no labeled real-label corpus yet.
-4. Bad-image scan returns **502** (friendly message) rather than a 4xx — semantics issue, P2.
+**Safety fixes landed this pass (P0):**
+1. **Interval cadences can no longer become fixed times.** The hub's regex fallback converted
+   “every 6/8/12 hours” into 08:00/14:00/20:00; that conversion is removed (inference already
+   declined intervals with tests). Day-anchored frequencies still convert as `unsure` for
+   review. Verified live: an “every 8 hours” capsule label leaves `schedule_times` empty and
+   requires caregiver-entered times.
+2. **Dosage form and dose unit are preserved, never assumed.** The scan stores the inference
+   `medication.form` / `instructions.dose.unit` (migration `0004`); completion uses them and
+   returns an explicit “dosage form wasn't readable — please confirm” warning when unknown.
+   **Evidence floor:** a form/unit is only trusted with a real source and confidence ≥ 0.50 —
+   this fixed a live bug where the VLM returned `form: "tablet"` with confidence **0.0** for a
+   label that never stated a form (zero-confidence VLM-only fields are now dropped in
+   `reconcile_fields` too). Verified live: capsule label → `capsule`; unknown label → `NULL` +
+   warning; zero-confidence guess → ignored.
+
+**Blocker introduced late in this pass (operator action likely needed):** the local Docker
+Desktop engine became unresponsive while recreating the TimescaleDB volume
+(`error while creating mount source path '/host_mnt/Volumes/Auxilary/...': mkdir ...: file
+exists`), and a full quit/relaunch of Docker Desktop did not recover it (API returns 500s). The
+demo is therefore currently served by the **DB-less fallback adapter** (`tools/hub_adapter`,
+`:8500`) which implements the same hub contract and uses the same real inference; scan→add is
+verified on it. The DB-backed `/hub` path is unchanged in code and only needs the Docker
+recovery (see §J).
+
+Other open items: Sinchana's new UI is still not on the remote; iOS has no branch; the full
+identity-verification slice remains owned by Hermes's mission §8; bad-image still returns 502
+instead of 4xx.
 
 ---
 
@@ -124,6 +142,8 @@ guidelines chosen as the review checklist (keyboard/focus/hit-targets/motion/asy
 announcements). Both verified installed (the search tool returns results; see §G).
 
 ### Design pass — COMPLETED and independently verified
+
+**Pass 1 (Athena, `feat/ui-design-pass` `1a739c3`)** and **pass 2 (orchestrator, wide-screen):**
 
 - Branch **`feat/ui-design-pass` @ `1a739c3`** (13 files, `frontend/` only, no behavior/API/text
   changes), merged into `feat/integration`.
@@ -276,21 +296,34 @@ labeled real-photo accuracy has been measured yet (P1 item, Hermes).
 ## J. Operational state and restrictions
 
 **Currently running (local Mac only):** inference `:8300` (real mode, YOLO+VLM enabled, via the
-console daemon `:8400`); backend gunicorn `:8000` with `HUB_ENABLED=true` (localhost-only, single
-master, fork-safety env); TimescaleDB container `:5433`; dashboard dev server `:5199` serving the
-merged design; UI-pass dev server `:5299` (Athena's worktree). Demo DB state cleaned: meds
-Metformin/Lisinopril/Atorvastatin, empty alerts, no test artifacts.
+console daemon `:8400`); **fallback hub adapter `:8500` serving the UI contract with real
+inference** (`HUB_MODE=demo`, fixture state); dashboard dev server `:5199` (now `VITE_API_URL=
+http://localhost:8500` so the demo works without the DB). The DB-backed backend `:8000` is
+**down**: Docker Desktop's engine stopped responding while recreating the TimescaleDB volume
+(`error while creating mount source path '/host_mnt/Volumes/Auxilary/...': mkdir ...: file
+exists`), and quit/relaunch did not recover it (daemon API 500s).
+
+**Operator recovery for the DB-backed path (no code changes needed):**
+1. Open Docker Desktop → Settings → Troubleshoot → “Restart” (or “Reset to factory defaults”
+   only if restart fails; reset does not touch repo data).
+2. `cd backend && docker compose up -d db` → wait healthy →
+   `FLASK_APP=wsgi:app PYTHONPATH=. <venv>/python -m flask db upgrade` →
+   `SEED_PASSWORD=… PYTHONPATH=. <venv>/python scripts/seed.py`.
+3. Restart gunicorn with the fork-safety env, then set `frontend/.env.local` back to
+   `VITE_API_URL=http://localhost:8000/hub` and restart Vite.
+`scripts/run_ui_demo.sh` already knows this path; `--adapter` selects the fallback.
 
 **Restrictions respected:**
 - **Linux rig: untouched.** Only read-only SSH probes (`nvidia-smi`, `curl /v1/models`). No
   installs, no service restarts, no Docker/Tailscale/systemd/firewall changes, no model
   changes. VRAM snapshot during handoff: 32,607 MiB total / 18,847 used / 13,242 free.
-- **No public exposure.** `/hub` is bound to `127.0.0.1`; CORS `*` is for the local dev origin
-  only; no tunnels opened.
+- **No public exposure.** `/hub` and the adapter are bound to `127.0.0.1`; CORS `*` is for the
+  local dev origin only; no tunnels opened.
 - **No startup/service-management script changes** beyond the project's own demo launcher
-  (`scripts/run_ui_demo.sh`), where the only change is the macOS fork-safety env var and
-  backend `/hub` flags needed to keep the demo alive. The rig-side startup scripts are
-  untouched.
+  (`scripts/run_ui_demo.sh`, historical macOS fork-safety env + hub flags, disclosed) and the
+  screenshot helper (new tool). The rig-side scripts are untouched. **No Docker configuration
+  was changed** — Docker Desktop was restarted (quit/relaunch) in an attempt to clear a
+  `host_mnt` mount bug, which is operational recovery, not reconfiguration.
 - **No destructive Git operations**: no force-push, no rebase of shared history, no branch
   deletion; worker branches merged read-only from their tips.
 - **Secrets**: ElevenLabs key only in gitignored `.env` (mode 600) and `~/.medcheck/vllm.env`;
@@ -336,51 +369,56 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 
 ## WHAT IS WORKING NOW
 
-- Full chain: photo → real inference (YOLO11n + RapidOCR + optional Qwen3-VL) → `/hub` → Postgres
-  → dashboard; verified live with 9/9 fields and persisted medications.
-- Safety behaviors: scans never record ingestion; duplicate adds refused; dose confirm only when
-  due; uncertainty and per-field sources preserved; backend owns prescriptions/doses/inventory.
-- Test suites: **522 inference + 76 backend**, contract examples 4/4, frontend builds.
-- Local console: live guidance, long-label rotation capture, debug bundles; ElevenLabs TTS sample.
-- Fallback hub adapter for DB-less demos.
+- Full chain: photo → real inference (YOLO11n + RapidOCR + optional Qwen3-VL) → hub → dashboard;
+  verified live on the DB-backed backend earlier and re-verified end-to-end on the **DB-less
+  fallback adapter** now (9 fields → complete → medication visible).
+- **Safety (new this pass):** interval cadences never become fixed times (caregiver must set
+  them); dosage form/unit preserved from inference and never assumed (evidence floor 0.50);
+  zero-confidence VLM guesses dropped; scans never record ingestion; duplicate adds refused;
+  dose confirm only when due; double-log blocked; blurry/unreadable → 422 with a clear message.
+- Test suites: **523 inference + 81 backend**, contract examples 4/4, frontend build clean.
+- UI: responsive shell (80/96/112 rem) using real width at 1920/2560; verified at 390/768/1440/
+  1920/2560 with no overflow, skip links, and zero console errors; before/after screenshots
+  committed.
+- Local console (live guidance + long-label rotation), ElevenLabs TTS sample, design skills
+  installed project-locally.
 
 ## WHAT IS STILL MISSING OR BROKEN
 
-- Real-photo accuracy has not been measured (synthetic-only numbers).
-- P0 items: schedule-interpretation safety, form/dose-unit correctness, launcher fail-loud
-  semantics, `/hub` containment — **owned by Hermes's mission**, not yet landed.
-- Sinchana's new UI is not on the remote; the design pass currently targets the old UI.
-- Bad-image returns 502 instead of 4xx; alerts/events feed minimal; no auth/TLS (deliberate,
-  local-only).
-- iOS app absent (contracts ready).
+- **Local Docker Desktop engine is stuck** (`host_mnt` volume-recreate bug) → the Postgres/
+  TimescaleDB `/hub` path is offline until the operator recovers it (adapter covers the demo).
+- **Full medication-identity verification slice** (wrong bottle / strength mismatch / due-state
+  verification as a first-class product flow) is not implemented; today the product refuses
+  duplicates, enforces due-window rules, and surfaces uncertainty — Hermes's mission §8 owns it.
+- Real-photo measurement is small-sample only (6 local photos: 1×8/8, 2×uncertain, 4×correctly
+  `needs_rescan`); no labeled real-world corpus yet.
+- Sinchana's new UI not on the remote; iOS has no branch; bad-image returns 502 not 4xx; alerts/
+  events feed minimal; no auth/TLS (deliberate, localhost-only).
 
 ## WHAT CHANGED IN THIS PASS
 
-- Installed UI UX Pro Max v2.13.0 and Vercel Web Interface Guidelines project-locally
-  (`.agents/skills/…`), committed with provenance.
-- Fixed the demo backend crash (macOS gunicorn fork) and restored the whole stack.
-- **Delivered the UI/UX design pass** (`feat/ui-design-pass` `1a739c3` → merged): wide-screen
-  composition, page shell, a11y/token polish; verified by build + 9 Brave/Playwright captures
-  (no overflow, skip links, zero console errors) with before/after screenshots committed.
-- Switched the screenshot/verification tooling to **Brave via playwright-core** (operator
-  instruction; no Chrome).
-- Ran the complete-chain verification (success + failure paths) and re-ran both suites.
-- Created and maintain this document.
+- **P0 safety fixes** (`3369b10`): interval-safe schedule fallback; form/dose-unit preservation
+  with a real source+confidence floor (migration `0004`); zero-confidence VLM field guard in
+  `reconcile_fields`; dynamic copy (“amount in the bottle” when the form is unknown); +6 tests.
+- **Wide-screen UI pass** (`f5dcd24`): `.shell` container 80→96→112 rem, Home grid 1.7fr/1fr at
+  ≥1800 px, display-scale headline; verified across 5 viewport sizes; screenshots committed.
+- **Demo fallback activated**: UI now runs against `tools/hub_adapter` (`:8500`) with real
+  inference because Docker Desktop is stuck; scan→add verified; recovery steps documented (§J).
+- Teammate sync: fetched all remote branches — **no new pushes** from Sinchana/Urvi; no iOS
+  branch exists; nothing to integrate this pass.
+- Handoff (this document) updated with all evidence and the blocker.
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
-- Whether the design pass should be re-run on Sinchana's new UI or ported component-by-component
-  (same skills, same brief).
-- Priority between Hermes's P0 items and the deadline: which subset must land before the demo
-  freeze, and what the demo script/freeze commit should be.
-- iOS scope for the submission (excluded vs. contract-only mention).
-- Whether to prepare (not apply) network exposure changes for a phone demo — any actual firewall/
-  TLS/tailnet change requires operator approval.
+- Which remaining P0 item from Hermes's mission lands next (identity-verification slice vs
+  `/hub` containment vs launcher fail-loud), and the demo-freeze commit.
+- Whether to port the wide-screen/design pass onto Sinchana's new UI when it lands.
+- iOS scope for submission; whether to prepare (not apply) any network-exposure changes.
 
 ## WHAT REQUIRES OPERATOR APPROVAL
 
-- Creating/altering `main` or changing the GitHub default branch; opening the PR.
-- Any network exposure of `/hub` or the inference gateway beyond localhost (TLS/reverse proxy/
-  Tailscale routing) and any firewall or Docker/service changes.
+- **Docker Desktop recovery** and returning the demo to the DB-backed `/hub` path.
+- Creating/altering `main` or the GitHub default branch; opening the PR.
+- Any exposure of `/hub`/inference beyond localhost (TLS/reverse proxy/firewall/Tailscale).
 - Anything on the Linux rig (currently untouched, read-only only).
-- Spending ElevenLabs characters beyond smoke-test scale, Twilio/FCM credentials use.
+- Spending ElevenLabs/Twilio/FCM beyond smoke-test scale.
