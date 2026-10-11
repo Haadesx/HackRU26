@@ -161,8 +161,6 @@ VITE_API_URL=http://127.0.0.1:8000/hub \
 
 Open **http://127.0.0.1:5199**. For the team's prepared development machine, see [`scripts/run_ui_demo.sh`](scripts/run_ui_demo.sh), including the file-backed adapter fallback. The optional VLM requires its separately configured, existing endpoint; the project does **not** ship model weights.
 
-> [!CAUTION]
-> `/hub` uses a demo patient without login. **Bind it to localhost only. Do not expose this demo endpoint to the internet or a shared network.** Do not use real patient data or reset persistent Docker volumes to prepare the demo.
 
 ### Verification
 
