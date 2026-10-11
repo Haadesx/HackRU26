@@ -55,6 +55,31 @@ def add_medication(patient: User, item_data: dict, times: list[str]) -> dict:
     return {"item_medication_id": new_item.medication_id, **result}
 
 
+def change_schedule(patient: User, medication_id, times: list[str]) -> dict:
+    """New dose times for one medication = a new prescription version.
+
+    Doses already taken/missed/skipped keep their history; not-yet-taken doses at the old
+    times are replaced by doses at the new times (same rules as any re-activation).
+    """
+    active = _active(patient)
+    if active is None or not any(i.medication_id == medication_id for i in active.items):
+        raise ApiError(404, "MEDICATION_NOT_FOUND", "That medication no longer exists.")
+    draft = rx_service.revise(active)
+    item = next(i for i in draft.items if i.medication_id == medication_id)
+    old = item.schedule
+    rx_service.set_schedule(
+        item,
+        {
+            "frequency": old.frequency if old else "daily",
+            "start_date": old.start_date if old else None,
+            "end_date": old.end_date if old else None,
+            "times": schedule_spec(patient, times),
+        },
+    )
+    db.session.refresh(draft)
+    return rx_service.activate(draft, user_id=patient.id, initialize_inventory=False)
+
+
 def remove_medication(patient: User, medication_id) -> None:
     active = _active(patient)
     if active is None:

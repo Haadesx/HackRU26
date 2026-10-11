@@ -262,7 +262,15 @@ export const mock = {
   async updateMedication(mid, patch) {
     await delay();
     const m = med(mid);
-    Object.assign(m, patch);
+    const { schedule_times: times, ...rest } = patch;
+    Object.assign(m, rest);
+    if (times) {
+      // Same shape the real hub accepts: ["08:00", "20:00"] or "08:00, 20:00".
+      const list = (Array.isArray(times) ? times : String(times).split(",")).map((t) => t.trim()).filter(Boolean);
+      if (!list.length) throw new Error("Add at least one time of day, like 08:00.");
+      m.schedule_times = [...new Set(list)].sort();
+      m.doses_per_day = m.schedule_times.length;
+    }
     m.confidence = {};
     return clone(db);
   },

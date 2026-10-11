@@ -2,7 +2,7 @@
 
 import io
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -540,6 +540,31 @@ def test_skip_turns_missed_into_skipped(hub, ctx):
     tasks.mark_missed_doses(at)
     r = hub.post(f"/medications/{med['id']}/skip", {"slot": "08:00"})
     assert r.status_code == 200 and r.get_json()["skips"][0]["slot"] == "08:00"
+
+
+def test_edit_dose_times(hub, ctx):
+    from app.models import DoseEvent
+
+    med = hub.med()
+    assert med["schedule_times"] == ["08:00", "19:00"]
+    set_now(T0 + timedelta(hours=1, minutes=5))  # 08:05: take breakfast, then move the evening dose
+    hub.post(f"/medications/{med['id']}/doses", {"slot": "08:00"})
+    r = hub.patch(f"/medications/{med['id']}", {"schedule_times": ["08:00", "21:00", "13:00"]})
+    assert r.status_code == 200, r.get_json()
+    m = next(x for x in r.get_json()["medications"] if x["id"] == med["id"])  # same dashboard id
+    assert m["schedule_times"] == ["08:00", "13:00", "21:00"] and m["doses_per_day"] == 3
+    assert m["pills_left"] == 59  # stock carried over
+    assert r.get_json()["doses"][-1]["slot"] == "08:00"  # history kept
+    today = db.session.scalars(
+        select(DoseEvent.scheduled_at).where(DoseEvent.status == "pending", DoseEvent.scheduled_at < T0 + timedelta(hours=17))
+    ).all()
+    # Rest of today (local): 13:00 EDT = 17:00Z and 21:00 EDT = 01:00Z; the old 19:00 (23:00Z) is gone.
+    assert sorted(t.astimezone(timezone.utc).strftime("%H:%M") for t in today) == ["01:00", "17:00"]
+    # String form, unchanged times are a no-op, bad times are a readable 422
+    assert hub.patch(f"/medications/{med['id']}", {"schedule_times": "08:00, 13:00, 21:00"}).status_code == 200
+    r = hub.patch(f"/medications/{med['id']}", {"schedule_times": "8am"})
+    assert r.status_code == 422 and "24-hour" in r.get_json()["detail"]
+    assert hub.patch(f"/medications/{med['id']}", {"schedule_times": []}).status_code == 422
 
 
 def test_hub_disabled_returns_404(app):

@@ -286,6 +286,15 @@ def update_medication(med_id: int):
         if hm.refills_remaining and hm.refills_remaining > 0:
             db.session.execute(delete(HubAlert).where(HubAlert.hub_medication_id == hm.id, HubAlert.type == "no_refills"))
     hm.confidence = {}
+    if "schedule_times" in data:
+        # Accepts ["08:00", "20:00"] or "08:00, 20:00".
+        raw = data["schedule_times"]
+        times = _times(", ".join(map(str, raw)) if isinstance(raw, list) else raw)
+        current = [t.local_time.strftime("%H:%M") for t in (item.schedule.times if item.schedule else [])]
+        if times != sorted(current):
+            medication_id = item.medication_id
+            db.session.flush()
+            rx.change_schedule(patient, medication_id, times)
     db.session.commit()
     return state_response()
 

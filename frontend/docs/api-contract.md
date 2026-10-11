@@ -43,7 +43,7 @@ backend matches it, the UI works with no code changes: set `VITE_API_URL` and re
 | POST | `/medications/{id}/remind` | `{ "slot": "08:00" }` | State | "Remind Rosa": the wearable repeats the reminder |
 | POST | `/medications/{id}/counts` | `{ "count": 12 }` | State | Correct pill count. Sets `pills_left` |
 | POST | `/medications/{id}/refill` | | State | Refill picked up: `pills_left += quantity_start`, `refills_remaining -= 1` (unless null), `fill_date = today`, remove that medication's `low_*` alerts |
-| PATCH | `/medications/{id}` | Any of `instructions`, `quantity_start`, `refills_remaining`, `prescriber`, `pharmacy_phone` | State | Edit details. Clear `confidence` for edited fields |
+| PATCH | `/medications/{id}` | Any of `instructions`, `quantity_start`, `refills_remaining`, `prescriber`, `pharmacy_phone`, `schedule_times` (`["08:00", "20:00"]` or `"08:00, 20:00"`) | State | Edit details. Clear `confidence` for edited fields. New `schedule_times` replace the dose times from now on; doses already taken keep their history. Bad times → 422 `detail` |
 | DELETE | `/medications/{id}` | | State | Stop tracking |
 | POST | `/scans` | multipart field `photo` (JPEG), **or** JSON `{ "manual": true }` | Scan | First photo of a new bottle, or manual entry with every field missing |
 | POST | `/scans/{id}/photos` | multipart field `photo` | Scan | Each extra photo. Merge with earlier readings |

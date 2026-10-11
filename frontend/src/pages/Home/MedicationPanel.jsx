@@ -28,6 +28,18 @@ function recentDoses(med, doses, now) {
   return rows;
 }
 
+/** "8:00, 20:00" -> ["08:00", "20:00"] (sorted, deduped), or null if any entry isn't a 24-hour time. */
+export function parseTimes(text) {
+  const out = [];
+  for (const part of String(text || "").split(",").map((p) => p.trim()).filter(Boolean)) {
+    const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(part);
+    if (!m) return null;
+    const t = `${m[1].padStart(2, "0")}:${m[2]}`;
+    if (!out.includes(t)) out.push(t);
+  }
+  return out.length ? out.sort() : null;
+}
+
 /** Everything about one medication. Opens in a Dialog from a bottle cap on Home. */
 export default function MedicationPanel({ medId, onClose }) {
   const { data, run } = useAppState();
@@ -146,9 +158,22 @@ export default function MedicationPanel({ medId, onClose }) {
           className="grid gap-4 rounded-2xl bg-page p-4 sm:grid-cols-2"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (await act("edit", () => api.updateMedication(med.id, { ...draft, quantity_start: Number(draft.quantity_start), refills_remaining: draft.refills_remaining === "" ? null : Number(draft.refills_remaining) }))) setMode(null);
+            const times = parseTimes(draft.schedule_times);
+            if (!times) return setError("Enter dose times as 24-hour times separated by commas, like 08:00, 20:00.");
+            const patch = { ...draft, quantity_start: Number(draft.quantity_start), refills_remaining: draft.refills_remaining === "" ? null : Number(draft.refills_remaining) };
+            if (times.join(",") === [...med.schedule_times].sort().join(",")) delete patch.schedule_times;
+            else patch.schedule_times = times;
+            if (await act("edit", () => api.updateMedication(med.id, patch))) setMode(null);
           }}
         >
+          <TextField
+            id="e-times"
+            label="Dose times (24-hour, separated by commas)"
+            placeholder="08:00, 20:00"
+            value={draft.schedule_times}
+            onChange={(e) => setDraft({ ...draft, schedule_times: e.target.value })}
+            className="sm:col-span-2"
+          />
           <TextField id="e-instr" label="Instructions" value={draft.instructions} onChange={(e) => setDraft({ ...draft, instructions: e.target.value })} className="sm:col-span-2" />
           <TextField id="e-qty" label="Tablets in bottle" inputMode="numeric" value={draft.quantity_start} onChange={(e) => setDraft({ ...draft, quantity_start: e.target.value })} />
           <TextField id="e-ref" label="Refills left" inputMode="numeric" value={draft.refills_remaining ?? ""} onChange={(e) => setDraft({ ...draft, refills_remaining: e.target.value })} />
@@ -211,7 +236,7 @@ export default function MedicationPanel({ medId, onClose }) {
 
       <div className="flex flex-wrap justify-between gap-2.5 border-t border-line-soft pt-4">
         <div className="flex flex-wrap gap-2.5">
-          <Button variant="secondary" onClick={() => { setDraft({ instructions: med.instructions, quantity_start: med.quantity_start, refills_remaining: med.refills_remaining ?? "", prescriber: med.prescriber, pharmacy_phone: med.pharmacy_phone }); setMode("edit"); }}>Edit details</Button>
+          <Button variant="secondary" onClick={() => { setDraft({ schedule_times: med.schedule_times.join(", "), instructions: med.instructions, quantity_start: med.quantity_start, refills_remaining: med.refills_remaining ?? "", prescriber: med.prescriber, pharmacy_phone: med.pharmacy_phone }); setMode("edit"); }}>Edit details</Button>
           <Button variant="secondary" onClick={() => setMode("stop")}>Stop tracking</Button>
         </div>
         <Button onClick={onClose}>Done</Button>
