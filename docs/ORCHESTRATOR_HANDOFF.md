@@ -192,6 +192,12 @@ announcements). Both verified installed (the search tool returns results; see §
 - New medication complete → **200**, persisted; **no taken doses** for it (scan never records
   ingestion) ✓; then `DELETE /medications/{id}` → 200 (stop tracking).
 - Dose logging at the due window → **200** (confirm recorded).
+- **Double-log safety**: a second `POST /medications/{id}/doses` in the same window → **409**
+  “All of today's Metformin doses are already logged or closed.” (no double-record).
+- **Unreadable/blurry scan**: `label_metformin_blurry.png` → **0/9 fields**; completing with empty
+  values → **422** `{"detail":"Add the medication name."}` (validation, no silent defaults).
+- **Baseline frontend build** (current UI, main worktree): `npm run build` → OK
+  (`index.html` 0.72 kB, CSS 24.37 kB, JS 235.73 kB / 74.32 kB gzip, built in ~1 s).
 - Earlier this pass: `/hub/health` 200 after the gunicorn fix; UI Home rendered real data
   (headless DOM contained Ada/Metformin/Lisinopril/Atorvastatin).
 
@@ -220,6 +226,7 @@ labeled real-photo accuracy has been measured yet (P1 item, Hermes).
 | 6 | P1 | Real-photo regression corpus + accuracy measurement | Unverified real-world accuracy | Inference (Hermes §10) | No labeled real dataset | Build corpus (synthetic mock labels allowed for regression) |
 | 7 | P1 | iOS availability decision | Scope | Operator | External app not built | Decide demo scope without iOS (§11) |
 | 8 | P1 | New UI from Sinchana not on remote | UI work reuse risk | Sinchana | Not pushed | Land it; then port/redo the design pass with installed skills |
+| 8b | P2 | Prefer inference `medication.form`/`dose.unit` in `/hub` complete path (currently `dosage_form:"tablet"`, `dose_unit:"tablet"` hard-coded) | Form correctness for capsules/liquids | Backend `/hub` | — | Use the scan's `form` + `instructions.dose.unit` when present (P0 item 2 overlaps) |
 | 9 | P2 | Bad-image scan returns 502 instead of 4xx | API semantics | Backend `/hub` | — | Map inference rejection to 415/422 with the same message |
 | 10 | P2 | `/hub` has no settings persistence beyond adapter? (settings handled by hub tables) | Minor | Backend | — | Confirm `PUT /settings` round-trip in demo |
 | 11 | P2 | `main` is empty; no PR | Repo hygiene | Operator | Branch policy | Open PR from `feat/integration` when approved |
