@@ -59,6 +59,16 @@ true only for `due_now`; a morning dose taken hours ago no longer hides an eveni
 real backend: Metformin `not_due`, Lisinopril 10 `not_due`, Lisinopril 20 vs 10 mg `strength_mismatch`,
 Furosemide `wrong_medication`, Pantoprazole `due_now (can_log)`, blurry `uncertain`.
 
+**Verification flow is complete end-to-end (API + UI):** the backend engine (`app/hub/verify.py`) returns
+`due_now · already_taken · not_due · wrong_medication · strength_mismatch · uncertain`; the dashboard shows it on
+the scan verify page with a single explicit **“Log this dose now”** action for `due_now` (caption: *“Only tap
+after the dose was actually taken.”*) — scans remain read-only. Worker deliverables merged this pass:
+`feat/adapter-verify` (`29db3f4`, +15 tests), `feat/ocr-real-evidence` (`b477521`), `feat/vlm-verify-qa`
+(`a7783ce`), `feat/ui-verification` (`00f35b9`, which also fixed `GET /scans/{id}` to include the block).
+Real-photo evidence (Orion, no identifiers): 11 real frames → mean 3.09/9 fields, 9 used the VLM; 3-frame
+bundles → 9/9 fields. Final demo rehearsal on the DB-backed hub: **10 passed / 0 failed**. Full merged suite:
+**538 tests** (523 inference/integration + 15 adapter).
+
 Open items: Sinchana's new UI is still not on the remote; iOS has no branch; bad-image still returns 502
 instead of 4xx.
 
@@ -372,6 +382,19 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 
 ---
 
+## M. Demo runbook (judging)
+
+1. `scripts/run_ui_demo.sh` → UI **http://127.0.0.1:5199** (backend `/hub` :8000, inference :8300).
+   Fallback if the DB is unavailable: `scripts/run_ui_demo.sh --adapter` (same contract, file state).
+2. Live script: **Scan** a bottle → verification banner → for `due_now`, *Log this dose now* (the only
+   action that records a dose) → Home/History reflect it. Wrong/strength/already-taken/uncertain states come
+   from scanning `samples/label_furosemide_noform.png`, `label_lisinopril20.png`, `label_metformin.png`
+   (all tracked), and `label_metformin_blurry.png`.
+3. Validate before demoing: `scripts/demo_rehearsal.sh` (expect “10 passed, 0 failed”).
+4. Evidence: screenshots in `docs/screenshots/ui/` (incl. `verify-action-*` for the due banner);
+   `services/ocr/EVAL-REAL.md`, `services/vlm/EVAL.md` (QA section).
+5. Reset demo data if needed: `backend/docker compose down -v && up -d db`, migrate, seed (documented in §J).
+
 ## WHAT IS WORKING NOW
 
 - **DB-backed end-to-end** (restored this pass): photo → real inference → `/hub` → Postgres → dashboard;
@@ -387,18 +410,21 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 
 ## WHAT IS STILL MISSING OR BROKEN
 
-- Verification **banner in the product UI** — in flight (`feat/ui-verification`); until it lands the block is
-  API-only (visible in curl/JSON).
-- Fallback adapter parity (verification + form/unit) — in flight (`feat/adapter-verify`).
-- Real-photo evidence doc + VLM QA — in flight (Orion/Juno tasks).
+- Verification **banner in the product UI** — **landed** (`00f35b9`); `due_now` shows the explicit log action,
+  other states show info/warning panels; `GET /scans/{id}` now carries the block.
+- Fallback adapter parity — **landed** (`29db3f4`): same six statuses + form/unit preservation, 15 tests.
+- Real-photo evidence (`services/ocr/EVAL-REAL.md`) + VLM QA (`services/vlm/EVAL.md`) — **landed**.
 - Sinchana's new UI not pushed; iOS absent; bad-image returns 502 not 4xx; no auth/TLS (localhost-only).
 
 ## WHAT CHANGED IN THIS PASS
 
-- Recovered Docker/DB and restored the DB-backed app (no data reset).
-- Added `app/hub/verify.py` + 7 tests + 2 samples; wired into scan responses; live-verified all six states.
-- Committed `fd4026f`; added `scripts/demo_rehearsal.sh` (10/10).
-- Dispatched four parallel worker tasks (UI banner, adapter parity, real-photo evidence, VLM QA).
+- Recovered Docker/DB and restored the DB-backed app (no data reset); restarted inference so the reconcile
+  zero-confidence guard is actually live (Juno's QA caught that the running process predated it).
+- Added `app/hub/verify.py` (+7 tests, 2 samples) and wired it into every scan response; UI banner merged
+  with the explicit log action; adapter parity (+15 tests); real-photo evidence; VLM QA.
+- Final rehearsal **10/10** on the DB-backed hub; merged suite **538 passed**; UI build clean; verification
+  screenshots captured at 5 widths with zero console errors/overflow.
+- Integration tip `7535b29` (worker merges `0f811b4`, `2f3de90`, `c7db25a`, `7535b29`).
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
