@@ -38,6 +38,108 @@ enum DebugSelfTest {
             check("refill picked up adds a bottle", store.medication(id: 2)?.pillsLeft == 112, "\(store.medication(id: 2)?.pillsLeft ?? -1)")
         }
 
+        // Track: the day's rows, remind, the dose scanner, double-dose rule and skip
+        await store.resetDemo()
+        await store.refresh()
+        let rows = store.today
+        let tally = DayTally(rows)
+        check("track: 3 taken, 1 late, 2 upcoming today",
+              tally.taken == 3 && tally.attention == 1 && tally.upcoming == 2 && tally.total == 6, "\(tally)")
+        check("track: the late dose is Vitamin D3",
+              rows.first { $0.status == .late }.map { store.label(for: $0).name } == "Vitamin D3")
+        check("track: header sentence", tally.summary(isToday: true) == "1 needs attention. 2 still to come today.",
+              tally.summary(isToday: true))
+        check("track: 4 morning doses, 2 evening", rows.filter { $0.part == .morning }.count == 4
+              && rows.filter { $0.part == .evening }.count == 2)
+        check("track: Home and Track rows are the same list", store.today == store.slots(on: store.now))
+        if let oct7 = Fmt.calendar.date(byAdding: .day, value: -3, to: store.now) {
+            let past = DayTally(store.slots(on: oct7))
+            check("track: Oct 7 had two missed evening doses", past.missed == 2 && past.total == 6 && past.attention == 0, "\(past)")
+            check("track: earlier-day sentence", past.summary(isToday: false) == "2 doses missed.",
+                  past.summary(isToday: false))
+        }
+        let dosesBeforeScan = store.doses.count
+        let pillsBefore = store.medication(id: 2)?.pillsLeft ?? -1
+
+        if let late = rows.first(where: { $0.status == .late }) {
+            await store.remindRosa(late)
+            let after = store.today.first { $0.medicationId == late.medicationId && $0.slot == late.slot }
+            check("track: Remind Rosa turns late into reminded", after?.status == .reminded, "\(String(describing: after?.status))")
+        }
+
+        do {
+            let match = try await store.matchDose(photo: Data([1]))
+            if case .match(let bottle, let slot, let late) = match {
+                check("scanner: the due bottle matches (Vitamin D3, 08:00, late)",
+                      bottle.name == "Vitamin D3" && slot == "08:00" && late)
+            } else {
+                check("scanner: the due bottle matches", false, "\(match)")
+            }
+            check("scanner: a scan alone records no dose", store.doses.count == dosesBeforeScan)
+
+            let eventsBefore = store.events.count
+            let wrong = try await store.matchDose(photo: Data([1]), demoMedicationID: 3)
+            if case .wrongBottle(let bottle, let expected) = wrong {
+                check("scanner: Metformin is the wrong bottle for Vitamin D3",
+                      bottle.name == "Metformin" && expected.name == "Vitamin D3" && expected.slot == "08:00")
+            } else {
+                check("scanner: wrong bottle", false, "\(wrong)")
+            }
+            check("scanner: a wrong bottle adds a Mistakes caught event", store.events.count == eventsBefore + 1,
+                  "\(store.events.count) vs \(eventsBefore)")
+            check("scanner: a wrong bottle still records no dose", store.doses.count == dosesBeforeScan)
+
+            let again = try await store.matchDose(photo: Data([1]), demoMedicationID: 4)
+            if case .alreadyTaken(let bottle, let slot, let takenAt) = again {
+                check("scanner: Lisinopril is already taken, with its time",
+                      bottle.name == "Lisinopril" && slot == "08:00" && takenAt != nil)
+            } else {
+                check("scanner: already taken", false, "\(again)")
+            }
+        } catch {
+            check("scanner: calls succeed", false, "\(error)")
+        }
+
+        do {
+            try await store.confirmScannedDose(medicationID: 2, slot: "08:00")
+            let taken = store.today.first { $0.medicationId == 2 && $0.slot == "08:00" }
+            check("scanner: Rosa took it records a scanned dose", taken?.status == .taken && taken?.method == "scan",
+                  "\(String(describing: taken?.status)) \(taken?.method ?? "nil")")
+            check("scanner: one pill came off the bottle", store.medication(id: 2)?.pillsLeft == pillsBefore - 1)
+            check("scanner: scanned dose wording", DoseMethod.phrase(for: taken?.method) == "scanned")
+        } catch {
+            check("scanner: confirm succeeds", false, "\(error)")
+        }
+
+        do {
+            try await store.confirmScannedDose(medicationID: 2, slot: "08:00")
+            check("double dose: the same slot twice is rejected", false, "it succeeded")
+        } catch let APIError.server(status, message) {
+            check("double dose: the same slot twice is rejected with a sentence",
+                  status == 409 && message == "Vitamin D3 was already taken at this time today.", "\(status) \(message)")
+        } catch {
+            check("double dose: rejected", false, "\(error)")
+        }
+
+        if let evening = store.today.first(where: { $0.medicationId == 3 && $0.slot == "20:00" }) {
+            _ = await store.skip(evening)
+            let skipped = store.today.first { $0.medicationId == 3 && $0.slot == "20:00" }
+            check("skip: Metformin 8:00 PM is skipped", skipped?.status == .skipped, "\(String(describing: skipped?.status))")
+            check("skip: counted as done in its group", DayTally(store.today).skipped == 1)
+        }
+        if let month = try? await store.adherence(month: store.now) {
+            check("skip: not counted as missed", month.dosesDue == 58 && month.dosesTaken == 55,
+                  "\(month.dosesTaken)/\(month.dosesDue)")
+        }
+        if let atorvastatin = store.today.first(where: { $0.medicationId == 1 }) {
+            _ = await store.skip(atorvastatin)
+            if case .notScheduled(let message)? = try? await store.matchDose(photo: Data([1])) {
+                check("scanner: nothing left to take", message == "No doses are left today.", message)
+            } else {
+                check("scanner: nothing left to take", false)
+            }
+        }
+
         // Scan flow: photos reveal more each time, then complete
         await store.resetDemo()
         await store.refresh()
@@ -77,6 +179,14 @@ enum DebugSelfTest {
         } else {
             check("pending scan exists", false)
         }
+
+        // A missing route reads as a missing route; a real hub sentence is passed through untouched.
+        check("missing route: bare Not Found is generic", LiveAPI.isMissingRoute("Not Found") && LiveAPI.isMissingRoute(nil))
+        check("missing route: a real sentence is not generic", !LiveAPI.isMissingRoute("That medication is not tracked."))
+        check("error detail: FastAPI string", LiveAPI.detail(in: Data(#"{"detail":"Nope."}"#.utf8)) == "Nope.")
+        check("error detail: validation list", LiveAPI.detail(in: Data(#"{"detail":[{"msg":"A"},{"msg":"B"}]}"#.utf8)) == "A B")
+        check("error detail: message fallback", LiveAPI.detail(in: Data(#"{"message":"Hi."}"#.utf8)) == "Hi.")
+        check("error detail: HTML has none", LiveAPI.detail(in: Data("<html>Not Found</html>".utf8)) == nil)
 
         // Offline: the hub chip flips and actions fail without crashing
         store.simulateOffline = true

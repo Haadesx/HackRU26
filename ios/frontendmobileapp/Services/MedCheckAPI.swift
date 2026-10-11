@@ -16,7 +16,12 @@ protocol MedCheckAPI: AnyObject {
     func medication(id: Int) async throws -> MedicationDetail                 // derived from /state
     func doses(medicationID: Int) async throws -> [DoseSlot]                  // derived from /state
     func doses(on date: Date) async throws -> [DoseSlot]                      // derived from /state
-    func logDose(medicationID: Int) async throws                              // POST   /medications/{id}/doses
+    /// `slot` nil lets the hub pick the next untaken slot today.
+    func logDose(medicationID: Int, slot: String?, method: DoseMethod) async throws // POST /medications/{id}/doses
+    func skipDose(medicationID: Int, slot: String) async throws               // POST   /medications/{id}/skip
+    /// Identifies the bottle in the photo and compares it with what is due. Records nothing.
+    /// `demoMedicationID` only means something to the demo hub: it decides what the photo "shows".
+    func matchDose(photo: Data, demoMedicationID: Int?) async throws -> DoseMatch // POST /doses/scan
     func correctCount(medicationID: Int, count: Int) async throws             // POST   /medications/{id}/counts
     func markRefillPickedUp(medicationID: Int) async throws                   // POST   /medications/{id}/refill
     func remindRosa(medicationID: Int, slot: String) async throws             // POST   /medications/{id}/remind

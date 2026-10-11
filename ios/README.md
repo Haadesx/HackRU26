@@ -27,7 +27,10 @@ To use a real hub set `MEDCHECK_API_URL` in the scheme to the hub's base URL: `h
 
 ```
 xcrun simctl launch booted <bundle id> \
-  -medcheck.tab history          # home | scan | history | settings
+  -medcheck.tab history          # home | scan | track | history | settings
+  -medcheck.trackBack 3          # Track: start 3 days back (0 is today)
+  -medcheck.scanDemo 3           # Track scanner: check as if medication id 3 were in view (0 = the one due)
+  -medcheck.scanConfirm 1        # ...and press "Rosa took it" on a match
   -medcheck.openMedication 1     # medication sheet
   -medcheck.verify 1             # Verify for the pending Lisinopril scan
   -medcheck.preview 1            # ...with fields filled and Preview open
@@ -37,7 +40,7 @@ xcrun simctl launch booted <bundle id> \
   -medcheck.scrollY 900 / -medcheck.sheetScrollY 500
 ```
 
-- `-medcheck.selfTest 1` runs 40 checks of the store and demo hub and prints `SELFTEST PASS/FAIL` lines
+- `-medcheck.selfTest 1` runs 68 checks of the store and demo hub and prints `SELFTEST PASS/FAIL` lines
   (read them with `xcrun simctl launch --console-pty`).
 - `-medcheck.fixtures <path to frontend/docs/fixtures>` decodes the shared contract fixtures through the
   real mapper (`CONTRACT PASS/FAIL`).

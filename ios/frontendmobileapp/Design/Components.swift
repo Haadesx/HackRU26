@@ -1,5 +1,51 @@
 import SwiftUI
 
+// MARK: - Tones
+
+/// The five looks of a badge or notice. Status colors always come with words.
+enum Tone {
+    case ok, low, urgent, info, grey
+
+    init(_ status: SupplyStatus) {
+        switch status {
+        case .onTrack: self = .ok
+        case .refillSoon: self = .low
+        case .urgent: self = .urgent
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .ok: SupplyStatus.onTrack.fill
+        case .low: SupplyStatus.refillSoon.fill
+        case .urgent: SupplyStatus.urgent.fill
+        case .info: MC.mist
+        case .grey: MC.disabledFill
+        }
+    }
+
+    /// Banner background.
+    var tint: Color {
+        switch self {
+        case .ok: SupplyStatus.onTrack.tint
+        case .low: SupplyStatus.refillSoon.tint
+        case .urgent: SupplyStatus.urgent.tint
+        case .info: MC.mist
+        case .grey: MC.page
+        }
+    }
+
+    var text: Color {
+        switch self {
+        case .ok: SupplyStatus.onTrack.text
+        case .low: SupplyStatus.refillSoon.text
+        case .urgent: SupplyStatus.urgent.text
+        case .info: MC.navy
+        case .grey: MC.inkSoft
+        }
+    }
+}
+
 // MARK: - Badges
 
 /// Generic capsule badge. Always carries words, never color alone.
@@ -16,6 +62,12 @@ struct PillBadge: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
             .background(Capsule().fill(fill))
+    }
+}
+
+extension PillBadge {
+    init(_ text: String, tone: Tone, size: CGFloat = 14) {
+        self.init(text: text, fill: tone.fill, textColor: tone.text, size: size)
     }
 }
 
@@ -168,15 +220,26 @@ struct StatTile: View {
 }
 
 struct NoticeBanner<Actions: View>: View {
-    let status: SupplyStatus
+    let tone: Tone
     let title: String
     let message: String
     @ViewBuilder var actions: () -> Actions
 
+    init(tone: Tone, title: String, message: String, @ViewBuilder actions: @escaping () -> Actions) {
+        self.tone = tone
+        self.title = title
+        self.message = message
+        self.actions = actions
+    }
+
+    init(status: SupplyStatus, title: String, message: String, @ViewBuilder actions: @escaping () -> Actions) {
+        self.init(tone: Tone(status), title: title, message: message, actions: actions)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(MCFont.bold(18, relativeTo: .headline)).foregroundStyle(status.text)
+                Text(title).font(MCFont.bold(18, relativeTo: .headline)).foregroundStyle(tone.text)
                 Text(message).font(MCFont.body).foregroundStyle(MC.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -185,11 +248,15 @@ struct NoticeBanner<Actions: View>: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16).fill(status.tint))
+        .background(RoundedRectangle(cornerRadius: 16).fill(tone.tint))
     }
 }
 
 extension NoticeBanner where Actions == EmptyView {
+    init(tone: Tone, title: String, message: String) {
+        self.init(tone: tone, title: title, message: message) { EmptyView() }
+    }
+
     init(status: SupplyStatus, title: String, message: String) {
         self.init(status: status, title: title, message: message) { EmptyView() }
     }

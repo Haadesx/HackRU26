@@ -1,16 +1,20 @@
 # iOS app handoff — Aparajita
 
 > Single handoff file for the iOS component. Branch: `feat/ios-aparajita`. Code lives in [`ios/`](../ios/).
-> Last updated: 2026-10-11 (second milestone: client conformed to the shared hub contract). Status vocabulary: **verified** (I ran it and saw the result),
+> Last updated: 2026-10-11 (third milestone: Track tab and dose scanner, from Sinchana's note `MedCheck-iOS-Update.md`,
+> which is a local source file and is not committed). Status vocabulary: **verified** (I ran it and saw the result),
 > **unverified** (written but not run/observed), **not built**.
 
 ## Current state in one paragraph
 
-A native SwiftUI iPhone/iPad app that mirrors the caregiver web UI (Home, medication sheet, Scan → Verify →
-Preview → Added, History, Settings). It builds and runs on a real iPhone 15 (iOS 18.5) and in the simulator,
-on built-in demo data by default. **The network client now speaks the shared hub contract**
-(`frontend/docs/api-contract.md`): it decodes every repo fixture and passed a 34-check live run against the
-reference `tools/hub_adapter` (not yet against Urvi's `/hub`, and not yet from a physical iPhone).
+A native SwiftUI iPhone/iPad app that mirrors the caregiver web UI: five tabs (Home, Scan, **Track**, History,
+Settings) plus the medication sheet and the Scan → Verify → Preview → Added flow. It builds and runs on a real
+iPhone 15 (iOS 18.5) and in the simulator, on built-in demo data by default. The network client speaks the
+shared hub contract (`frontend/docs/api-contract.md`), including the Track additions (`skips`, `method: "scan"`,
+`POST /medications/{id}/skip`, `POST /doses/scan`). It decodes every repo fixture, including the new
+`dose-scan-*.json`, and passed a 35-check live run against the reference `tools/hub_adapter`. **Neither
+reference hub nor the backend has `/doses/scan` or `/skip` yet**, so against a real hub the scanner and Skip show
+"This hub can't ... yet" until the backend adds them. Not yet verified against Urvi's `/hub` or on a phone.
 
 ---
 
@@ -30,9 +34,12 @@ reference `tools/hub_adapter` (not yet against Urvi's `/hub`, and not yet from a
 
 | Area | Status | Files |
 |---|---|---|
-| 4-tab app (Home, Scan, History, Settings), forced light mode | verified (simulator + iPhone 15) | `ContentView.swift`, `MyApp.swift` |
+| 5-tab app (Home, Scan, **Track**, History, Settings), forced light mode | verified (simulator); the 4-tab build ran on iPhone 15 | `ContentView.swift`, `MyApp.swift`, `Services/Router.swift` |
+| **Track**: day header and day switcher (13 days back, earlier days read-only), progress bar and counts, Morning / Afternoon / Evening groups, dose rows with Remind Rosa, Mark as taken, Skip (inline confirm), low-supply line, Coming up next, Taken today log, How each dose is decided | verified (demo data on iPhone 17e and iPad simulators, self-test); **not yet on a device** | `Screens/Track/TrackView.swift`, `TrackDoseRow.swift` |
+| **Dose scanner**: compact card with camera sheet on iPhone, inline camera on iPad, photo-library fallback, results (match, wrong bottle, already taken, nothing due, marked as taken), glasses option disabled, Debug-only "which bottle is in view" picker | verified on the demo hub in the simulator (camera falls back to the sample label); **real camera and a real hub are unverified** | `Screens/Track/DoseScannerCard.swift`, `Screens/Scan/CameraViewfinder.swift`, `ScanSourcePicker.swift` |
+| One derivation for every dose list (`DayDoses.build`, port of `frontend/src/lib/doses.js`): taken / skipped / late / reminded / missed / upcoming, used by Home, Track, History and the sheet, on demo and live data alike | verified (self-test, fixtures) | `Models/DayDoses.swift` |
 | Design system: tokens, gel-capsule buttons, status badges, pill bottle + supply shelf, Atkinson Hyperlegible | verified (visual) | `Design/*` |
-| Home: headline from most urgent medication, needs-help card, shelf, today's doses, alerts, mistakes caught, privacy note, 5 s polling | verified (demo data) | `Screens/Home/*` |
+| Home: headline from most urgent medication, needs-help card, shelf, today's doses with a **Track and scan doses** button, alerts, mistakes caught, privacy note, 5 s polling | verified (demo data) | `Screens/Home/*` |
 | Medication sheet: stats, refill banner, call/copy, log dose, correct count, refill picked up, recent doses, label fields, edit, stop tracking | verified (demo data) | `Screens/Medication/MedicationSheet.swift` |
 | Scan: camera preview with frame, sharpness hint, torch, photos strip, found-so-far, photo-library upload, manual entry, camera-blocked card | simulator verified (sample label, no camera); **real camera capture unverified** | `Screens/Scan/ScanView.swift`, `Services/CameraService.swift` |
 | Verify → Preview → Add → Added flow with field states (filled / unsure / missing), edited-field badges, single-shot Add, inline failure | verified (demo data, self-test) | `Screens/Scan/*` |
@@ -40,7 +47,7 @@ reference `tools/hub_adapter` (not yet against Urvi's `/hub`, and not yet from a
 | Settings: caregivers, thresholds, alert toggles, reminders, privacy actions, autosave | verified (demo data) | `Screens/Settings/SettingsView.swift` |
 | iPad (regular width) layouts, Dynamic Type through AX XXL | verified in simulator | all screens |
 | Demo data hub with clock controls (Skip day / week / Reset) | verified | `Services/MockHub.swift`, `MockAPI.swift` |
-| Debug-only: demo bar, hub-connection card, launch args, 40-check self-test | verified | `Services/Debug*.swift` (`#if DEBUG`) |
+| Debug-only: demo bar, hub-connection card, launch args, 68-check self-test, fixture and live-hub contract tests, device snapshot | verified | `Services/Debug*.swift` (`#if DEBUG`) |
 
 **Mocked / placeholder:** all data comes from `MockAPI` unless `MEDCHECK_API_URL` is set. The camera
 falls back to a generated sample label when no camera exists (Simulator, Mac).
@@ -79,6 +86,17 @@ test targets.
   third.** In the simulator at 390 pt wide, two still fit at Extra Large through the largest regular size
   (at the largest the second bottle's badge touches the card edge); at accessibility text sizes only one
   fits and the row scrolls.
+- **Dose rows are derived, not stored.** `HubState` carries the hub's raw `doses`, `reminders` and `skips`; every
+  list of doses is `DayDoses.build(day:now:...)`, so the demo hub (`MockHub`, now built on the same records) and
+  a real hub are read by exactly the same rules, and Home, Track, History and the sheet cannot disagree.
+- **A scan never records a dose.** The scanner only identifies the bottle; "Rosa took it" is the single path to a
+  dose, and it calls the same endpoint as "Mark as taken" with `method: "scan"`.
+- **The hub's own sentence wins.** When the hub answers with an error its `detail` is shown as written
+  ("Lisinopril was already taken at this time today.") and the connection chip stays green, because the hub was
+  reachable. Only "no answer" turns the chip red. A bare `{"detail":"Not Found"}` or an HTML 404 on the two new
+  routes becomes "This hub can't skip doses yet." / "This hub can't scan doses yet."
+- **Skipped is not missed**, in rows, counts and the demo adherence. The demo's "55 of 58" now comes from one
+  rule (today's late doses count as due but are not "missed" until the day is over) instead of a hard-coded number.
 - **Greeting follows the clock** instead of the web's hard-coded "Good morning".
 - **iOS-only APIs are fenced** (`#if os(iOS)`) so the target still compiles for macOS.
 
@@ -114,7 +132,9 @@ times ISO 8601. Writes return the full State, which the client keeps for derived
 |---|---|---|---|
 | GET | `/health` | | hub chip |
 | GET | `/state` | | everything (polled every 5 s on Home) |
-| POST | `/medications/{id}/doses` | `{"method":"dashboard"}` (no slot: next untaken slot) | Log a dose |
+| POST | `/medications/{id}/doses` | `{"method":"dashboard"}` (no slot: next untaken slot), or `{"method":"dashboard"\|"scan","slot":"08:00"}` | Log a dose; Mark as taken; Rosa took it (`scan`) |
+| POST | `/medications/{id}/skip` | `{"slot":"20:00"}` | Skip on purpose (Track). Returns State. **Backend: not there yet** |
+| POST | `/doses/scan` | multipart field `photo` (JPEG) | Dose scanner. Identifies the bottle, **records nothing**. Returns a dose match. **Backend: not there yet** |
 | POST | `/medications/{id}/remind` | `{"slot":"08:00"}` | Remind Rosa |
 | POST | `/medications/{id}/counts` | `{"count":12}` | Correct pill count |
 | POST | `/medications/{id}/refill` | | Mark refill picked up |
@@ -144,6 +164,10 @@ Errors: `{"detail": "..."}` or `{"detail":[{"msg":...}]}` is shown to the caregi
 | Settings: `thresholds`, `alert_*`, `remind_again "30"|"60"|"never"`, `voice_language`, `camera_paused`, `caregivers[].you` | conforms; round trip verified live |
 | Camera pause **and resume** via `PUT /settings` | conforms, verified live |
 | Edit details limited to the five PATCH fields | conforms |
+| `skips: [{medication_id, slot, at}]` in State | conforms, decodes (empty in the fixture); absent on the reference adapter, which is tolerated |
+| `method: "scan"` on a dose, shown as "scanned" | conforms, verified live (the adapter accepts it) |
+| Dose match: `match`, `wrong_bottle` (with `expected`), `already_taken` (with `taken_at`, `slot`), `not_scheduled` (`message`) | conforms, verified against the three `dose-scan-*.json` fixtures; an unknown status is a bad response |
+| `POST /doses/scan` 422 "Couldn't see a label" | the hub's sentence is shown in the card as written (not testable until the backend has the route) |
 | "Ask Rosa to scan again" | **not in the contract or the web UI**: shown in demo mode only, hidden against a real hub (`MedCheckAPI.supportsRescan`) |
 | Dosage-form-aware labels ("Capsules in bottle" in `frontend/src/lib/dosageForm.js`) | **not mirrored**; iOS always says "tablets" |
 | Patient/caregiver names from `state.patient` | **not used**; "Rosa" and "Elena" are fixed design copy (the web hard-codes "Rosa" in places too) |
@@ -209,13 +233,16 @@ change them). Debug launch arguments are listed in `ios/README.md`.
 |---|---|
 | Simulator build (iPhone 17, iOS 27 runtime), macOS build, generic iOS device compile (min 18.0), **Release configuration** | all pass, 0 warnings (2026-10-11) |
 | Signed build installed and launched on iPhone 15 (`iPhone15,4`, iOS 18.5) | passes (first milestone build); Aparajita reported it "looks good". The contract-conforming build has **not** been reinstalled on the phone yet |
-| In-app demo self-test (`-medcheck.selfTest 1`) | 40/40 against `MockAPI` |
-| Contract fixtures (`-medcheck.fixtures <frontend/docs/fixtures>`) | 32/32: `state`, `settings`, three scans, `scan-complete-*`, `adherence` decode and map; settings re-encode to contract keys |
-| Live hub (`-medcheck.liveTest 1`, `MEDCHECK_API_URL`) against `tools/hub_adapter` in demo mode, from the simulator | 34/34 pass, 0 failures, 2 hub-side notes (see I). Covers health, state, dose, remind, count, refill, PATCH, manual scan, GET scan, complete, adherence, settings PUT, camera pause/resume, export, demo advance/reset, photo field name |
+| In-app demo self-test (`-medcheck.selfTest 1`) | 68/68 against `MockAPI` (the original 40 plus Track: day tally, parts of the day, remind, scanner match / wrong bottle / already taken / nothing left, a scan records no dose, confirm records a `scan` dose and takes a pill, same slot twice is rejected, skip is not missed, error-detail parsing) |
+| Contract fixtures (`-medcheck.fixtures <frontend/docs/fixtures>`) | 38/38 using `feat/frontend-ui` @ `7427487`: `state` (with `skips`), `settings`, three scans, `scan-complete-*`, `adherence` and the three `dose-scan-*` fixtures decode and map; settings re-encode to contract keys |
+| Live hub (`-medcheck.liveTest 1`, `MEDCHECK_API_URL`) against `tools/hub_adapter` in demo mode, from the simulator | 35 pass, 0 failures, 4 hub-side notes (see I). Covers health, state, dose (also `method: "scan"` with a slot), remind, count, refill, PATCH, manual scan, GET scan, complete, adherence, settings PUT, camera pause/resume, export, demo advance/reset, photo field name. `/skip` and `/doses/scan` answered 404, reported as notes |
 | Visual QA on live data | Home, medication sheet, Verify, Preview, History, Settings rendered from the adapter |
+| Visual QA of Track | iPhone 17e and iPad Pro 11" simulators: today, an earlier day (Wed, Oct 7: 2 missed, read-only), the late row's three actions, low-supply line, and all four scanner results plus "Marked as taken" |
+| Merge check | `feat/ios-aparajita` merges with **0 conflicts** into `feat/inference-medcheck`, `feat/integration`, `feat/frontend-ui`, `feat/backend-urvi` and `main` (scratch worktrees, nothing pushed). My change touches only `ios/` and this file; the project file `project.pbxproj` is unchanged |
 | SonarCloud | 1 bug + 39 smells fixed in `d5e922e`; no new analysis seen yet |
 
-**Not tested:** Urvi's `/hub` (Flask, port 8000) and any real inference scan (the adapter returned 502 for a
+**Not tested:** Track and the dose scanner **on a physical iPhone**; real camera capture for a dose scan; the
+`/skip` and `/doses/scan` routes (no hub has them); Urvi's `/hub` (Flask, port 8000) and any real inference scan (the adapter returned 502 for a
 photo upload because inference was not running; the `photo` field name was accepted); real camera capture
 and sharpness hint on a device; share sheets, tel: and Local Network prompt on a device; VoiceOver; iPad
 hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
@@ -240,6 +267,12 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
    non-UTC time zone the derived "Taken 4:14" can look shifted (same on web). The backend should send times
    whose local reading matches the slot, or include the patient's time zone.
 4. **No `rescan` endpoint** for "Ask Rosa to scan again" (hidden against a real hub).
+4a. **The backend lacks the two Track endpoints.** `POST /medications/{id}/skip` and `POST /doses/scan` return 404
+   on the reference `tools/hub_adapter` (`{"detail":"Not Found"}`, verified), and the update from Sinchana says the
+   same for Urvi's `/hub` (not verified by me). Contract: `frontend/docs/api-contract.md` ("Skip", "Dose match",
+   `fixtures/dose-scan-*.json`). The adapter's `GET /state` also has no `skips` key. A wrong bottle must add a
+   `wrong_bottle` event, and a skipped slot must not count as missed in `GET /adherence`. Until then Skip and
+   the scanner show a clear "This hub can't ... yet" and everything else works (Mark as taken, Remind Rosa).
 5. **Default branch history was rewritten.** `feat/inference-medcheck` was force-updated from `2637b78`
    to `d03fada` (after 2026-10-11T03:57Z) at the repo owner's request, to drop a co-author trailer from the
    first iOS commit. Everything up to Apollo's `b0489fe` is unchanged. Anyone who fetched the old tip must
@@ -252,9 +285,10 @@ hardware; no XCTest or UI test target exists (checks are in-app, Debug only).
 
 | # | Task | Status |
 |---|---|---|
+| 0 | Backend adds `POST /doses/scan` and `POST /medications/{id}/skip`; then rerun the live test and try a real scan | needs Urvi / orchestrator |
 | 1 | Run the live test against Urvi's `/hub` (`HUB_ENABLED=true`, port 8000) and fix any difference from the adapter | next |
 | 2 | Reinstall the contract-conforming build on the iPhone 15 and run it against a hub on the LAN | next (needs the hub bound to a LAN/Tailscale address) |
-| 3 | Real-device camera test: preview, sharpness hint, torch, capture, upload through the hub to inference | not started |
+| 3 | Real-device test of Track and the dose scanner: camera sheet, capture, a real bottle through the hub | not started |
 | 4 | Dosage-form-aware labels, patient/caregiver names from `state.patient` | optional parity with web |
 | 5 | Decide "Ask Rosa to scan again" (needs a backend endpoint or removal from the design) | needs team input |
 | 6 | App icon, VoiceOver pass, dark mode | before demo if time |
@@ -277,6 +311,7 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 | 2026-10-11 | **Conformed the client to the shared hub contract** (commit `b42266c`): new `HubContract.swift` (DTOs + mapping), rewritten `LiveAPI`, scan keys renamed to the nine contract keys, `reminded` dose state, `PATCH` edit limited to five fields, camera pause/resume via settings, `{detail}` errors surfaced, tolerant id/list decoding, rescan hidden on real hubs | the client had been written from the iOS handoff table, which did not match the hub | see "Pushed SHAs" |
 | 2026-10-11 | Shrank the supply-shelf bottles by 25% (one scale constant) and tightened column spacing 20 → 12 pt | only 1.5 bottles were visible on an iPhone; the team wants at least two | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug-only `-medcheck.snapshot 1` (writes `Documents/medcheck-snapshot.png`) to screenshot a physical device; used it to confirm two bottles on the iPhone 15 | simulator widths are not a substitute for the real device | see "Pushed SHAs" |
+| 2026-10-11 | **Track tab and dose scanner** from `MedCheck-iOS-Update.md`: `DayDoses` (port of `buildDay`), raw dose/skip/reminder records in `HubState`, `DoseStatus` now taken / skipped / late / reminded / missed / upcoming, `skipDose` and `matchDose` in the API, `method: "scan"`, `TrackView`, `TrackDoseRow`, `DoseScannerCard`, shared `CameraViewfinder` and `ScanSourcePicker` extracted from `ScanView`, Home's Track button, `MockHub` rebuilt on records with skip, scanner and double-dose rules | the web app added Track; the iOS app is meant to match it | see "Pushed SHAs" |
 | 2026-10-11 | Added Debug contract tests (`-medcheck.fixtures`, `-medcheck.liveTest`); ran them against `tools/hub_adapter` | prove conformance instead of assuming it | see "Pushed SHAs" |
 
 ### Pushed SHAs

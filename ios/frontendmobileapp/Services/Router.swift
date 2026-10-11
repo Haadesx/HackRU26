@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, scan, history, settings
+    case home, scan, track, history, settings
 }
 
 /// Summary handed to the Added screen once `POST /scans/{id}/complete` succeeds.
@@ -26,6 +26,10 @@ final class Router {
 
     func openScan() {
         tab = .scan
+    }
+
+    func openTrack() {
+        tab = .track
     }
 
     func openVerify(scanID: Int) {

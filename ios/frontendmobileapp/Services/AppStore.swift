@@ -30,7 +30,9 @@ final class AppStore {
 
     // Hub state (`GET /state`)
     var medications: [Medication] = []
-    var today: [DoseSlot] = []
+    var doses: [DoseRecord] = []
+    var reminders: [ReminderRecord] = []
+    var skips: [SkipRecord] = []
     var pendingScans: [Scan] = []
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
@@ -85,11 +87,13 @@ final class AppStore {
         do {
             let state = try await api.state()
             medications = state.medications
-            today = state.today
+            doses = state.doses
+            reminders = state.reminders
+            skips = state.skips
             pendingScans = state.pendingScans
             alerts = state.alerts
             events = state.events
-            now = state.now ?? Date()
+            now = state.now
             hubConnected = true
         } catch {
             hubConnected = false
@@ -186,6 +190,17 @@ final class AppStore {
 
     // MARK: Derived dose data
 
+    /// Every scheduled dose of one day, worked out from the hub's dose, skip and reminder records.
+    func slots(on day: Date) -> [DoseSlot] {
+        DayDoses.build(day: day, now: now, medications: medications, doses: doses, skips: skips, reminders: reminders)
+    }
+
+    /// Today's doses.
+    var today: [DoseSlot] { slots(on: now) }
+
+    /// The dose most likely in Rosa's hand right now.
+    var doseDueNow: DoseSlot? { DayDoses.doseDueNow(in: today) }
+
     var dosesTakenToday: Int { today.filter { $0.status == .taken }.count }
 
     var nextDose: DoseSlot? {
@@ -208,6 +223,7 @@ final class AppStore {
 
     func showToast(_ message: String, isError: Bool = false) {
         toast = Toast(message: message, isError: isError)
+        AccessibilityNotification.Announcement(message).post()
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3.2))
@@ -217,15 +233,28 @@ final class AppStore {
     }
 
     /// Runs a hub call and reports failure with a toast. Returns whether it succeeded.
+    ///
+    /// When the hub answered with an error it was reachable, so its own sentence is shown (for example
+    /// "Lisinopril was already taken at this time today.") and the connection chip stays as it was.
+    /// Anything else means the hub did not respond, so `failure` is shown and the chip turns red.
     @discardableResult
     private func perform(failure: String, _ work: () async throws -> Void) async -> Bool {
         do {
             try await work()
             return true
         } catch {
-            hubConnected = false
-            showToast(failure, isError: true)
+            report(error, fallback: failure)
             return false
+        }
+    }
+
+    /// Shows why a hub call failed. See `perform`.
+    private func report(_ error: Error, fallback: String) {
+        if case APIError.server(_, let message) = error {
+            showToast(message, isError: true)
+        } else {
+            hubConnected = false
+            showToast(fallback, isError: true)
         }
     }
 
@@ -233,13 +262,55 @@ final class AppStore {
 
     func logDose(_ med: Medication) async -> Bool {
         let ok = await perform(failure: "Couldn't log the dose. The hub didn't respond.") {
-            try await api.logDose(medicationID: med.id)
+            try await api.logDose(medicationID: med.id, slot: nil, method: .dashboard)
         }
         if ok {
             showToast("Logged a dose of \(med.name).")
             await refresh()
         }
         return ok
+    }
+
+    /// Track: "Mark as taken" for one slot. Never called for a scan alone: a scan only identifies the bottle.
+    func markTaken(_ slot: DoseSlot) async -> Bool {
+        let name = label(for: slot).name
+        let ok = await perform(failure: "Couldn't mark \(name) as taken. The hub didn't respond.") {
+            try await api.logDose(medicationID: slot.medicationId, slot: slot.slot, method: .dashboard)
+        }
+        if ok {
+            showToast("\(name) marked as taken.")
+            await refresh()
+        }
+        return ok
+    }
+
+    /// Track: "Skip" for one slot, on purpose. Not counted as missed.
+    func skip(_ slot: DoseSlot) async -> Bool {
+        let name = label(for: slot).name
+        let ok = await perform(failure: "Couldn't skip \(name). The hub didn't respond.") {
+            try await api.skipDose(medicationID: slot.medicationId, slot: slot.slot)
+        }
+        if ok {
+            showToast("Skipped \(name) at \(Fmt.time(slot.scheduledAt)).")
+            await refresh()
+        }
+        return ok
+    }
+
+    // MARK: Dose scanner
+
+    /// Asks the hub which bottle is in the photo. Records nothing. After a wrong bottle the hub adds a
+    /// "Mistakes caught" event, so state is refreshed for Home.
+    func matchDose(photo: Data, demoMedicationID: Int? = nil) async throws -> DoseMatch {
+        let match = try await api.matchDose(photo: photo, demoMedicationID: demoMedicationID)
+        if case .wrongBottle = match { await refresh() }
+        return match
+    }
+
+    /// "Rosa took it": the only thing that turns a scan into a recorded dose.
+    func confirmScannedDose(medicationID: Int, slot: String) async throws {
+        try await api.logDose(medicationID: medicationID, slot: slot, method: .scan)
+        await refresh()
     }
 
     func correctCount(_ med: Medication, to count: Int) async -> Bool {
@@ -267,7 +338,7 @@ final class AppStore {
     func remindRosa(_ slot: DoseSlot) async {
         let name = label(for: slot).name
         let ok = await perform(failure: "Couldn't send the reminder. The hub didn't respond.") {
-            try await api.remindRosa(medicationID: slot.medicationId, slot: Fmt.slotKey(slot.scheduledAt))
+            try await api.remindRosa(medicationID: slot.medicationId, slot: slot.slot)
         }
         if ok {
             showToast("Rosa will hear a reminder for \(name).")
@@ -311,8 +382,7 @@ final class AppStore {
             }
             scanSession.photos.append(data)
         } catch {
-            hubConnected = false
-            showToast("Couldn't read that photo. The hub didn't respond, so try again.", isError: true)
+            report(error, fallback: "Couldn't read that photo. The hub didn't respond, so try again.")
         }
     }
 
@@ -323,8 +393,7 @@ final class AppStore {
             scanSession.scan = scan
             return scan
         } catch {
-            hubConnected = false
-            showToast("Couldn't start. The hub didn't respond, so try again.", isError: true)
+            report(error, fallback: "Couldn't start. The hub didn't respond, so try again.")
             return nil
         }
     }
@@ -407,8 +476,7 @@ final class AppStore {
             try? await Task.sleep(for: .seconds(1.8))
             settingsJustSaved = false
         } catch {
-            hubConnected = false
-            showToast("Couldn't save your settings. The hub didn't respond.", isError: true)
+            report(error, fallback: "Couldn't save your settings. The hub didn't respond.")
         }
     }
 

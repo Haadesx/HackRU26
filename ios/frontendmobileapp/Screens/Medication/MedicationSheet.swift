@@ -306,35 +306,38 @@ struct MedicationSheet: View {
     }
 
     private func recentRow(_ slot: DoseSlot, med: Medication) -> some View {
-        let missed = slot.status == .notTaken
         var day = Fmt.dayShort(slot.scheduledAt)
         if med.dosesPerDay > 1 {
             let hour = Fmt.time(slot.scheduledAt).replacingOccurrences(of: ":00", with: "")
             day += ", \(hour)"
         }
-        var text = "Missed"
-        if !missed {
-            let method: String
-            switch slot.method {
-            case "voice": method = ", by voice"
-            case "button": method = ", button"
-            case "dashboard": method = ", logged by you"
-            default: method = ""
-            }
-            text = "Taken \(slot.takenAt.map { Fmt.time($0) } ?? "")\(method)"
-        }
+        let (text, color, highlighted) = recentSummary(for: slot)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(day).font(MCFont.body).foregroundStyle(MC.ink)
             Spacer(minLength: 8)
             Text(text)
                 .font(MCFont.bodyBold)
-                .foregroundStyle(missed ? SupplyStatus.refillSoon.text : SupplyStatus.onTrack.text)
+                .foregroundStyle(color)
                 .multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(missed ? MC.butter : MC.card)
+        .background(highlighted ? MC.butter : MC.card)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Words, text color and whether the row is highlighted. Anything due that was not confirmed is "Missed".
+    private func recentSummary(for slot: DoseSlot) -> (String, Color, Bool) {
+        switch slot.status {
+        case .taken:
+            let method = DoseMethod.phrase(for: slot.method)
+            let time = slot.takenAt.map { Fmt.time($0) } ?? ""
+            return (method.isEmpty ? "Taken \(time)" : "Taken \(time), \(method)", SupplyStatus.onTrack.text, false)
+        case .skipped:
+            return ("Skipped", MC.inkSoft, false)
+        case .late, .reminded, .missed, .upcoming:
+            return ("Missed", SupplyStatus.refillSoon.text, true)
+        }
     }
 
     private func labelFields() -> some View {

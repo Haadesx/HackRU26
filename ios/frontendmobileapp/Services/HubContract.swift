@@ -59,13 +59,14 @@ enum HubContract {
         var medications: [MedicationDTO]
         var doses: [DoseDTO]
         var reminders: [ReminderDTO]
+        var skips: [SkipDTO]
         var alerts: [AlertDTO]
         var events: [EventDTO]
         var scans: [ScanDTO]
         var settings: SettingsDTO?
 
         fileprivate enum CodingKeys: String, CodingKey {
-            case now, patient, hub, medications, doses, reminders, alerts, events, scans, settings
+            case now, patient, hub, medications, doses, reminders, skips, alerts, events, scans, settings
         }
 
         init(from decoder: Decoder) throws {
@@ -76,6 +77,7 @@ enum HubContract {
             medications = try HubContract.lossyList(MedicationDTO.self, in: c, key: .medications)
             doses = try HubContract.lossyList(DoseDTO.self, in: c, key: .doses)
             reminders = try HubContract.lossyList(ReminderDTO.self, in: c, key: .reminders)
+            skips = try HubContract.lossyList(SkipDTO.self, in: c, key: .skips)
             alerts = try HubContract.lossyList(AlertDTO.self, in: c, key: .alerts)
             events = try HubContract.lossyList(EventDTO.self, in: c, key: .events)
             scans = try HubContract.lossyList(ScanDTO.self, in: c, key: .scans)
@@ -127,6 +129,31 @@ enum HubContract {
         var slot: String
         var date: String?
         var sentAt: Date
+    }
+
+    struct SkipDTO: Decodable {
+        var medicationId: FlexibleInt
+        var slot: String
+        var at: Date
+    }
+
+    /// `POST /doses/scan`. Which fields are present depends on `status`.
+    struct DoseMatchDTO: Decodable {
+        struct ExpectedDTO: Decodable {
+            var medicationId: FlexibleInt
+            var name: String
+            var slot: String
+        }
+
+        var status: String
+        var medicationId: FlexibleInt?
+        var name: String?
+        var strength: String?
+        var slot: String?
+        var late: Bool?
+        var takenAt: Date?
+        var expected: ExpectedDTO?
+        var message: String?
     }
 
     struct AlertDTO: Decodable {
@@ -279,12 +306,18 @@ enum HubContract {
 
     // MARK: State
 
-    /// What `GET /state` becomes inside the app. `today` is derived, as on the web.
+    /// What `GET /state` becomes inside the app. Dose rows are derived later by `DayDoses.build`.
     static func hubState(_ dto: StateDTO) -> HubState {
-        let meds = dto.medications.map { medication($0) }
-        return HubState(
-            medications: meds,
-            today: todaySlots(medications: meds, doses: dto.doses, reminders: dto.reminders, now: dto.now),
+        HubState(
+            medications: dto.medications.map { medication($0) },
+            doses: dto.doses.enumerated().map { index, dose in
+                DoseRecord(id: dose.id?.value ?? -(index + 1), medicationId: dose.medicationId.value,
+                           slot: dose.slot, takenAt: dose.takenAt, method: dose.method ?? DoseMethod.dashboard.rawValue)
+            },
+            reminders: dto.reminders.map {
+                ReminderRecord(medicationId: $0.medicationId.value, slot: $0.slot, sentAt: $0.sentAt)
+            },
+            skips: dto.skips.map { SkipRecord(medicationId: $0.medicationId.value, slot: $0.slot, at: $0.at) },
             pendingScans: dto.scans.map { scan($0) },
             alerts: dto.alerts.map {
                 Alert(id: $0.id.value, medicationId: $0.medicationId?.value, type: $0.type, message: $0.message,
@@ -294,90 +327,31 @@ enum HubContract {
             now: dto.now)
     }
 
-    // MARK: Derived dose data (mirrors the web app)
+    // MARK: Dose scanner
 
-    private static func sameDay(_ a: Date, _ b: Date) -> Bool {
-        Fmt.calendar.isDate(a, inSameDayAs: b)
-    }
-
-    /// `slot` ("08:00") on the calendar day of `day`, in the device's time zone.
-    private static func due(slot: String, on day: Date) -> Date? {
-        guard let (hour, minute) = Fmt.parseClock(slot) else { return nil }
-        return Fmt.calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)
-    }
-
-    private static func slot(for med: Medication, _ slot: String, at due: Date, dose: DoseDTO?,
-                             status: DoseStatus) -> DoseSlot {
-        DoseSlot(medicationId: med.id, medicationName: med.name, strength: med.strength, scheduledAt: due,
-                 status: status, takenAt: dose?.takenAt, method: dose?.method)
-    }
-
-    /// Every scheduled dose for the hub's "today": taken, upcoming, late, or late with a reminder sent.
-    static func todaySlots(medications: [Medication], doses: [DoseDTO], reminders: [ReminderDTO],
-                           now: Date) -> [DoseSlot] {
-        var rows: [DoseSlot] = []
-        for med in medications {
-            for slotKey in med.scheduleTimes {
-                guard let dueDate = due(slot: slotKey, on: now) else { continue }
-                let dose = doses.first {
-                    $0.medicationId.value == med.id && $0.slot == slotKey && sameDay($0.takenAt, now)
-                }
-                let reminded = reminders.contains {
-                    $0.medicationId.value == med.id && $0.slot == slotKey && sameDay($0.sentAt, now)
-                }
-                let status: DoseStatus
-                if dose != nil {
-                    status = .taken
-                } else if dueDate <= now {
-                    status = reminded ? .reminded : .notTaken
-                } else {
-                    status = .upcoming
-                }
-                rows.append(slot(for: med, slotKey, at: dueDate, dose: dose, status: status))
-            }
-        }
-        return rows.sorted {
-            $0.scheduledAt != $1.scheduledAt
-                ? $0.scheduledAt < $1.scheduledAt
-                : ($0.medicationName ?? "") < ($1.medicationName ?? "")
+    /// Maps the hub's answer to a result the UI can switch over. An unknown status is a bad response.
+    static func doseMatch(_ dto: DoseMatchDTO) throws -> DoseMatch {
+        switch dto.status {
+        case "match":
+            guard let bottle = bottle(dto), let slot = dto.slot else { throw APIError.badResponse }
+            return .match(bottle, slot: slot, late: dto.late ?? false)
+        case "wrong_bottle":
+            guard let bottle = bottle(dto), let expected = dto.expected else { throw APIError.badResponse }
+            return .wrongBottle(bottle, expected: DoseMatch.Expected(
+                medicationID: expected.medicationId.value, name: expected.name, slot: expected.slot))
+        case "already_taken":
+            guard let bottle = bottle(dto) else { throw APIError.badResponse }
+            return .alreadyTaken(bottle, slot: dto.slot, takenAt: dto.takenAt)
+        case "not_scheduled":
+            return .notScheduled(message: clean(dto.message) ?? "No doses are due right now.")
+        default:
+            throw APIError.badResponse
         }
     }
 
-    /// The last four due slots for one medication, newest first (the sheet's "Recent doses").
-    static func recentSlots(for med: Medication, doses: [DoseDTO], now: Date) -> [DoseSlot] {
-        var rows: [DoseSlot] = []
-        var back = 0
-        while rows.count < 4, back < 10 {
-            guard let day = Fmt.calendar.date(byAdding: .day, value: -back, to: now) else { break }
-            for slotKey in med.scheduleTimes.reversed() {
-                guard let dueDate = due(slot: slotKey, on: day), dueDate <= now else { continue }
-                let dose = doses.first {
-                    $0.medicationId.value == med.id && $0.slot == slotKey && sameDay($0.takenAt, day)
-                }
-                rows.append(slot(for: med, slotKey, at: dueDate, dose: dose, status: dose == nil ? .notTaken : .taken))
-                if rows.count == 4 { break }
-            }
-            back += 1
-        }
-        return rows
-    }
-
-    /// Every scheduled dose on one day, for the History breakdown.
-    static func daySlots(on day: Date, medications: [Medication], doses: [DoseDTO], now: Date) -> [DoseSlot] {
-        var rows: [(order: Int, slot: DoseSlot)] = []
-        for med in medications {
-            for slotKey in med.scheduleTimes {
-                guard let dueDate = due(slot: slotKey, on: day) else { continue }
-                let dose = doses.first {
-                    $0.medicationId.value == med.id && $0.slot == slotKey && sameDay($0.takenAt, day)
-                }
-                let status: DoseStatus = dose != nil ? .taken : (dueDate > now ? .upcoming : .notTaken)
-                rows.append((rows.count, slot(for: med, slotKey, at: dueDate, dose: dose, status: status)))
-            }
-        }
-        return rows.sorted { Fmt.slotKey($0.slot.scheduledAt) != Fmt.slotKey($1.slot.scheduledAt)
-            ? Fmt.slotKey($0.slot.scheduledAt) < Fmt.slotKey($1.slot.scheduledAt)
-            : $0.order < $1.order }.map(\.slot)
+    private static func bottle(_ dto: DoseMatchDTO) -> DoseMatch.Bottle? {
+        guard let id = dto.medicationId?.value, let name = dto.name else { return nil }
+        return DoseMatch.Bottle(medicationID: id, name: name, strength: dto.strength ?? "")
     }
 
     // MARK: Medication detail
@@ -388,7 +362,7 @@ enum HubContract {
     }
 
     /// The sheet's "From the label" rows and "This week" count, from the medication itself.
-    static func detail(for med: Medication, doses: [DoseDTO], now: Date) -> MedicationDetail {
+    static func detail(for med: Medication, doses: [DoseRecord], now: Date) -> MedicationDetail {
         let otc = med.isOverTheCounter
         let filled = med.fillDate.flatMap { Fmt.date(fromKey: $0) }.map { Fmt.monthDayYear($0) } ?? "Unknown"
         let pharmacy = [med.pharmacyName, med.pharmacyPhone].compactMap { $0 }.joined(separator: ", ")
@@ -402,7 +376,7 @@ enum HubContract {
         ]
         let weekDue = med.dosesPerDay * 7
         let weekAgo = now.addingTimeInterval(-7 * 86_400)
-        let taken = doses.filter { $0.medicationId.value == med.id && $0.takenAt > weekAgo }.count
+        let taken = doses.filter { $0.medicationId == med.id && $0.takenAt > weekAgo }.count
         return MedicationDetail(medication: med, labelFields: fields, weekTaken: min(weekDue, taken), weekDue: weekDue)
     }
 

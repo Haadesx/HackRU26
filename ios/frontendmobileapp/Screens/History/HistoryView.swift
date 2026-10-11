@@ -216,7 +216,7 @@ struct HistoryView: View {
                             .foregroundStyle(MC.inkSoft)
                     }
                 } else {
-                    DoseList(slots: dayDoses, now: store.now) { slot in
+                    DoseList(slots: dayDoses) { slot in
                         Task { await store.remindRosa(slot) }
                     }
                 }

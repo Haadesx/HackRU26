@@ -16,7 +16,9 @@ struct MockHub {
     var nextID = 100
     var medications: [Medication] = []
     var labels: [Int: [ScanField]] = [:]
-    var slots: [DoseSlot] = []
+    var doses: [DoseRecord] = []
+    var reminders: [ReminderRecord] = []
+    var skips: [SkipRecord] = []
     var scans: [Scan] = []
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
@@ -86,12 +88,12 @@ struct MockHub {
                 label("prescriber", "Prescriber", "Dr. Patel")],
         ]
 
-        // Dose log for Oct 1 through today.
+        // Dose log for Oct 1 through today. Slots that are due and were never taken simply have no record.
         for day in 1...10 {
             let start = Self.date(2026, 10, day)
             for med in medications {
                 for time in med.scheduleTimes {
-                    slots.append(makeSlot(med: med, dayStart: start, time: time))
+                    if let dose = seedDose(med: med, day: start, time: time) { doses.append(dose) }
                 }
             }
         }
@@ -163,98 +165,73 @@ struct MockHub {
         "1|2026-10-07|20:00", "3|2026-10-07|20:00", "1|2026-10-03|20:00", "2|2026-10-10|08:00",
     ]
 
-    private func makeSlot(med: Medication, dayStart: Date, time: String) -> DoseSlot {
-        let (h, m) = Fmt.parseClock(time) ?? (8, 0)
-        let day = Self.cal.startOfDay(for: dayStart)
-        let scheduled = Self.cal.date(bySettingHour: h, minute: m, second: 0, of: day) ?? day
-        var slot = DoseSlot(medicationId: med.id, medicationName: med.name, strength: med.strength,
-                            scheduledAt: scheduled, status: .upcoming, takenAt: nil, method: nil)
-        guard scheduled <= now else { return slot }
+    /// The dose record the demo history has for one slot, or nil when it was never taken (or is not due yet).
+    private mutating func seedDose(med: Medication, day: Date, time: String) -> DoseRecord? {
+        guard let due = DayDoses.due(slot: time, on: day), due <= now else { return nil }
+        let startOfDay = Self.cal.startOfDay(for: day)
+        let key = "\(med.id)|\(Fmt.dateKey(startOfDay))|\(time)"
+        guard !Self.missedKeys.contains(key) else { return nil }
 
-        let key = "\(med.id)|\(Fmt.dateKey(day))|\(time)"
-        if Self.missedKeys.contains(key) {
-            slot.status = .notTaken
-        } else if let (hm, method) = Self.takenOverrides[key], let (th, tm) = Fmt.parseClock(hm) {
-            slot.status = .taken
-            slot.takenAt = Self.cal.date(bySettingHour: th, minute: tm, second: 0, of: day)
-            slot.method = method
-        } else {
-            let dayNumber = Self.cal.component(.day, from: day)
-            slot.status = .taken
-            slot.takenAt = scheduled.addingTimeInterval(Double(5 + (med.id * 3 + dayNumber * 7) % 18) * 60)
-            slot.method = ["voice", "voice", "button"][(med.id + dayNumber) % 3]
+        if let (hm, method) = Self.takenOverrides[key], let (hour, minute) = Fmt.parseClock(hm),
+           let takenAt = Self.cal.date(bySettingHour: hour, minute: minute, second: 0, of: startOfDay) {
+            return DoseRecord(id: newID(), medicationId: med.id, slot: time, takenAt: takenAt, method: method)
         }
-        return slot
+        let dayNumber = Self.cal.component(.day, from: startOfDay)
+        let delay = Double(5 + (med.id * 3 + dayNumber * 7) % 18) * 60
+        let method = ["voice", "voice", "button"][(med.id + dayNumber) % 3]
+        return DoseRecord(id: newID(), medicationId: med.id, slot: time,
+                          takenAt: due.addingTimeInterval(delay), method: method)
     }
 
     // MARK: Derived
 
-    /// Day order used by `/state` and `/doses?date=`: by time, then taken doses in the order they were
-    /// taken, then doses still waiting.
-    static func dayOrder(_ a: DoseSlot, _ b: DoseSlot) -> Bool {
-        func rank(_ slot: DoseSlot) -> Int {
-            switch slot.status {
-            case .taken: 0
-            case .notTaken, .reminded: 1
-            case .upcoming: 2
-            }
-        }
-        if a.scheduledAt != b.scheduledAt { return a.scheduledAt < b.scheduledAt }
-        if rank(a) != rank(b) { return rank(a) < rank(b) }
-        if let ta = a.takenAt, let tb = b.takenAt, ta != tb { return ta < tb }
-        return a.medicationId > b.medicationId
-    }
-
-    func todaySlots() -> [DoseSlot] {
-        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: now) }.sorted { Self.dayOrder($0, $1) }
-    }
-
+    /// Every scheduled dose of one day, derived the same way the app derives it from the real hub.
     func slots(on day: Date) -> [DoseSlot] {
-        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: day) }.sorted { Self.dayOrder($0, $1) }
+        DayDoses.build(day: day, now: now, medications: medications, doses: doses, skips: skips, reminders: reminders)
     }
 
     func recentSlots(for medicationID: Int) -> [DoseSlot] {
-        let since = Self.cal.date(byAdding: .day, value: -4, to: Self.cal.startOfDay(for: now)) ?? now
-        return slots.filter { $0.medicationId == medicationID && $0.scheduledAt >= since && $0.status != .upcoming }
-            .sorted { $0.scheduledAt > $1.scheduledAt }
+        guard let med = medications.first(where: { $0.id == medicationID }) else { return [] }
+        return DayDoses.recent(for: med, now: now, doses: doses, skips: skips, reminders: reminders)
     }
 
+    /// "This week": doses taken in the last 7 days out of 7 days of scheduled doses.
     func weekText(for medicationID: Int) -> (taken: Int, due: Int) {
         if !advanced {
+            // The demo tells the design's story until time is moved.
             let demo: [Int: (Int, Int)] = [1: (6, 7), 2: (6, 7), 3: (13, 14), 4: (7, 7), 5: (7, 7)]
             if let value = demo[medicationID] { return value }
         }
-        let since = Self.cal.date(byAdding: .day, value: -6, to: Self.cal.startOfDay(for: now)) ?? now
-        let window = slots.filter { $0.medicationId == medicationID && $0.scheduledAt >= since }
-        return (window.filter { $0.status == .taken }.count, max(window.count, 1))
+        guard let med = medications.first(where: { $0.id == medicationID }) else { return (0, 0) }
+        let weekDue = med.dosesPerDay * 7
+        let weekAgo = now.addingTimeInterval(-7 * 86_400)
+        let taken = doses.filter { $0.medicationId == medicationID && $0.takenAt > weekAgo }.count
+        return (min(weekDue, taken), weekDue)
     }
 
+    /// Doses due so far this month. Today's late doses count as due but not as missed until the day is over;
+    /// skipped doses are neither missed nor late.
     func adherence(month: String) -> AdherenceMonth {
         guard let first = Fmt.month(fromKey: month) else {
             return AdherenceMonth(month: month, dosesDue: 0, dosesTaken: 0, days: [])
         }
         let dayCount = Self.cal.range(of: .day, in: .month, for: first)?.count ?? 30
-        let today = Self.cal.startOfDay(for: now)
         var days: [AdherenceDay] = []
         var due = 0
-        var taken = 0
+        var missed = 0
         var missedHours: [Int] = []
 
         for offset in 0..<dayCount {
             guard let day = Self.cal.date(byAdding: .day, value: offset, to: first) else { continue }
-            let daySlots = slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: day) && $0.scheduledAt <= now }
-            let isToday = Self.cal.isDate(day, inSameDayAs: today)
-            let dayTaken = daySlots.filter { $0.status == .taken }.count
-            let missedSlots = isToday ? [] : daySlots.filter { $0.status == .notTaken }
-            let dayDue = isToday ? dayTaken : daySlots.count
-            days.append(AdherenceDay(date: Fmt.dateKey(day), due: dayDue, taken: dayTaken, missed: missedSlots.count))
-            due += dayDue
-            taken += dayTaken
+            let passed = slots(on: day).filter { $0.scheduledAt <= now }
+            let isToday = Self.cal.isDate(day, inSameDayAs: now)
+            let missedSlots = isToday ? [] : passed.filter { $0.status == .missed }
+            days.append(AdherenceDay(date: Fmt.dateKey(day), due: passed.count,
+                                     taken: passed.count - missedSlots.count, missed: missedSlots.count))
+            due += passed.count
+            missed += missedSlots.count
             missedHours += missedSlots.map { Self.cal.component(.hour, from: $0.scheduledAt) }
         }
-
-        // The web demo reads "55 of 58"; keep the headline number the same until time is moved.
-        if !advanced, month == "2026-10" { due = 58; taken = 55 }
 
         var note: String?
         var suggestion: String?
@@ -265,7 +242,7 @@ struct MockHub {
                 suggestion = "Evening doses are missed most often. A second reminder at 8:30 PM could help."
             }
         }
-        return AdherenceMonth(month: month, dosesDue: due, dosesTaken: taken, days: days,
+        return AdherenceMonth(month: month, dosesDue: due, dosesTaken: due - missed, days: days,
                               missedNote: note, suggestion: suggestion)
     }
 
@@ -276,31 +253,87 @@ struct MockHub {
         return nextID
     }
 
-    mutating func logDose(medicationID: Int) {
-        guard let index = medications.firstIndex(where: { $0.id == medicationID }) else { return }
-        let med = medications[index]
-        let day = Self.cal.startOfDay(for: now)
-        let open = slots.indices
-            .filter { slots[$0].medicationId == medicationID && Self.cal.isDate(slots[$0].scheduledAt, inSameDayAs: day) && slots[$0].status != .taken }
-            .min { slots[$0].scheduledAt < slots[$1].scheduledAt }
-        if let open {
-            slots[open].status = .taken
-            slots[open].takenAt = now
-            slots[open].method = "dashboard"
-        } else {
-            slots.append(DoseSlot(medicationId: med.id, medicationName: med.name, strength: med.strength,
-                                  scheduledAt: now, status: .taken, takenAt: now, method: "dashboard"))
-        }
-        medications[index].pillsLeft = max(0, med.pillsLeft - Double(med.doseAmount))
+    private func hasRecord(medicationID: Int, slot: String, on day: Date) -> Bool {
+        doses.contains { $0.medicationId == medicationID && $0.slot == slot && Self.cal.isDate($0.takenAt, inSameDayAs: day) }
+            || skips.contains { $0.medicationId == medicationID && $0.slot == slot && Self.cal.isDate($0.at, inSameDayAs: day) }
     }
 
-    /// "Remind Rosa": the wearable repeats the reminder for a late dose at `slot` ("08:00").
-    mutating func remind(medicationID: Int, slot: String) {
-        let index = slots.firstIndex {
-            $0.medicationId == medicationID && $0.status == .notTaken
-                && Self.cal.isDate($0.scheduledAt, inSameDayAs: now) && Fmt.slotKey($0.scheduledAt) == slot
+    /// Records a dose. With `slot` nil the next untaken slot today is used, as the real hub does.
+    /// A slot that was already taken today is rejected, and so is a bottle with too few pills.
+    mutating func logDose(medicationID: Int, slot: String?, method: DoseMethod) throws {
+        guard let index = medications.firstIndex(where: { $0.id == medicationID }) else { throw APIError.notFound }
+        let med = medications[index]
+
+        func takenToday(_ time: String) -> Bool {
+            doses.contains {
+                $0.medicationId == medicationID && $0.slot == time && Self.cal.isDate($0.takenAt, inSameDayAs: now)
+            }
         }
-        if let index { slots[index].status = .reminded }
+        let target = slot ?? med.scheduleTimes.first { !takenToday($0) } ?? med.scheduleTimes.first ?? Fmt.slotKey(now)
+        if slot != nil, takenToday(target) {
+            throw APIError.server(status: 409, message: "\(med.name) was already taken at this time today.")
+        }
+        guard med.pillsLeft >= Double(med.doseAmount) else {
+            throw APIError.server(status: 422, message: "There are no \(med.name) pills left to log.")
+        }
+
+        doses.append(DoseRecord(id: newID(), medicationId: med.id, slot: target, takenAt: now, method: method.rawValue))
+        medications[index].pillsLeft = med.pillsLeft - Double(med.doseAmount)
+    }
+
+    /// Skip on purpose. A skipped slot is not missed.
+    mutating func skipDose(medicationID: Int, slot: String) throws {
+        guard medications.contains(where: { $0.id == medicationID }) else { throw APIError.notFound }
+        guard !hasRecord(medicationID: medicationID, slot: slot, on: now) else { return }
+        skips.append(SkipRecord(medicationId: medicationID, slot: slot, at: now))
+    }
+
+    /// "Remind Rosa": the wearable repeats the reminder for the dose at `slot` ("08:00").
+    mutating func remind(medicationID: Int, slot: String) {
+        reminders.append(ReminderRecord(medicationId: medicationID, slot: slot, sentAt: now))
+    }
+
+    /// Demo version of the dose scanner (port of `matchDose` in `frontend/src/api/mock.js`). The photo is not read:
+    /// `demoMedicationID` says which bottle "is in view", defaulting to the dose that is due. Records nothing,
+    /// except that a wrong bottle adds a "Mistakes caught" event, as the real hub should.
+    mutating func matchDose(demoMedicationID: Int?) -> DoseMatch {
+        struct Open {
+            var med: Medication
+            var slot: String
+            var due: Date
+        }
+
+        func open(_ med: Medication) -> [Open] {
+            med.scheduleTimes.compactMap { time in
+                guard let due = DayDoses.due(slot: time, on: now),
+                      !hasRecord(medicationID: med.id, slot: time, on: now) else { return nil }
+                return Open(med: med, slot: time, due: due)
+            }
+        }
+        func nearest(_ list: [Open]) -> [Open] {
+            list.sorted { abs($0.due.timeIntervalSince(now)) < abs($1.due.timeIntervalSince(now)) }
+        }
+
+        let allOpen = nearest(medications.flatMap { open($0) })
+        let expected = allOpen.first { $0.due <= now } ?? allOpen.first
+        let seen = demoMedicationID.flatMap { id in medications.first { $0.id == id } } ?? expected?.med
+        guard let seen else { return .notScheduled(message: "No doses are left today.") }
+
+        let bottle = DoseMatch.Bottle(medicationID: seen.id, name: seen.name, strength: seen.strength)
+        guard let openMine = nearest(open(seen)).first else {
+            let last = doses.filter { $0.medicationId == seen.id && Self.cal.isDate($0.takenAt, inSameDayAs: now) }
+                .max { $0.takenAt < $1.takenAt }
+            return .alreadyTaken(bottle, slot: last?.slot, takenAt: last?.takenAt)
+        }
+        if let expected, expected.med.id != seen.id, openMine.due > now {
+            events.insert(SafetyEvent(
+                id: newID(), type: "wrong_bottle",
+                message: "Picked up \(seen.name) when \(expected.med.name) was due. MedCheck caught it before it was taken.",
+                occurredAt: now), at: 0)
+            return .wrongBottle(bottle, expected: DoseMatch.Expected(
+                medicationID: expected.med.id, name: expected.med.name, slot: expected.slot))
+        }
+        return .match(bottle, slot: openMine.slot, late: openMine.due <= now)
     }
 
     mutating func markRefillPickedUp(medicationID: Int) {
@@ -391,14 +424,6 @@ struct MockHub {
                 prescriberPhone: nil, purpose: nil,
                 instructions: "Take \(amount) tablet\(amount == 1 ? "" : "s")\(times.count > 1 ? " \(times.count) times daily" : " daily")")
             medications.append(med)
-            let today = Self.cal.startOfDay(for: now)
-            for time in med.scheduleTimes {
-                for dayOffset in 0...1 {
-                    let day = Self.cal.date(byAdding: .day, value: dayOffset, to: today) ?? today
-                    let slot = makeSlot(med: med, dayStart: day, time: time)
-                    if slot.scheduledAt > now { slots.append(slot) }
-                }
-            }
         }
         scans.remove(at: scanIndex)
     }
@@ -407,27 +432,21 @@ struct MockHub {
         guard days > 0 else { return }
         advanced = true
         let before = Dictionary(uniqueKeysWithValues: medications.map { ($0.id, $0.daysLeft) })
-        let today = Self.cal.startOfDay(for: now)
+        let oldNow = now
+        let today = Self.cal.startOfDay(for: oldNow)
 
-        // Rosa finishes the rest of today, then every skipped day, on schedule.
+        // Rosa takes every dose still to come, on schedule, through the last skipped day. Doses that were already
+        // late today stay late.
         var used: [Int: Double] = [:]
-        for index in slots.indices where slots[index].status == .upcoming {
-            slots[index].status = .taken
-            slots[index].takenAt = slots[index].scheduledAt.addingTimeInterval(8 * 60)
-            slots[index].method = "voice"
-            used[slots[index].medicationId, default: 0] += 1
-        }
-        for offset in 1..<max(days, 1) {
+        for offset in 0..<days {
             guard let day = Self.cal.date(byAdding: .day, value: offset, to: today) else { continue }
             for med in medications {
                 for time in med.scheduleTimes {
-                    var slot = makeSlot(med: med, dayStart: day, time: time)
-                    // Dates are in the "future" of the old clock, so build them as taken here.
-                    slot.status = .taken
-                    slot.takenAt = slot.scheduledAt.addingTimeInterval(8 * 60)
-                    slot.method = "voice"
-                    slots.append(slot)
-                    used[med.id, default: 0] += 1
+                    guard let due = DayDoses.due(slot: time, on: day), due > oldNow,
+                          !hasRecord(medicationID: med.id, slot: time, on: day) else { continue }
+                    doses.append(DoseRecord(id: newID(), medicationId: med.id, slot: time,
+                                            takenAt: due.addingTimeInterval(8 * 60), method: DoseMethod.voice.rawValue))
+                    used[med.id, default: 0] += Double(med.doseAmount)
                 }
             }
         }
@@ -437,12 +456,7 @@ struct MockHub {
         now = morning
 
         for index in medications.indices {
-            let med = medications[index]
-            let doses = used[med.id, default: 0]
-            medications[index].pillsLeft = max(0, med.pillsLeft - doses * Double(med.doseAmount))
-            for time in med.scheduleTimes {
-                slots.append(makeSlot(med: med, dayStart: newDay, time: time))   // upcoming: it is 7:00 AM
-            }
+            medications[index].pillsLeft = max(0, medications[index].pillsLeft - used[medications[index].id, default: 0])
         }
 
         // Texts the hub would have sent as supply crossed each threshold.

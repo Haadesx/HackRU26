@@ -116,6 +116,9 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Today's doses", helper: store.today.isEmpty ? nil : store.doseSummary)
 
+            Button("Track and scan doses") { router.openTrack() }
+                .buttonStyle(.capsule(.secondary))
+
             if store.today.isEmpty {
                 MCCard {
                     EmptyStateView(message: "No doses logged today yet.", actionTitle: "Log a dose") {
@@ -123,7 +126,7 @@ struct HomeView: View {
                     }
                 }
             } else {
-                DoseList(slots: store.today, now: store.now) { slot in
+                DoseList(slots: store.today) { slot in
                     Task { await store.remindRosa(slot) }
                 }
             }

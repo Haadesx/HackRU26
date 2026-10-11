@@ -26,7 +26,9 @@ final class MockAPI: MedCheckAPI {
         try await gate()
         return HubState(
             medications: hub.medications,
-            today: hub.todaySlots(),
+            doses: hub.doses,
+            reminders: hub.reminders,
+            skips: hub.skips,
             pendingScans: hub.scans.filter { $0.status != .complete },
             alerts: hub.alerts.sorted { $0.sentAt > $1.sentAt },
             events: hub.events.sorted { $0.occurredAt > $1.occurredAt },
@@ -53,9 +55,21 @@ final class MockAPI: MedCheckAPI {
         return hub.slots(on: date)
     }
 
-    func logDose(medicationID: Int) async throws {
+    func logDose(medicationID: Int, slot: String?, method: DoseMethod) async throws {
         try await gate()
-        hub.logDose(medicationID: medicationID)
+        try hub.logDose(medicationID: medicationID, slot: slot, method: method)
+    }
+
+    func skipDose(medicationID: Int, slot: String) async throws {
+        try await gate()
+        try hub.skipDose(medicationID: medicationID, slot: slot)
+    }
+
+    func matchDose(photo _: Data, demoMedicationID: Int?) async throws -> DoseMatch {
+        // Reading a label takes a moment on the real hub.
+        try? await Task.sleep(for: .milliseconds(450))
+        try await gate()
+        return hub.matchDose(demoMedicationID: demoMedicationID)
     }
 
     func correctCount(medicationID: Int, count: Int) async throws {
@@ -83,7 +97,9 @@ final class MockAPI: MedCheckAPI {
     func stopTracking(medicationID: Int) async throws {
         try await gate()
         hub.medications.removeAll { $0.id == medicationID }
-        hub.slots.removeAll { $0.medicationId == medicationID }
+        hub.doses.removeAll { $0.medicationId == medicationID }
+        hub.skips.removeAll { $0.medicationId == medicationID }
+        hub.reminders.removeAll { $0.medicationId == medicationID }
         hub.labels[medicationID] = nil
     }
 
@@ -147,20 +163,22 @@ final class MockAPI: MedCheckAPI {
         try await gate()
         struct Export: Encodable {
             var medications: [Medication]
-            var doses: [DoseSlot]
+            var doses: [DoseRecord]
             var alerts: [Alert]
             var settings: AppSettings
         }
         let encoder = APICoding.makeEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(Export(medications: hub.medications, doses: hub.slots.filter { $0.status != .upcoming },
+        return try encoder.encode(Export(medications: hub.medications, doses: hub.doses,
                                          alerts: hub.alerts, settings: hub.settings))
     }
 
     func deleteAllData() async throws {
         try await gate()
         hub.medications = []
-        hub.slots = []
+        hub.doses = []
+        hub.skips = []
+        hub.reminders = []
         hub.scans = []
         hub.alerts = []
         hub.events = []

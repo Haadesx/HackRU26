@@ -36,28 +36,77 @@ struct Medication: Codable, Identifiable, Hashable {
     }
 }
 
-struct Dose: Codable, Identifiable, Hashable {
-    let id: Int
-    let medicationId: Int
-    let takenAt: Date
-    let method: String                // voice, button, dashboard
+// MARK: - Doses
+
+/// How a dose was confirmed. Raw values are the hub's `method` strings.
+enum DoseMethod: String, Codable, CaseIterable {
+    case voice, button, dashboard, scan
+
+    /// "by voice", used after "Taken 8:05 AM, ".
+    var phrase: String {
+        switch self {
+        case .voice: "by voice"
+        case .button: "button"
+        case .dashboard: "logged by you"
+        case .scan: "scanned"
+        }
+    }
+
+    /// Wording for a raw `method` string; an unknown method is shown as the hub sent it.
+    static func phrase(for raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        return DoseMethod(rawValue: raw)?.phrase ?? raw
+    }
 }
 
+/// A confirmed dose, as the hub records it (`state.doses`).
+struct DoseRecord: Codable, Identifiable, Hashable {
+    let id: Int
+    var medicationId: Int
+    var slot: String                  // "08:00"
+    var takenAt: Date
+    var method: String
+}
+
+/// "Remind Rosa" was pressed for a slot (`state.reminders`).
+struct ReminderRecord: Codable, Hashable {
+    var medicationId: Int
+    var slot: String
+    var sentAt: Date
+}
+
+/// A dose skipped on purpose (`state.skips`). Not counted as missed.
+struct SkipRecord: Codable, Hashable {
+    var medicationId: Int
+    var slot: String
+    var at: Date
+}
+
+/// Where one scheduled dose stands. Worked out on the device by `DayDoses.build`, as the web does.
 enum DoseStatus: String, Codable {
     case taken
-    case notTaken = "not_taken"
+    case skipped
+    /// Due today and not taken.
+    case late
     /// Late, and the caregiver already asked the wearable to remind Rosa.
     case reminded
+    /// On an earlier day, never taken.
+    case missed
     case upcoming
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = DoseStatus(rawValue: raw) ?? .upcoming
     }
+
+    /// Late, reminded or missed: the dose time passed with nothing confirmed.
+    var isOverdue: Bool { self == .late || self == .reminded || self == .missed }
+
+    /// Done one way or another: taken, or skipped on purpose.
+    var isResolved: Bool { self == .taken || self == .skipped }
 }
 
-/// One scheduled dose and what happened to it. Used for `GET /state` -> `today`
-/// and for `GET /doses?medication_id=` / `?date=`.
+/// One scheduled dose on one day and what happened to it.
 struct DoseSlot: Codable, Identifiable, Hashable {
     var medicationId: Int
     var medicationName: String?
@@ -68,6 +117,51 @@ struct DoseSlot: Codable, Identifiable, Hashable {
     var method: String?
 
     var id: String { "\(medicationId)-\(Int(scheduledAt.timeIntervalSince1970))" }
+
+    /// "08:00", the hub's key for this time of day.
+    var slot: String { Fmt.slotKey(scheduledAt) }
+
+    var part: DayPart { DayPart.of(date: scheduledAt) }
+}
+
+/// Morning, afternoon or evening, used to group doses on Track.
+enum DayPart: String, CaseIterable, Identifiable {
+    case morning, afternoon, evening
+
+    var id: String { rawValue }
+
+    var title: String { rawValue.capitalized }
+
+    /// Before 12:00, 12:00 to 16:59, 17:00 and later.
+    static func of(hour: Int) -> DayPart {
+        if hour < 12 { return .morning }
+        if hour < 17 { return .afternoon }
+        return .evening
+    }
+
+    static func of(date: Date) -> DayPart {
+        of(hour: Fmt.calendar.component(.hour, from: date))
+    }
+}
+
+/// What the dose scanner decided about the bottle in the photo. A match never records a dose.
+enum DoseMatch: Equatable {
+    struct Bottle: Equatable {
+        var medicationID: Int
+        var name: String
+        var strength: String
+    }
+
+    struct Expected: Equatable {
+        var medicationID: Int
+        var name: String
+        var slot: String
+    }
+
+    case match(Bottle, slot: String, late: Bool)
+    case wrongBottle(Bottle, expected: Expected)
+    case alreadyTaken(Bottle, slot: String?, takenAt: Date?)
+    case notScheduled(message: String)
 }
 
 // MARK: - Alerts and events
@@ -169,34 +263,18 @@ extension Scan {
 
 // MARK: - Hub state
 
-/// `GET /state`. Decoding is lenient: a missing collection becomes empty.
-struct HubState: Codable {
-    var medications: [Medication]
-    var today: [DoseSlot]
-    var pendingScans: [Scan]
-    var alerts: [Alert]
-    var events: [SafetyEvent]
-    var now: Date?                    // UI addition: the hub's clock (the demo clock in demo mode)
-
-    init(medications: [Medication] = [], today: [DoseSlot] = [], pendingScans: [Scan] = [],
-         alerts: [Alert] = [], events: [SafetyEvent] = [], now: Date? = nil) {
-        self.medications = medications
-        self.today = today
-        self.pendingScans = pendingScans
-        self.alerts = alerts
-        self.events = events
-        self.now = now
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        medications = try c.decodeIfPresent([Medication].self, forKey: .medications) ?? []
-        today = try c.decodeIfPresent([DoseSlot].self, forKey: .today) ?? []
-        pendingScans = try c.decodeIfPresent([Scan].self, forKey: .pendingScans) ?? []
-        alerts = try c.decodeIfPresent([Alert].self, forKey: .alerts) ?? []
-        events = try c.decodeIfPresent([SafetyEvent].self, forKey: .events) ?? []
-        now = try c.decodeIfPresent(Date.self, forKey: .now)
-    }
+/// `GET /state`, as the app uses it. Dose rows are not stored: they are derived from `doses`, `skips`
+/// and `reminders` with `DayDoses.build`, the same way on the demo hub and the real one.
+struct HubState {
+    var medications: [Medication] = []
+    var doses: [DoseRecord] = []
+    var reminders: [ReminderRecord] = []
+    var skips: [SkipRecord] = []
+    var pendingScans: [Scan] = []
+    var alerts: [Alert] = []
+    var events: [SafetyEvent] = []
+    /// The hub's clock (the demo clock in demo mode).
+    var now: Date
 }
 
 struct HubHealth: Codable {

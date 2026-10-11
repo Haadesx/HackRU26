@@ -13,7 +13,13 @@ final class LiveAPI: MedCheckAPI {
     private let encoder = APICoding.makeEncoder()
 
     /// Most recent `GET /state` (or the State a write returned), so derived reads need no extra request.
-    private var cached: (state: HubContract.StateDTO, fetchedAt: Date)?
+    private struct Snapshot {
+        var state: HubState
+        var settings: AppSettings?
+        var fetchedAt: Date
+    }
+
+    private var cached: Snapshot?
 
     init(baseURL: URL, session: URLSession? = nil) {
         self.baseURL = baseURL
@@ -29,8 +35,12 @@ final class LiveAPI: MedCheckAPI {
 
     // MARK: Transport
 
+    /// - Parameter ifMissing: what to tell the caregiver when the hub answers 404 or 405 and the route itself is
+    ///   missing. A missing route comes back as an HTML page (Flask) or a bare `{"detail": "Not Found"}` (FastAPI);
+    ///   the hub's own errors always carry a real sentence, which is shown as written.
     private func request(_ method: String, _ path: String, query: [URLQueryItem] = [],
-                         body: Data? = nil, contentType: String = "application/json") async throws -> Data {
+                         body: Data? = nil, contentType: String = "application/json",
+                         ifMissing: String? = nil) async throws -> Data {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         if !query.isEmpty { components?.queryItems = query }
         guard let url = components?.url else { throw APIError.badResponse }
@@ -52,14 +62,26 @@ final class LiveAPI: MedCheckAPI {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
         guard (200..<300).contains(http.statusCode) else {
-            throw APIError.server(status: http.statusCode, message: Self.readableDetail(in: data, status: http.statusCode))
+            let detail = Self.detail(in: data)
+            if [404, 405].contains(http.statusCode), let ifMissing, Self.isMissingRoute(detail) {
+                throw APIError.server(status: http.statusCode, message: ifMissing)
+            }
+            throw APIError.server(status: http.statusCode,
+                                  message: detail ?? "The MedCheck hub returned an error (\(http.statusCode)).")
         }
         return data
     }
 
-    /// FastAPI sends `{"detail": "..."}`; validation errors send `{"detail": [{"msg": "..."}]}`.
-    /// Same rule as the web client, so the caregiver sees the hub's own sentence.
-    static func readableDetail(in data: Data, status: Int) -> String {
+    /// True when a 404 or 405 body says nothing more than "this route is not here".
+    static func isMissingRoute(_ detail: String?) -> Bool {
+        guard let detail else { return true }
+        return ["not found", "method not allowed"].contains(detail.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+
+    /// FastAPI and Flask send `{"detail": "..."}`; validation errors send `{"detail": [{"msg": "..."}]}`.
+    /// Same rule as the web client, so the caregiver sees the hub's own sentence. Falls back to `message`.
+    /// Returns nil when the body has no readable sentence (an HTML 404 page, for example).
+    static func detail(in data: Data) -> String? {
         struct Entry: Decodable { var msg: String? }
         struct Payload: Decodable {
             var detail: Detail?
@@ -69,21 +91,26 @@ final class LiveAPI: MedCheckAPI {
                 case list([Entry])
                 init(from decoder: Decoder) throws {
                     let c = try decoder.singleValueContainer()
-                    if let text = try? c.decode(String.self) { self = .text(text) } else { self = .list((try? c.decode([Entry].self)) ?? []) }
+                    if let text = try? c.decode(String.self) {
+                        self = .text(text)
+                    } else {
+                        self = .list((try? c.decode([Entry].self)) ?? [])
+                    }
                 }
             }
         }
-        if let payload = try? JSONDecoder().decode(Payload.self, from: data) {
-            switch payload.detail {
-            case .text(let text) where !text.isEmpty: return text
-            case .list(let entries):
-                let joined = entries.compactMap(\.msg).joined(separator: " ")
-                if !joined.isEmpty { return joined }
-            default: break
-            }
-            if let message = payload.message, !message.isEmpty { return message }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return nil }
+        switch payload.detail {
+        case .text(let text) where !text.isEmpty:
+            return text
+        case .list(let entries):
+            let joined = entries.compactMap(\.msg).joined(separator: " ")
+            if !joined.isEmpty { return joined }
+        default:
+            break
         }
-        return "The MedCheck hub returned an error (\(status))."
+        if let message = payload.message, !message.isEmpty { return message }
+        return nil
     }
 
     private func decode<T: Decodable>(_: T.Type, from data: Data) throws -> T {
@@ -95,7 +122,7 @@ final class LiveAPI: MedCheckAPI {
     }
 
     /// Multipart with the contract's field name, `photo`.
-    private func upload(_ path: String, photo: Data) async throws -> Data {
+    private func upload(_ path: String, photo: Data, ifMissing: String? = nil) async throws -> Data {
         let boundary = "medcheck-\(UUID().uuidString)"
         var body = Data()
         func add(_ string: String) { body.append(Data(string.utf8)) }
@@ -104,25 +131,28 @@ final class LiveAPI: MedCheckAPI {
         add("Content-Type: image/jpeg\r\n\r\n")
         body.append(photo)
         add("\r\n--\(boundary)--\r\n")
-        return try await request("POST", path, body: body, contentType: "multipart/form-data; boundary=\(boundary)")
+        return try await request("POST", path, body: body, contentType: "multipart/form-data; boundary=\(boundary)",
+                                 ifMissing: ifMissing)
     }
 
     // MARK: State
 
-    private func fetchState(maxAge: TimeInterval = 0) async throws -> HubContract.StateDTO {
-        if maxAge > 0, let cached, Date().timeIntervalSince(cached.fetchedAt) < maxAge { return cached.state }
-        let state = try decode(HubContract.StateDTO.self, from: try await request("GET", "state"))
-        cached = (state, Date())
-        return state
+    private func snapshot(from data: Data) throws -> Snapshot {
+        let dto = try decode(HubContract.StateDTO.self, from: data)
+        return Snapshot(state: HubContract.hubState(dto), settings: dto.settings.map { HubContract.settings($0) },
+                        fetchedAt: Date())
+    }
+
+    private func fetchState(maxAge: TimeInterval = 0) async throws -> Snapshot {
+        if maxAge > 0, let cached, Date().timeIntervalSince(cached.fetchedAt) < maxAge { return cached }
+        let fresh = try snapshot(from: try await request("GET", "state"))
+        cached = fresh
+        return fresh
     }
 
     /// Writes answer with the new State; keep it so the next derived read is current.
     private func absorbState(_ data: Data) {
-        if let state = try? decoder.decode(HubContract.StateDTO.self, from: data) {
-            cached = (state, Date())
-        } else {
-            cached = nil
-        }
+        cached = try? snapshot(from: data)
     }
 
     private func write(_ method: String, _ path: String, body: [String: Any]? = nil) async throws {
@@ -131,15 +161,14 @@ final class LiveAPI: MedCheckAPI {
     }
 
     private func currentSettings() async throws -> AppSettings {
-        guard let dto = try await fetchState().settings else { return .standard }
-        return HubContract.settings(dto)
+        try await fetchState().settings ?? .standard
     }
 
-    private func requireMedication(_ id: Int, in state: HubContract.StateDTO) throws -> Medication {
-        guard let dto = state.medications.first(where: { $0.id.value == id }) else {
+    private func requireMedication(_ id: Int, in state: HubState) throws -> Medication {
+        guard let med = state.medications.first(where: { $0.id == id }) else {
             throw APIError.server(status: 404, message: "This medication is no longer tracked.")
         }
-        return HubContract.medication(dto)
+        return med
     }
 
     // MARK: Status
@@ -149,32 +178,46 @@ final class LiveAPI: MedCheckAPI {
     }
 
     func state() async throws -> HubState {
-        HubContract.hubState(try await fetchState())
+        try await fetchState().state
     }
 
     // MARK: Medications
 
     func medication(id: Int) async throws -> MedicationDetail {
-        let state = try await fetchState(maxAge: 3)
+        let state = try await fetchState(maxAge: 3).state
         let med = try requireMedication(id, in: state)
         return HubContract.detail(for: med, doses: state.doses, now: state.now)
     }
 
     func doses(medicationID: Int) async throws -> [DoseSlot] {
-        let state = try await fetchState(maxAge: 3)
+        let state = try await fetchState(maxAge: 3).state
         let med = try requireMedication(medicationID, in: state)
-        return HubContract.recentSlots(for: med, doses: state.doses, now: state.now)
+        return DayDoses.recent(for: med, now: state.now, doses: state.doses, skips: state.skips,
+                               reminders: state.reminders)
     }
 
     func doses(on date: Date) async throws -> [DoseSlot] {
-        let state = try await fetchState(maxAge: 3)
-        return HubContract.daySlots(on: date, medications: state.medications.map(HubContract.medication),
-                                    doses: state.doses, now: state.now)
+        let state = try await fetchState(maxAge: 3).state
+        return DayDoses.build(day: date, now: state.now, medications: state.medications, doses: state.doses,
+                              skips: state.skips, reminders: state.reminders)
     }
 
-    func logDose(medicationID: Int) async throws {
-        // No slot: the hub logs the next untaken slot today.
-        try await write("POST", "medications/\(medicationID)/doses", body: ["method": "dashboard"])
+    func logDose(medicationID: Int, slot: String?, method: DoseMethod) async throws {
+        var body: [String: Any] = ["method": method.rawValue]
+        if let slot { body["slot"] = slot }
+        try await write("POST", "medications/\(medicationID)/doses", body: body)
+    }
+
+    func skipDose(medicationID: Int, slot: String) async throws {
+        let payload = try jsonBody(["slot": slot])
+        absorbState(try await request("POST", "medications/\(medicationID)/skip", body: payload,
+                                      ifMissing: "This hub can't skip doses yet."))
+    }
+
+    func matchDose(photo: Data, demoMedicationID _: Int?) async throws -> DoseMatch {
+        let data = try await upload("doses/scan", photo: photo,
+                                    ifMissing: "This hub can't scan doses yet. You can still mark doses as taken yourself.")
+        return try HubContract.doseMatch(try decode(HubContract.DoseMatchDTO.self, from: data))
     }
 
     func correctCount(medicationID: Int, count: Int) async throws {

@@ -36,7 +36,10 @@ enum DebugContractTest {
             check("state: doses and reminders present", !state.doses.isEmpty)
             check("state: settings present", state.settings != nil)
             let perDay = mapped.medications.reduce(0) { $0 + $1.scheduleTimes.count }
-            check("state: one row per scheduled slot", mapped.today.count == perDay, "\(mapped.today.count) vs \(perDay)")
+            let todayRows = DayDoses.build(day: mapped.now, now: mapped.now, medications: mapped.medications,
+                                           doses: mapped.doses, skips: mapped.skips, reminders: mapped.reminders)
+            check("state: one row per scheduled slot", todayRows.count == perDay, "\(todayRows.count) vs \(perDay)")
+            check("state: skips key decodes (empty in the fixture)", mapped.skips.isEmpty)
             check("state: needs-caregiver scan mapped", mapped.pendingScans.contains { $0.status == .needsCaregiver })
             if let dto = state.settings {
                 let settings = HubContract.settings(dto)
@@ -51,7 +54,7 @@ enum DebugContractTest {
                         && (object?["thresholds"] as? [String: Any])?["urgent"] != nil, "\(object?.keys.sorted() ?? [])")
             }
             if let atorvastatin = mapped.medications.first(where: { $0.name == "Atorvastatin" }) {
-                let detail = HubContract.detail(for: atorvastatin, doses: state.doses, now: state.now)
+                let detail = HubContract.detail(for: atorvastatin, doses: mapped.doses, now: mapped.now)
                 check("detail: prescriber flagged hard to read",
                       detail.labelFields.first { $0.key == "prescriber" }?.state == .unsure)
                 check("detail: six label rows", detail.labelFields.count == 6)
@@ -60,7 +63,8 @@ enum DebugContractTest {
                 check("schedule sentence", Fmt.scheduleSentence(amount: 1, times: atorvastatin.scheduleTimes,
                                                                 purpose: atorvastatin.purpose)
                       == "1 tablet each evening at 8:00 PM, for cholesterol")
-                let recent = HubContract.recentSlots(for: atorvastatin, doses: state.doses, now: state.now)
+                let recent = DayDoses.recent(for: atorvastatin, now: mapped.now, doses: mapped.doses,
+                                             skips: mapped.skips, reminders: mapped.reminders)
                 check("recent: up to four rows", recent.count == 4, "\(recent.count)")
             }
         }
@@ -79,6 +83,9 @@ enum DebugContractTest {
                 }
             }
         }
+
+        // The dose scanner: one fixture per status. They are optional so an older fixtures folder still runs.
+        checkDoseScanFixtures(directory: directory, decoder: decoder)
 
         if let response = load("scan-complete-response.json", as: HubContract.CompleteDTO.self) {
             check("complete response: medication", HubContract.medication(response.medication).name == "Losartan")
@@ -103,6 +110,47 @@ enum DebugContractTest {
         }
 
         print("CONTRACT FIXTURES DONE failures=\(failures)")
+    }
+
+    private static func checkDoseScanFixtures(directory: String, decoder: JSONDecoder) {
+        func match(_ file: String) -> DoseMatch? {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent(file)
+            guard let data = try? Data(contentsOf: url) else {
+                print("CONTRACT NOTE \(file) not found; skipping")
+                return nil
+            }
+            do {
+                return try HubContract.doseMatch(try decoder.decode(HubContract.DoseMatchDTO.self, from: data))
+            } catch {
+                check("decode \(file)", false, "\(error)")
+                return nil
+            }
+        }
+
+        if case .match(let bottle, let slot, let late)? = match("dose-scan-match.json") {
+            check("dose-scan-match: Vitamin D3 at 08:00, late",
+                  bottle.name == "Vitamin D3" && bottle.medicationID == 5 && slot == "08:00" && late)
+        }
+        if case .wrongBottle(let bottle, let expected)? = match("dose-scan-wrong-bottle.json") {
+            check("dose-scan-wrong-bottle: Metformin seen, Vitamin D3 expected at 08:00",
+                  bottle.name == "Metformin" && expected.name == "Vitamin D3" && expected.slot == "08:00")
+        }
+        if case .alreadyTaken(let bottle, let slot, let takenAt)? = match("dose-scan-already-taken.json") {
+            check("dose-scan-already-taken: Lisinopril at 08:00 with a time",
+                  bottle.name == "Lisinopril" && slot == "08:00" && takenAt != nil)
+        }
+
+        // A status the app does not know is a bad response, not a crash.
+        let unknown = Data(#"{"status":"mystery"}"#.utf8)
+        let thrown = (try? HubContract.doseMatch(try decoder.decode(HubContract.DoseMatchDTO.self, from: unknown))) == nil
+        check("dose scan: unknown status is rejected", thrown)
+        let notScheduled = Data(#"{"status":"not_scheduled","message":"No doses are left today."}"#.utf8)
+        if let dto = try? decoder.decode(HubContract.DoseMatchDTO.self, from: notScheduled),
+           case .notScheduled(let message)? = try? HubContract.doseMatch(dto) {
+            check("dose scan: not_scheduled keeps the hub's message", message == "No doses are left today.")
+        } else {
+            check("dose scan: not_scheduled decodes", false)
+        }
     }
 
     // MARK: Live hub
@@ -138,19 +186,23 @@ enum DebugContractTest {
             return
         }
         check("state: medications", !state.medications.isEmpty)
-        check("state: today rows derived", !state.today.isEmpty)
+        let todayRows = DayDoses.build(day: state.now, now: state.now, medications: state.medications,
+                                       doses: state.doses, skips: state.skips, reminders: state.reminders)
+        check("state: today rows derived", !todayRows.isEmpty)
         let settings = await attempt("settings from /state") { try await api.settings() }
         check("settings: thresholds", (settings?.firstReminderDays ?? 0) > 0)
 
         // A medication with a slot still to take today, so logging a dose has something to record.
-        let open = state.today.first { $0.status != .taken }?.medicationId
+        let open = todayRows.first { $0.status != .taken }?.medicationId
         guard let med = state.medications.first(where: { $0.id == open }) ?? state.medications.first else { return }
         _ = await attempt("derived medication detail") { try await api.medication(id: med.id) }
         _ = await attempt("derived recent doses") { try await api.doses(medicationID: med.id) }
-        _ = await attempt("derived day breakdown") { try await api.doses(on: state.now ?? Date()) }
+        _ = await attempt("derived day breakdown") { try await api.doses(on: state.now) }
 
         let before = med.pillsLeft
-        _ = await attempt("POST /medications/{id}/doses") { try await api.logDose(medicationID: med.id) }
+        _ = await attempt("POST /medications/{id}/doses") {
+            try await api.logDose(medicationID: med.id, slot: nil, method: .dashboard)
+        }
         let afterDose = try? await api.state()
         check("state still decodes after logging a dose", afterDose != nil)
         let pillsAfter = afterDose?.medications.first { $0.id == med.id }?.pillsLeft ?? before
@@ -166,10 +218,39 @@ enum DebugContractTest {
 
         _ = await attempt("POST /medications/{id}/refill") { try await api.markRefillPickedUp(medicationID: med.id) }
 
-        if let late = state.today.first(where: { $0.status == .notTaken }) {
+        if let late = todayRows.first(where: { $0.status == .late }) {
             _ = await attempt("POST /medications/{id}/remind") {
-                try await api.remindRosa(medicationID: late.medicationId, slot: Fmt.slotKey(late.scheduledAt))
+                try await api.remindRosa(medicationID: late.medicationId, slot: late.slot)
             }
+        }
+
+        // Track endpoints. The backend's /hub does not have these yet, so a hub that says so is a note, not a failure.
+        if let open = todayRows.first(where: { $0.status == .upcoming || $0.status.isOverdue }) {
+            do {
+                try await api.logDose(medicationID: open.medicationId, slot: open.slot, method: .scan)
+                check("POST /medications/{id}/doses method scan", true)
+            } catch let APIError.server(status, message) where status == 409 || status == 422 {
+                print("CONTRACT NOTE hub refused a scan dose (\(status)): \(message)")
+            } catch {
+                check("POST /medications/{id}/doses method scan", false, "\(error)")
+            }
+            do {
+                try await api.skipDose(medicationID: open.medicationId, slot: open.slot)
+                check("POST /medications/{id}/skip", true)
+            } catch let APIError.server(status, message) where status == 404 || status == 405 {
+                print("CONTRACT NOTE hub has no /skip yet (\(status)): \(message)")
+            } catch {
+                check("POST /medications/{id}/skip", false, "\(error)")
+            }
+        }
+        do {
+            let match = try await api.matchDose(photo: try SampleLabel.jpegData(), demoMedicationID: nil)
+            check("POST /doses/scan answers with a known status", true)
+            print("CONTRACT NOTE dose scan said \(match)")
+        } catch let APIError.server(status, message) where [404, 405, 422, 502, 503].contains(status) {
+            print("CONTRACT NOTE hub has no usable /doses/scan yet (\(status)): \(message)")
+        } catch {
+            check("POST /doses/scan", false, "\(error)")
         }
 
         _ = await attempt("PATCH /medications/{id}") {
@@ -215,7 +296,7 @@ enum DebugContractTest {
             check("POST /scans photo", false, "\(error)")
         }
 
-        _ = await attempt("GET /adherence") { try await api.adherence(month: Fmt.monthKey(state.now ?? Date())) }
+        _ = await attempt("GET /adherence") { try await api.adherence(month: Fmt.monthKey(state.now)) }
 
         if var current = settings {
             current.voiceLanguage = .spanish

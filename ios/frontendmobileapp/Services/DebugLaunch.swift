@@ -5,7 +5,7 @@ import SwiftUI
 ///
 ///     xcrun simctl launch booted <bundle id> -medcheck.tab history -medcheck.scrollY 400
 ///
-/// Supported: `-medcheck.tab home|scan|history|settings`, `-medcheck.openMedication <id>`,
+/// Supported: `-medcheck.tab home|scan|track|history|settings`, `-medcheck.openMedication <id>`,
 /// `-medcheck.verify 1`, `-medcheck.preview 1`, `-medcheck.scrollY <points>`, `-medcheck.sheetScrollY <points>`.
 enum DebugLaunch {
     private static let defaults = UserDefaults.standard
@@ -14,6 +14,7 @@ enum DebugLaunch {
         switch defaults.string(forKey: "medcheck.tab") {
         case "home": .home
         case "scan": .scan
+        case "track": .track
         case "history": .history
         case "settings": .settings
         default: nil
@@ -23,6 +24,17 @@ enum DebugLaunch {
     static var openMedicationID: Int? {
         defaults.object(forKey: "medcheck.openMedication") == nil ? nil : defaults.integer(forKey: "medcheck.openMedication")
     }
+
+    /// Dose scanner: run a check on launch as if this medication id were in view (0 is the dose that is due).
+    static var scanDemo: Int? {
+        defaults.object(forKey: "medcheck.scanDemo") == nil ? nil : defaults.integer(forKey: "medcheck.scanDemo")
+    }
+
+    /// With `scanDemo`: press "Rosa took it" on a match.
+    static var scanConfirm: Bool { defaults.integer(forKey: "medcheck.scanConfirm") == 1 }
+
+    /// Track: start this many days back (0 is today).
+    static var trackBack: Int { defaults.integer(forKey: "medcheck.trackBack") }
 
     static var openVerify: Bool { defaults.integer(forKey: "medcheck.verify") == 1 }
     static var openPreview: Bool { defaults.integer(forKey: "medcheck.preview") == 1 }

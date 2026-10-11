@@ -15,6 +15,9 @@ struct ContentView: View {
             Tab("Scan", systemImage: "camera.viewfinder", value: AppTab.scan) {
                 ScanFlowView()
             }
+            Tab("Track", systemImage: "checklist", value: AppTab.track) {
+                TrackView()
+            }
             Tab("History", systemImage: "calendar", value: AppTab.history) {
                 HistoryView()
             }
