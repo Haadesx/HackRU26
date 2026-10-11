@@ -13,14 +13,20 @@ async function http(path, { method = "GET", body, raw } = {}) {
   });
   if (!res.ok) {
     // FastAPI sends {"detail": "..."}; validation errors send {"detail": [{ "msg": "..." }]}.
-    let message = "";
+    let payload = null;
     try {
-      const body = await res.json();
-      message = Array.isArray(body.detail) ? body.detail.map((d) => d.msg).join(" ") : body.detail || body.message || "";
+      payload = await res.json();
     } catch {
       /* not JSON */
     }
-    throw new Error(message || `The MedCheck hub returned ${res.status} for ${method} ${path}.`);
+    const detail = payload?.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d) => d.msg).join(" ")
+      : detail || payload?.message || "";
+    const error = new Error(message || `The MedCheck hub returned ${res.status} for ${method} ${path}.`);
+    error.status = res.status; // let callers branch on 422/409 without parsing text
+    error.code = typeof payload?.code === "string" ? payload.code : null;
+    throw error;
   }
   return raw ? res.blob() : res.json();
 }

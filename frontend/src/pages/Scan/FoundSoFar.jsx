@@ -1,13 +1,20 @@
 import Button from "../../components/Button";
 import StatusBadge from "../../components/StatusBadge";
 import { FIELDS } from "./fields";
+import { formLabel, scanForm } from "../../lib/dosageForm";
 
-const SHORT = { name: "Name", strength: "Strength", dose_amount: "Tablets per dose", schedule_times: "Dose times",
-  quantity_start: "Tablets in bottle", refills_remaining: "Refills left", pharmacy_name: "Pharmacy",
+const SHORT = { name: "Name", strength: "Strength", schedule_times: "Dose times",
+  refills_remaining: "Refills left", pharmacy_name: "Pharmacy",
   pharmacy_phone: "Pharmacy phone", prescriber: "Prescriber" };
 
 export default function FoundSoFar({ scan }) {
   const fields = scan?.fields;
+  const form = scanForm(scan);
+  const labels = {
+    ...SHORT,
+    dose_amount: `${formLabel(form)} per dose`,
+    quantity_start: `${formLabel(form)} in bottle`,
+  };
   const missing = fields ? FIELDS.filter((f) => fields[f.key].state === "missing").length : 0;
   return (
     <section aria-labelledby="found-h" className="card flex flex-col gap-2.5 p-5">
@@ -21,7 +28,7 @@ export default function FoundSoFar({ scan }) {
               const v = fields[f.key];
               return (
                 <li key={f.key} className="flex items-center justify-between gap-3">
-                  <span>{SHORT[f.key]}</span>
+                  <span>{labels[f.key]}</span>
                   {v.state === "filled" && <StatusBadge tone="ok">{v.value}</StatusBadge>}
                   {v.state === "unsure" && <StatusBadge tone="low">Unclear</StatusBadge>}
                   {v.state === "missing" && <StatusBadge tone="urgent">Not found yet</StatusBadge>}

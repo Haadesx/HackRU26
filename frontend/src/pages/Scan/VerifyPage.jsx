@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Button from "../../components/Button";
 import TextField from "../../components/TextField";
 import { api } from "../../api/client";
 import { useAppState } from "../../state/AppState";
-import { FIELDS, REQUIRED } from "./fields";
+import { FIELDS, REQUIRED, fieldLabel } from "./fields";
 import ScanSteps from "./ScanSteps";
 import ScanTimeline from "./ScanTimeline";
 import PreviewDialog from "./PreviewDialog";
 import ScanVerification from "./ScanVerification";
 import { cachedVerification } from "../../lib/verificationCache";
+import { formName, formNoun, isFormChosen, scanForm } from "../../lib/dosageForm";
 
 export default function VerifyPage() {
   const { scanId } = useParams();
@@ -21,6 +22,9 @@ export default function VerifyPage() {
   const [preview, setPreview] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
+  const [formChoice, setFormChoice] = useState(null);
+  const [formError, setFormError] = useState(null);
+  const formErrorRef = useRef(null);
 
   useEffect(() => {
     api.getScan(scanId)
@@ -50,6 +54,10 @@ export default function VerifyPage() {
   const name = values.name || "this medication";
   const stillMissing = REQUIRED.filter((k) => !String(values[k] ?? "").trim());
   const flagged = FIELDS.filter((f) => scan.fields[f.key].state !== "filled").length;
+  const readForm = scanForm(scan);
+  const form = readForm || formChoice;
+  const needsFormChoice = !readForm && !isFormChosen(formChoice);
+  const missingTotal = stillMissing.length + (needsFormChoice ? 1 : 0);
 
   const stateOf = (f) => {
     const orig = scan.fields[f.key].state;
@@ -59,12 +67,23 @@ export default function VerifyPage() {
 
   const add = async () => {
     setAdding(true); setAddError(null);
+    const payload = { ...values };
+    // Never override a form the label already reported.
+    if (!readForm && formChoice) payload.dosage_form = formChoice;
     try {
-      const { medication } = await api.completeScan(scan.id, values);
+      const { medication } = await api.completeScan(scan.id, payload);
       await refresh();
       navigate(`/scan/added/${medication.id}`, { replace: true });
     } catch (e) {
-      setAddError(e.message);
+      const formRejected = e.status === 422 && /form|tablet|capsule/i.test(e.message || "");
+      if (formRejected) {
+        // Keep every typed value; ask for the form right where the chooser is.
+        setPreview(false);
+        setFormError(e.message || "The label didn't show whether these are tablets or capsules. Choose the form to continue.");
+        requestAnimationFrame(() => formErrorRef.current?.focus());
+      } else {
+        setAddError(e.message);
+      }
     } finally {
       setAdding(false);
     }
@@ -94,15 +113,62 @@ export default function VerifyPage() {
 
       <form
         className="card grid gap-5 p-6 sm:p-7"
-        onSubmit={(e) => { e.preventDefault(); if (!stillMissing.length) setPreview(true); }}
+        onSubmit={(e) => { e.preventDefault(); if (!missingTotal) setPreview(true); }}
         noValidate
       >
+        {!readForm ? (
+          <fieldset className="rounded-2xl bg-page px-5 py-4">
+            <legend className="text-lg font-bold">Dosage form</legend>
+            <p className="mb-3 max-w-[70ch] text-ink-soft">
+              The label did not say whether these are tablets or capsules. Choose one before adding.
+            </p>
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              {[["tablet", "Tablets"], ["capsule", "Capsules"]].map(([value, label]) => (
+                <label
+                  key={value}
+                  className={`flex min-h-[56px] cursor-pointer items-center gap-3 rounded-[22px] px-4 py-3.5 ${
+                    formChoice === value ? "bg-mist shadow-[inset_0_0_0_2px_#9CC3EC]" : "border border-line bg-white hover:bg-page"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="dosage-form"
+                    value={value}
+                    checked={formChoice === value}
+                    onChange={() => { setFormChoice(value); setFormError(null); }}
+                    className="h-5 w-5 accent-navy"
+                  />
+                  <span className="font-bold">{label}</span>
+                </label>
+              ))}
+            </div>
+            {formError && (
+              <p ref={formErrorRef} tabIndex={-1} role="alert" className="mt-3 rounded-xl bg-urgent-tint px-3 py-2 font-bold text-urgent focus:outline-none">
+                {formError}
+              </p>
+            )}
+          </fieldset>
+        ) : (
+          <>
+            <p className="flex flex-wrap items-center gap-2 rounded-2xl bg-page px-5 py-3">
+              <span className="text-ink-soft">Dosage form:</span>
+              <strong>{formName(readForm)}</strong>
+              <span className="text-sm text-ink-soft">from the label</span>
+            </p>
+            {formError && (
+              <p ref={formErrorRef} tabIndex={-1} role="alert" className="rounded-xl bg-urgent-tint px-3 py-2 font-bold text-urgent focus:outline-none">
+                {formError}
+              </p>
+            )}
+          </>
+        )}
+
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {FIELDS.map((f) => {
             const st = stateOf(f);
             const note = st === "missing" ? `Missing. ${f.why || "Check the label."}` : st === "unsure" ? "MedCheck couldn't read this clearly. Check it against the bottle." : null;
             return (
-              <TextField key={f.key} id={`f-${f.key}`} label={f.label + (f.required ? "" : " (optional)")} state={st} note={note}
+              <TextField key={f.key} id={`f-${f.key}`} label={fieldLabel(f, form) + (f.required ? "" : " (optional)")} state={st} note={note}
                 placeholder={f.placeholder} inputMode={f.inputMode} value={values[f.key] ?? ""}
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} className={f.wide ? "sm:col-span-2 xl:col-span-3" : ""} />
             );
@@ -110,16 +176,16 @@ export default function VerifyPage() {
         </div>
         <div className="rounded-2xl bg-mist px-5 py-4">
           <strong>What MedCheck will do</strong>
-          <p>Remind Rosa at each dose time, and text you when fewer than 7 days of tablets are left.</p>
+          <p>Remind Rosa at each dose time, and text you when fewer than 7 days of {formNoun(form, true)} are left.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          {stillMissing.length > 0 && <span className="mr-auto text-[15px] font-bold text-urgent">Fill in {stillMissing.length} more required {stillMissing.length === 1 ? "detail" : "details"} to continue.</span>}
+          {missingTotal > 0 && <span className="mr-auto text-[15px] font-bold text-urgent">Fill in {missingTotal} more required {missingTotal === 1 ? "detail" : "details"} to continue.</span>}
           <Button variant="secondary" onClick={async () => { await api.discardScan(scan.id); await refresh(); navigate("/"); }}>Discard</Button>
-          <Button type="submit" size="lg" disabled={stillMissing.length > 0}>Preview</Button>
+          <Button type="submit" size="lg" disabled={missingTotal > 0}>Preview</Button>
         </div>
       </form>
 
-      <PreviewDialog open={preview} values={values} changed={changed} adding={adding} error={addError}
+      <PreviewDialog open={preview} values={values} changed={changed} adding={adding} error={addError} form={form}
         onEdit={() => { setPreview(false); setAddError(null); }} onAdd={add} />
     </div>
   );
