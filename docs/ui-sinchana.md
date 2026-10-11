@@ -6,9 +6,9 @@
 | Component | React web dashboard (caregiver app) |
 | Branch | `feat/frontend-ui` |
 | Code location | `frontend/` |
-| Latest UI code commit | `c733e0c` "UI(React+Tailwind+Vite)", 2026-10-10 17:40 EDT |
+| Latest UI code commit | **Track tab** commit (SHA: fill in after push). Previous: `c733e0c` "UI(React+Tailwind+Vite)" |
 | This file | `docs/ui-sinchana.md` |
-| Status | **Latest UI is published.** `c733e0c` is the newest version of the UI; no newer local UI exists. Ready for integration. |
+| Status | Ready for integration. New since `c733e0c`: the **Track** tab and dose scanner (needs two small hub endpoints, see I). |
 
 > **For the orchestrator:** `docs/ORCHESTRATOR_HANDOFF.md` on `feat/integration` lists
 > "Sinchana's new UI is still not on the remote". That is out of date: the UI on
@@ -44,9 +44,11 @@ scanning their labels.
 | Verify | `/scan/:scanId/verify` | Nine fields with filled / unsure / missing states; partial-scan timeline when Rosa couldn't finish by voice; Preview disabled until required fields are present; Discard |
 | Preview | dialog on Verify | Read-only summary with "Added by you" / "Corrected by you" tags; **Edit** returns to the form; **Add** calls complete once (button disabled while sending); error keeps the dialog open with "Try again" |
 | Added | `/scan/added/:medId` | Confirmation, scan another, back to home |
+| Track | `/track` | Today's doses grouped Morning / Afternoon / Evening with a capsule icon per dose; progress bar; states taken, late (with "N hours late"), reminder sent, upcoming, skipped, missed (past days); **Mark as taken**, **Remind Rosa**, **Skip** (inline confirm); earlier days (up to 13 back, read-only); Coming up next; Taken today log; "How each dose is decided" |
+| Dose scanner | card on Track | Source picker (computer camera; Meta glasses disabled, post-MVP), webcam with frame, upload fallback. Results: **match** ("That's Vitamin D3… Rosa took it"), **wrong bottle** (warns and logs a Mistakes caught event), **already taken** (double-dose warning), **nothing due**. A scan never records a dose by itself; "Rosa took it" does |
 | History | `/history` | Month calendar (all taken / missed / upcoming), day breakdown, evening-miss suggestion, downloadable text report |
 | Settings | `/settings` | Caregivers (scope, add), alert thresholds, three alert toggles, reminder options, sticky save bar, pause camera, export data, delete all data (confirm dialog) |
-| Shell | all | Top nav: **Home, Scan, History, Settings**; hub status chip; demo bar (mock mode only) |
+| Shell | all | Top nav: **Home, Scan, Track, History, Settings**; hub status chip; demo bar (mock mode only). Home's Today's doses now links to Track ("Track and scan doses") |
 
 **Mocked / placeholder behavior (mock mode only, `VITE_API_URL` empty):**
 - `src/api/mock.js` holds all data in memory; a page reload resets it.
@@ -55,6 +57,8 @@ scanning their labels.
 - The seeded pending scan is **Losartan 25 mg** (not Lisinopril as in early mockups).
 - Demo bar (Skip 1 day, Skip a week, Reset) calls mock functions; hidden in real mode.
 - The History report downloads as `.txt`, not PDF.
+- The dose scanner can't really identify bottles in mock mode: a **"Demo: which bottle is in view?"**
+  picker (mock mode only) chooses what the photo "shows", so wrong-bottle and double-dose can be demoed.
 
 **Not built:** camera-based pill counting in the web UI (manual "Correct pill count" only);
 login/auth screens; dark mode; i18n; push notifications.
@@ -80,6 +84,11 @@ login/auth screens; dark mode; i18n; push notifications.
   share the same function names, so the backend can be swapped without UI changes.
 - **Status is computed in the UI** from `pills_left` and `settings.thresholds` (≤ urgent →
   refill now, ≤ first → refill soon). The backend must use the same rule for texts.
+- **Track tab added** (after the 4-tab decision): a full day view of doses, separate from History
+  (monthly patterns). Doses are confirmed by **scan, then explicit confirm**, never by scan alone,
+  matching the backend rule that `/doses/{id}/confirm` is the only call that records a dose.
+- **Dose scanner reuses the Scan tab's camera** (`CameraView`, `SourcePicker` now take props), so
+  the Meta glasses can become a second source for both later.
 - **Native `<dialog>`** for pop-ups: Esc closes, backdrop click closes, focus returns to the
   opener.
 - **Assumption that changed:** the UI docs were written expecting a **FastAPI** hub. The
@@ -122,8 +131,10 @@ Against the integrated backend: `VITE_API_URL=http://localhost:8000/hub`.
 |---|---|---|---|
 | GET | `/health` | | `{ ok }` *(currently not called; the chip uses `/state` success)* |
 | GET | `/state` | | full state; polled every 4 s in real mode |
-| POST | `/medications/{id}/doses` | `{ method: "dashboard", slot }` | state |
+| POST | `/medications/{id}/doses` | `{ method: "dashboard" \| "scan", slot }` | state (`method: "scan"` is new) |
 | POST | `/medications/{id}/remind` | `{ slot }` | state |
+| POST | `/medications/{id}/skip` | `{ slot }` | state **(new, Track)** |
+| POST | `/doses/scan` | multipart `photo` | dose match `{ status: match \| wrong_bottle \| already_taken \| not_scheduled, ... }` **(new, Track; records nothing)** |
 | POST | `/medications/{id}/counts` | `{ count }` | state |
 | POST | `/medications/{id}/refill` | | state |
 | PATCH | `/medications/{id}` | `instructions, quantity_start, refills_remaining, prescriber, pharmacy_phone` | state |
@@ -140,7 +151,7 @@ Against the integrated backend: `VITE_API_URL=http://localhost:8000/hub`.
 | POST | `/demo/advance`, `/demo/reset` | `{ days }` | state (mock only in this UI) |
 
 **Shared types (JSON, snake_case):** `Medication`, `Dose` (needs `slot` + `date`),
-`Reminder`, `Alert` (`low_7 | low_5 | low_3 | no_refills`), `Event`
+`Reminder`, `Skip` (new: `{ medication_id, slot, at }`, in state as `skips`), `Alert` (`low_7 | low_5 | low_3 | no_refills`), `Event`
 (`wrong_bottle | double_dose`), `Scan` (status `reading | asking_patient | needs_caregiver
 | complete`; nine fields each `{ value: string, state: filled | unsure | missing }`),
 `Adherence` (note: `missedList` is camelCase), `Settings`. Exact shapes in the contract doc.
@@ -153,7 +164,9 @@ hub, mapped per `docs/client-integration.md` §3b on `feat/integration`).
 **Outputs provided:** caregiver actions only (doses, counts, refills, edits, completed scans,
 settings).
 
-**Breaking changes from earlier versions of this UI:** none since `c733e0c`.
+**Breaking changes from earlier versions of this UI:** none. Additive only: `skips` in state,
+`method: "scan"`, and the two new endpoints. If the hub lacks them, Track still renders; only
+Skip and the dose scanner return an error message.
 
 ## F. Project structure
 
@@ -182,6 +195,8 @@ frontend/
                              MistakesCaught
     pages/Scan/              ScanPage, CameraView, SourcePicker, FoundSoFar, ScanSteps,
                              VerifyPage, ScanTimeline, PreviewDialog, AddedPage, fields.js
+    pages/Track/             TrackPage, DoseRow, DoseScanner
+    lib/doses.js             each day's doses and their state (shared by Home and Track)
     pages/History/           HistoryPage, AdherenceCalendar
     pages/Settings/          SettingsPage
 ```
@@ -203,6 +218,12 @@ No test command exists (no unit test suite in this component).
 ## H. Testing and verification
 
 - **Build:** `npm run build` clean on the published code.
+- **Track tab (headless Chromium, mock mode, 1280×1000), all passing:** page renders with grouped
+  doses and progress; scanner **wrong bottle** (Metformin while Vitamin D3 overdue) shows the warning
+  and adds a Mistakes caught event on Home; **match → Rosa took it** moves the headline from 3 to 4 of 6
+  and logs "Taken 2:30 PM, scanned"; **already taken** shows the double-dose warning; **Skip → Yes, skip**
+  marks the dose Skipped; Previous day shows 6 of 6 for Oct 9; Home shows "Track and scan doses".
+  No page errors. Build clean (~249 kB JS, 78 kB gzip).
 - **Browser (headless Chromium via Playwright, mock mode, 1280×900):**
   - Home renders; bottles, doses, alerts, needs-help card correct.
   - Opening a bottle cap shows the Atorvastatin pop-up with banner, tiles, doses, label.
@@ -235,11 +256,18 @@ No test command exists (no unit test suite in this component).
    `docs/client-integration.md` §3b and matches `frontend/docs/inference-contract.md`.
 6. **`missedList`** in adherence is camelCase while everything else is snake_case. The hub
    must keep that key (or the UI must be changed together with it).
-7. **Mock vs real time:** real mode uses the hub's `now`; the demo bar is hidden, so
+7. **New hub endpoints needed for Track (Urvi / orchestrator):** the Flask `/hub` blueprint on
+   `feat/integration` does not have `POST /hub/doses/scan` or `POST /hub/medications/{id}/skip`, and
+   `/hub/state` has no `skips`. Shapes and fixtures: `frontend/docs/api-contract.md` ("Dose match",
+   "Skip") and `frontend/docs/fixtures/dose-scan-*.json`. `/doses/scan` can wrap the existing
+   `/api/v1/scans` matching; it must not record a dose.
+8. **Mock vs real time:** real mode uses the hub's `now`; the demo bar is hidden, so
    fast-forward on stage requires the hub's `/demo/advance` and a UI change to show the bar.
 
 ## J. Outstanding work
 
+- Hub endpoints for Track: `POST /doses/scan`, `POST /medications/{id}/skip`, `skips` in state (backend).
+- Meta glasses as a dose source (later; same `CameraView`/source picker seam).
 - Update `frontend/.env.example` and `frontend/docs/api-contract.md` for the Flask `/hub`
   base URL (small doc change; coordinate with the orchestrator since `feat/integration`
   carries its own copy).
@@ -254,4 +282,5 @@ No test command exists (no unit test suite in this component).
 |---|---|---|---|---|---|---|---|
 | 2026-10-10 | Initial UI: Home with pill-bottle shelf and medication pop-up, Scan with webcam, Verify/Preview/Added, History, Settings, capsule design system, mock backend | First full build of the finalized designs | `frontend/**` | React 18, Vite 5, Tailwind 3, React Router 6 | Defines the hub contract (`frontend/docs/api-contract.md`) | Build ✅; headless browser walkthrough ✅ | `c733e0c` |
 | 2026-10-10 | FastAPI-style error parsing (`detail`), API contract + inference contract docs, JSON fixtures, README integration section, `.env.example` notes | So backend and inference can integrate without reading UI code | `src/api/client.js`, `docs/**`, `README.md`, `.env.example` | none | none (docs only) | Build ✅ | included in `c733e0c` |
+| 2026-10-11 | **Track tab**: TrackPage, DoseRow, DoseScanner; shared `lib/doses.js`; Track in nav; Home links to Track; `CameraView`/`SourcePicker` take props; mock `matchDose`, `skipDose`, `skips`, `logDose(method)`; client `matchDose`, `skipDose`; contract + 3 dose-scan fixtures | Track what was taken vs still due, confirmed by scanning | `src/pages/Track/**`, `src/lib/doses.js`, `src/App.jsx`, `src/layout/TopNav.jsx`, `src/pages/Home/TodayDoses.jsx`, `src/pages/Scan/CameraView.jsx`, `src/pages/Scan/SourcePicker.jsx`, `src/api/*.js`, `docs/**`, `README.md` | none | **New:** `POST /doses/scan`, `POST /medications/{id}/skip`, `skips` in state, dose `method: "scan"` | Build ✅; headless Track walkthrough ✅ | *fill in after push* |
 | 2026-10-11 | Added this handoff file and `frontend/AGENTS.md` | Team handoff process | `docs/ui-sinchana.md`, `frontend/AGENTS.md` | none | none | n/a (docs) | *fill in after push* |
