@@ -260,8 +260,9 @@ scripts/gpu_probe.sh ; scripts/download_models.sh ; scripts/tts_smoke.py --play
 ```
 
 **Demo data:** patient `demo.patient@example.com`, password from `SEED_PASSWORD`
-(`medcheck-demo-password` locally), caregiver `demo.caregiver@example.com`; a reset is
-`docker compose down -v && up -d db && flask db upgrade && seed`.
+(`medcheck-demo-password` locally), caregiver `demo.caregiver@example.com`. To reset demo state,
+use the scoped API `DELETE /hub/data` (demo patient only) — **do not** delete Docker volumes
+(`docker compose down -v` destroys the preserved database and must not be used).
 
 ---
 

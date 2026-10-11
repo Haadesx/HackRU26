@@ -41,6 +41,18 @@ def _format_number(raw: str) -> str:
     return text
 
 
+VALID_STRENGTH_RE = re.compile(r"^\d+(?:\.\d+)?\s+\S+$")
+
+
+def valid_strength(text: str | None) -> bool:
+    """True when a normalized strength is a number followed by a unit ("500 mg", "5 mg/mL").
+
+    A label that only shows a bare number, or non-numeric text, is not comparable evidence —
+    callers must treat that as unreadable instead of assuming a strength.
+    """
+    return bool(text) and bool(VALID_STRENGTH_RE.match(str(text).strip()))
+
+
 def _unit(raw: str | None) -> str | None:
     if not raw:
         return None

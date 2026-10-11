@@ -39,7 +39,7 @@ from app.models.hub import EVENT_TYPES, HUB_METHODS
 from app.services import doses as dose_service
 from app.services import inventory as inv_service
 from app.services import notifications
-from app.services.normalize import normalize_strength
+from app.services.normalize import normalize_strength, valid_strength
 from app.utils.time import get_zone, utcnow
 
 hub_bp = Blueprint("hub", __name__)
@@ -408,7 +408,7 @@ def complete_scan(scan_id: int):
     if not v.get("name"):
         raise unprocessable("Add the medication name.")
     strength = normalize_strength(v.get("strength"))
-    if not strength:
+    if not strength or not valid_strength(strength):
         raise unprocessable("Add the strength, like 25 mg.")
     form = (scan.dosage_form or "").strip().lower() or None
     unit = (scan.dose_unit or "").strip().lower() or None

@@ -3,7 +3,7 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~03:20 UTC — Docker recovered, DB-backed app restored, **scan-vs-prescription verification slice live**, rehearsal 10/10.
+> **Last updated:** 2026-10-11 ~05:00 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal), submission frozen. Final SHA in §A/§H.
 > **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
@@ -59,15 +59,26 @@ true only for `due_now`; a morning dose taken hours ago no longer hides an eveni
 real backend: Metformin `not_due`, Lisinopril 10 `not_due`, Lisinopril 20 vs 10 mg `strength_mismatch`,
 Furosemide `wrong_medication`, Pantoprazole `due_now (can_log)`, blurry `uncertain`.
 
-**Verification flow is complete end-to-end (API + UI):** the backend engine (`app/hub/verify.py`) returns
-`due_now · already_taken · not_due · wrong_medication · strength_mismatch · uncertain`; the dashboard shows it on
-the scan verify page with a single explicit **“Log this dose now”** action for `due_now` (caption: *“Only tap
-after the dose was actually taken.”*) — scans remain read-only. Worker deliverables merged this pass:
-`feat/adapter-verify` (`29db3f4`, +15 tests), `feat/ocr-real-evidence` (`b477521`), `feat/vlm-verify-qa`
-(`a7783ce`), `feat/ui-verification` (`00f35b9`, which also fixed `GET /scans/{id}` to include the block).
-Real-photo evidence (Orion, no identifiers): 11 real frames → mean 3.09/9 fields, 9 used the VLM; 3-frame
-bundles → 9/9 fields. Final demo rehearsal on the DB-backed hub: **10 passed / 0 failed**. Full merged suite:
-**538 tests** (523 inference/integration + 15 adapter).
+**Verification flow is complete end-to-end (API + UI), and now fail-closed:** the backend engine
+(`app/hub/verify.py`) returns `due_now · already_taken · not_due · wrong_medication · strength_mismatch ·
+uncertain`, and a positive identification requires readable evidence for **both** identity and strength —
+name `filled` + exact-normalized match, strength `filled`, parseable (number + unit) and matching that same
+prescription. Missing/unsure/unparseable strength → `uncertain`; unsure or fuzzy-only name → `uncertain` (a
+candidate is not proof); same drug tracked at two strengths is disambiguated by strength, and ambiguity fails
+closed instead of picking a prescription. A later dose today is never hidden by an earlier confirmed dose,
+and the backend re-checks eligibility when a dose is logged, so a stale `can_log` cannot bypass it. The
+dashboard shows the result on the scan verify page with a single explicit **“Log this dose now”** action for
+`due_now` (caption: *“Only tap after the dose was actually taken.”*) — scans remain read-only. When the label
+didn't state the dosage form, adding the medication now **requires the caregiver to choose Tablets or
+Capsules** (422 otherwise); tablet/capsule copy is form-aware and unknown is never saved as “tablet”.
+Worker deliverables merged this session: `feat/adapter-verify` (`29db3f4`, +15 tests), `feat/ocr-real-evidence`
+(`b477521`), `feat/vlm-verify-qa` (`a7783ce`), `feat/ui-verification` (`00f35b9`, also fixed `GET /scans/{id}`),
+`feat/ui-form-confirm` (`59ca4d8`), `feat/rehearsal-safe` (`7f49c7c`), `feat/verify-adversarial` (`a50fc23`,
+captured one real classification gap which is fixed). Real-photo evidence (Orion, no identifiers): 11 real
+frames → mean 3.09/9 fields, 9 used the VLM; 3-frame bundles → 9/9 fields. Demo rehearsal: **read-only
+8 passed / 0 failed** by default, **15 passed / 0 failed** with `--with-writes` (disposable fixture, state
+restored). Suites after the corrections: **backend 123 passed**, **538 inference/adapter/integration passed**,
+frontend build clean.
 
 Open items: Sinchana's new UI is still not on the remote; iOS has no branch; bad-image still returns 502
 instead of 4xx.
@@ -389,53 +400,67 @@ Postgres; pre-generated debug bundles exist for offline troubleshooting.
 2. Live script: **Scan** a bottle → verification banner → for `due_now`, *Log this dose now* (the only
    action that records a dose) → Home/History reflect it. Wrong/strength/already-taken/uncertain states come
    from scanning `samples/label_furosemide_noform.png`, `label_lisinopril20.png`, `label_metformin.png`
-   (all tracked), and `label_metformin_blurry.png`.
-3. Validate before demoing: `scripts/demo_rehearsal.sh` (expect “10 passed, 0 failed”).
-4. Evidence: screenshots in `docs/screenshots/ui/` (incl. `verify-action-*` for the due banner);
-   `services/ocr/EVAL-REAL.md`, `services/vlm/EVAL.md` (QA section).
-5. Reset demo data if needed: `backend/docker compose down -v && up -d db`, migrate, seed (documented in §J).
+   (all tracked), and `label_metformin_blurry.png`. A label with no readable form shows the required
+   Tablets/Capsules chooser (`samples/label_furosemide_noform.png`); a capsule label shows capsule copy
+   (`samples/label_amoxicillin_interval.png`).
+3. Validate before demoing: `scripts/demo_rehearsal.sh` — **read-only by default** (8 passed, 0 failed,
+   “state changes: none”). To also rehearse the write path on a disposable fixture:
+   `scripts/demo_rehearsal.sh --with-writes` (15 passed; fixture `Rehearsal-*` auto-removed, state restored).
+4. Evidence: screenshots in `docs/screenshots/ui/` (incl. `due-final-*` banner + chooser and
+   `capsule-final-*`); `services/ocr/EVAL-REAL.md`, `services/vlm/EVAL.md` (QA section).
+5. Reset demo data if needed — **never** `docker compose down -v` (destroys the preserved Timescale
+   volume). Safe scoped reset: `DELETE /hub/data` clears only the demo patient's meds, doses, stock,
+   scans, alerts and events (settings/caregivers stay), then re-run the demo seed if needed;
+   `scripts/demo_rehearsal.sh` cleans up after itself.
 
 ## WHAT IS WORKING NOW
 
-- **DB-backed end-to-end** (restored this pass): photo → real inference → `/hub` → Postgres → dashboard;
-  migrations through `0004`; scan-added medications persist.
-- **Medication verification** on every scan: `due_now` (with explicit log), `already_taken`, `not_due`,
-  `wrong_medication`, `strength_mismatch`, `uncertain` — live-verified with real inference; a scan never
-  records a dose.
-- Safety: interval cadences never become fixed times; dosage form/unit preserved with an evidence floor;
-  duplicate add and double-log refused; blurry → clear correction message.
-- **Demo rehearsal script** (`scripts/demo_rehearsal.sh`): **10 passed / 0 failed** on the DB-backed hub.
-- Suites: **523 inference + 87 backend** (incl. 27 hub tests); frontend build clean; UI responsive at
-  390/768/1440/1920/2560.
+- **DB-backed end-to-end**: photo → real inference → `/hub` → Postgres → dashboard; migrations through
+  `0004`; scan-added medications persist (verified across restarts).
+- **Fail-closed verification on every scan**: readable name+strength, exact-match identity, strength
+  disambiguation, six states; `due_now` offers the explicit log; a scan never records a dose; a stale
+  `can_log` cannot bypass the backend's fresh eligibility check.
+- **Dosage form is never guessed**: label evidence with an evidence floor, else the caregiver must confirm
+  tablet/capsule before the prescription is created; capsule/tablet copy throughout.
+- Safety: interval cadences never become fixed times; duplicate add and double-log refused; blurry → clear
+  correction message; unsupported/conflicting form evidence rejected.
+- **Demo rehearsal** (`scripts/demo_rehearsal.sh`): read-only **8/8**, writes **15/15** with disposable fixture
+  and state restored to identical.
+- Suites: **123 backend** (43 hub + 18 adversarial) · **538 inference/adapter/integration**; frontend build
+  clean; UI captured at 390/768/1440/1920/2560 with 0 console errors and no overflow.
 
 ## WHAT IS STILL MISSING OR BROKEN
 
-- Verification **banner in the product UI** — **landed** (`00f35b9`); `due_now` shows the explicit log action,
-  other states show info/warning panels; `GET /scans/{id}` now carries the block.
-- Fallback adapter parity — **landed** (`29db3f4`): same six statuses + form/unit preservation, 15 tests.
-- Real-photo evidence (`services/ocr/EVAL-REAL.md`) + VLM QA (`services/vlm/EVAL.md`) — **landed**.
-- Sinchana's new UI not pushed; iOS absent; bad-image returns 502 not 4xx; no auth/TLS (localhost-only).
+- Sinchana's new UI never pushed (`feat/frontend-ui` unchanged) — deferred; iOS absent — excluded.
+- Bad-image returns 502 instead of 4xx; no auth/TLS (localhost-only, deliberate).
+- Real-photo accuracy is a small anonymous sample, not a labeled corpus — presented as such.
 
 ## WHAT CHANGED IN THIS PASS
 
-- Recovered Docker/DB and restored the DB-backed app (no data reset); restarted inference so the reconcile
-  zero-confidence guard is actually live (Juno's QA caught that the running process predated it).
-- Added `app/hub/verify.py` (+7 tests, 2 samples) and wired it into every scan response; UI banner merged
-  with the explicit log action; adapter parity (+15 tests); real-photo evidence; VLM QA.
-- Final rehearsal **10/10** on the DB-backed hub; merged suite **538 passed**; UI build clean; verification
-  screenshots captured at 5 widths with zero console errors/overflow.
-- Integration tip `7535b29` + Urvi's **fork-safe outbound HTTP fix** (`ff5840a`, merged `283ca47`): the real
-  root cause of the macOS gunicorn worker crashes was the fork-unsafe macOS proxy lookup in `requests`;
-  `app/utils/http.py` disables `trust_env` platform lookup while honoring proxy env vars, with
-  `test_http_fork_safety.py`. The historical `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` env workaround in the demo
-  launcher is now redundant but harmless; no startup scripts were changed further.
+- **Fail-closed verification** (`bdcdc07` + strength-validator follow-up): strength/name evidence gates,
+  exact-match identity, same-name strength disambiguation, ambiguity → uncertain, later-dose visibility,
+  fresh backend eligibility check; 16 new/updated hub tests.
+- **Dosage-form confirmation**: unknown form → 422 until the caregiver chooses; conflicting/unsupported
+  evidence rejected; form source recorded; scan/med JSON expose `dosage_form`/`dose_unit` (backend `bdcdc07`,
+  UI `59ca4d8`).
+- **Safe rehearsal** (`7f49c7c`): default read-only with fingerprints; writes behind `--with-writes` with
+  guarded cleanup; dangerous volume-reset guidance removed from docs.
+- **Adversarial QA** (`a50fc23`): 18 fail-closed tests; found and fixed the unparseable-strength
+  classification gap (`valid_strength`).
+- Evidence: `docs/screenshots/ui/due-final-*` (due banner + required chooser) and `capsule-final-*`
+  (capsule copy) at five widths.
+
+- Carried from earlier this session: Docker/DB recovery (no data reset); inference restarted so the
+  zero-confidence VLM guard is live; UI verification banner (`00f35b9`); adapter parity (`29db3f4`);
+  real-photo evidence (`b477521`); VLM QA (`a7783ce`); **Urvi's fork-safe outbound HTTP fix** (`ff5840a`,
+  merged `283ca47`) — the real macOS gunicorn crash cause, `app/utils/http.py` with `trust_env=False`
+  plus `test_http_fork_safety.py`; the historical launcher workaround stays but is redundant.
 
 ## WHAT CHATGPT / HERMES NEED TO DECIDE NEXT
 
-- Which remaining P0 item from Hermes's mission lands next (identity-verification slice vs
-  `/hub` containment vs launcher fail-loud), and the demo-freeze commit.
-- Whether to port the wide-screen/design pass onto Sinchana's new UI when it lands.
-- iOS scope for submission; whether to prepare (not apply) any network-exposure changes.
+- Nothing P0 remains for the demo: verification is fail-closed, the form is confirmed, the rehearsal is safe,
+  and everything is verified on the frozen commit (final SHA in §B header/A).
+- Post-hackathon only: Sinchana's UI port, iOS scope, `/hub` containment, bad-image 4xx, real-photo corpus.
 
 ## WHAT REQUIRES OPERATOR APPROVAL
 

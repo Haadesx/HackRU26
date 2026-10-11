@@ -26,7 +26,7 @@ from sqlalchemy import select
 from app.extensions import db
 from app.models import DoseEvent
 from app.hub import state as hub_state
-from app.services.normalize import normalize_strength
+from app.services.normalize import normalize_strength, valid_strength
 from app.utils.time import get_zone, utcnow
 
 TAKEN = ("taken_on_time", "taken_late")
@@ -132,7 +132,7 @@ def scan_verification(patient, scan) -> Optional[dict]:
         )
 
     scanned_strength = normalize_strength(strength_text) if strength_text else None
-    if not scanned_strength or strength_state != "filled":
+    if not scanned_strength or not valid_strength(scanned_strength) or strength_state != "filled":
         readable = f" We did read “{scanned_strength}” there." if scanned_strength else ""
         return _uncertain(
             f"We read the name ({name_raw}) but not the strength clearly.{readable} "
