@@ -68,7 +68,7 @@ final class MockAPI: MedCheckAPI {
         hub.markRefillPickedUp(medicationID: medicationID)
     }
 
-    func remindRosa(medicationID: Int) async throws {
+    func remindRosa(medicationID _: Int) async throws {
         try await gate()
     }
 
@@ -92,7 +92,7 @@ final class MockAPI: MedCheckAPI {
         return hub.startScan(hasPhoto: photo != nil)
     }
 
-    func addPhoto(scanID: Int, photo: Data) async throws -> Scan {
+    func addPhoto(scanID: Int, photo _: Data) async throws -> Scan {
         try await gate()
         guard let scan = hub.addPhoto(scanID: scanID) else { throw APIError.http(404) }
         return scan
@@ -104,7 +104,7 @@ final class MockAPI: MedCheckAPI {
         return scan
     }
 
-    func requestRescan(scanID: Int) async throws {
+    func requestRescan(scanID _: Int) async throws {
         try await gate()
     }
 

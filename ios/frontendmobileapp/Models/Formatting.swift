@@ -98,18 +98,31 @@ enum Fmt {
         return String(format: "%d:%02d %@", h12, m, suffix)
     }
 
+    /// "every morning", "every day" or "each evening", for a single daily dose at `hour`.
+    private static func dosePhrase(forHour hour: Int) -> String {
+        if hour < 12 { return "every morning" }
+        if hour >= 17 { return "each evening" }
+        return "every day"
+    }
+
+    /// "morning", "afternoon" or "evening", for the Home greeting.
+    static func dayPart(forHour hour: Int) -> String {
+        if hour < 12 { return "morning" }
+        if hour < 17 { return "afternoon" }
+        return "evening"
+    }
+
     /// Plain-language schedule: "1 tablet every morning at 8:00 AM, for blood pressure".
     static func scheduleSentence(amount: Int, times: [String], purpose: String?) -> String {
         let unit = amount == 1 ? "1 tablet" : "\(amount) tablets"
-        let labels = times.map(clockLabel)
+        let labels = times.map { clockLabel($0) }
         var core: String
         switch labels.count {
         case 0:
             core = unit
         case 1:
             let hour = parseClock(times[0])?.hour ?? 8
-            let part = hour < 12 ? "every morning" : (hour >= 17 ? "each evening" : "every day")
-            core = "\(unit) \(part) at \(labels[0])"
+            core = "\(unit) \(dosePhrase(forHour: hour)) at \(labels[0])"
         case 2:
             core = "\(unit) twice a day, \(labels[0]) and \(labels[1])"
         default:

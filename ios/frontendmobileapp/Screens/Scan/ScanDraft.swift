@@ -141,9 +141,15 @@ final class ScanDraft {
     /// Body of `POST /scans/{id}/complete`.
     var payload: [ScanField] {
         ScanKey.form.map { key in
-            let state: FieldState = value(key).isEmpty ? .missing : ((originalStates[key] == .unsure && !isEdited(key)) ? .unsure : .filled)
-            return ScanField(key: key, value: value(key).isEmpty ? nil : value(key), state: state)
+            ScanField(key: key, value: value(key).isEmpty ? nil : value(key), state: payloadState(for: key))
         }
+    }
+
+    /// Empty is missing; a field MedCheck was unsure of stays unsure until the caregiver edits it.
+    private func payloadState(for key: String) -> FieldState {
+        guard !value(key).isEmpty else { return .missing }
+        let stillUnsure = originalStates[key] == .unsure && !isEdited(key)
+        return stillUnsure ? .unsure : .filled
     }
 
     func clearForManualEntry() {

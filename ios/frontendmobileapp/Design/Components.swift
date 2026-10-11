@@ -277,7 +277,7 @@ struct CapsuleTextField: View {
                 .padding(.horizontal, 16)
                 .frame(minHeight: 48)
                 .background(Capsule().fill(fill))
-                .overlay(Capsule().strokeBorder(border, lineWidth: appearance == .normal ? 2 : 2))
+                .overlay(Capsule().strokeBorder(border, lineWidth: 2))
                 .accessibilityLabel(title ?? placeholder)
             if let hint {
                 Text(hint)

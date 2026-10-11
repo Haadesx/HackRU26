@@ -53,7 +53,9 @@ struct SettingsView: View {
             }
         }
         .alert("Delete all of Rosa's data?", isPresented: $confirmDelete) {
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) {
+                // Nothing to do: a cancel-role button only dismisses the alert.
+            }
             Button("Delete all data", role: .destructive) {
                 Task { _ = await store.deleteAllData() }
             }
@@ -327,7 +329,8 @@ private struct HubConnectionCard: View {
                     .toggleStyle(MCToggleStyle())
 
                 if !useDemo {
-                    CapsuleTextField(title: "Hub address", text: $address, placeholder: "http://192.168.1.20:8000")
+                    CapsuleTextField(title: "Hub address", text: $address, placeholder: "Address of Rosa's hub",
+                                     hint: "Start with http:// and add the hub's IP address and port.")
                 }
 
                 Button("Apply") {

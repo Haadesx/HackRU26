@@ -59,7 +59,7 @@ struct MedicationSheet: View {
                 banner(med, status)
                 actions(med, status)
                 lists(med)
-                footer(med)
+                footer()
             }
             .padding(.horizontal, 20)
             .padding(.top, 22)
@@ -105,7 +105,9 @@ struct MedicationSheet: View {
                     if await store.stopTracking(med) { dismiss() }
                 }
             }
-            Button("Keep tracking", role: .cancel) {}
+            Button("Keep tracking", role: .cancel) {
+                // Nothing to do: a cancel-role button only dismisses the dialog.
+            }
         } message: {
             Text("Rosa won't get reminders for it, and you won't get supply texts.")
         }
@@ -149,11 +151,16 @@ struct MedicationSheet: View {
 
     // MARK: Stats
 
+    /// 4 across on iPad, 2 on iPhone, and 1 at accessibility text sizes so values never wrap into slivers.
+    private var statColumnCount: Int {
+        if typeSize.isAccessibilitySize { return 1 }
+        return sizeClass == .regular ? 4 : 2
+    }
+
     private func statTiles(_ med: Medication, _ status: SupplyStatus) -> some View {
         let hot = status == .onTrack ? MC.ink : status.text
         let refills = med.refillsRemaining.map(String.init) ?? "N/A"
-        // 4 across on iPad, 2 on iPhone, and 1 at accessibility text sizes so values never wrap into slivers.
-        let columnCount = typeSize.isAccessibilitySize ? 1 : (sizeClass == .regular ? 4 : 2)
+        let columnCount = statColumnCount
         let tiles: [(String, String, Color)] = [
             ("Pills left", String(Int(med.pillsLeft.rounded())), hot),
             ("Runs out", Fmt.dayShort(store.runOutDate(for: med)), hot),
@@ -266,11 +273,11 @@ struct MedicationSheet: View {
         if sizeClass == .regular {
             HStack(alignment: .top, spacing: 20) {
                 recentDoses(med).frame(maxWidth: .infinity)
-                labelFields(med).frame(maxWidth: .infinity)
+                labelFields().frame(maxWidth: .infinity)
             }
         } else {
             recentDoses(med)
-            labelFields(med)
+            labelFields()
         }
     }
 
@@ -330,7 +337,7 @@ struct MedicationSheet: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func labelFields(_ med: Medication) -> some View {
+    private func labelFields() -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("From the label")
                 .font(MCFont.bold(19, relativeTo: .title3))
@@ -381,7 +388,7 @@ struct MedicationSheet: View {
 
     // MARK: Footer
 
-    private func footer(_ med: Medication) -> some View {
+    private func footer() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Rectangle().fill(MC.lineSoft).frame(height: 1)
             FlowLayout(spacing: 10, lineSpacing: 10) {

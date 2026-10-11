@@ -20,7 +20,7 @@ struct MockHub {
     var scans: [Scan] = []
     var alerts: [Alert] = []
     var events: [SafetyEvent] = []
-    var settings = AppSettings.default
+    var settings = AppSettings.standard
     var cameraPaused = false
 
     // MARK: Seed
@@ -192,7 +192,13 @@ struct MockHub {
     /// Day order used by `/state` and `/doses?date=`: by time, then taken doses in the order they were
     /// taken, then doses still waiting.
     static func dayOrder(_ a: DoseSlot, _ b: DoseSlot) -> Bool {
-        func rank(_ s: DoseSlot) -> Int { s.status == .taken ? 0 : (s.status == .notTaken ? 1 : 2) }
+        func rank(_ slot: DoseSlot) -> Int {
+            switch slot.status {
+            case .taken: 0
+            case .notTaken: 1
+            case .upcoming: 2
+            }
+        }
         if a.scheduledAt != b.scheduledAt { return a.scheduledAt < b.scheduledAt }
         if rank(a) != rank(b) { return rank(a) < rank(b) }
         if let ta = a.takenAt, let tb = b.takenAt, ta != tb { return ta < tb }
@@ -200,11 +206,11 @@ struct MockHub {
     }
 
     func todaySlots() -> [DoseSlot] {
-        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: now) }.sorted(by: Self.dayOrder)
+        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: now) }.sorted { Self.dayOrder($0, $1) }
     }
 
     func slots(on day: Date) -> [DoseSlot] {
-        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: day) }.sorted(by: Self.dayOrder)
+        slots.filter { Self.cal.isDate($0.scheduledAt, inSameDayAs: day) }.sorted { Self.dayOrder($0, $1) }
     }
 
     func recentSlots(for medicationID: Int) -> [DoseSlot] {
@@ -230,7 +236,8 @@ struct MockHub {
         let dayCount = Self.cal.range(of: .day, in: .month, for: first)?.count ?? 30
         let today = Self.cal.startOfDay(for: now)
         var days: [AdherenceDay] = []
-        var due = 0, taken = 0
+        var due = 0
+        var taken = 0
         var missedHours: [Int] = []
 
         for offset in 0..<dayCount {

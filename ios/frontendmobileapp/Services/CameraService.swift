@@ -75,7 +75,7 @@ final class CameraModel: CameraSource {
         guard authorization == .authorized else { return }
 
         engine.onFeedback = { [weak self] feedback in
-            Task { @MainActor in self?.feedback = feedback }
+            Task { @MainActor [weak self] in self?.feedback = feedback }
         }
         let available = await engine.configure()
         guard available else {
@@ -195,13 +195,15 @@ nonisolated final class CaptureEngine: NSObject, AVCapturePhotoCaptureDelegate,
         }
     }
 
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+    func photoOutput(_: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        // Read the bytes here: `AVCapturePhoto` is not Sendable, so it must not cross into the queue closure.
+        let data = error == nil ? photo.fileDataRepresentation() : nil
         queue.async {
             guard let continuation = self.photoContinuation else { return }
             self.photoContinuation = nil
             if let error {
                 continuation.resume(throwing: error)
-            } else if let data = photo.fileDataRepresentation() {
+            } else if let data {
                 continuation.resume(returning: data)
             } else {
                 continuation.resume(throwing: CameraError.noData)
@@ -210,7 +212,7 @@ nonisolated final class CaptureEngine: NSObject, AVCapturePhotoCaptureDelegate,
     }
 
     /// Reads text on preview frames a couple of times a second to drive "Text is sharp. Hold still."
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    func captureOutput(_: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from _: AVCaptureConnection) {
         let now = Date()
         guard now.timeIntervalSince(lastAnalysis) > 0.6,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -224,8 +226,13 @@ nonisolated final class CaptureEngine: NSObject, AVCapturePhotoCaptureDelegate,
 
         let results = request.results ?? []
         let confident = results.filter { ($0.topCandidates(1).first?.confidence ?? 0) > 0.5 }
-        let feedback: CameraFeedback = confident.count >= 4 ? .sharp : (results.isEmpty ? .searching : .moveCloser)
-        onFeedback?(feedback)
+        onFeedback?(Self.feedback(confidentCount: confident.count, totalCount: results.count))
+    }
+
+    /// Four or more confidently read words means the label is sharp enough to capture.
+    private static func feedback(confidentCount: Int, totalCount: Int) -> CameraFeedback {
+        if confidentCount >= 4 { return .sharp }
+        return totalCount == 0 ? .searching : .moveCloser
     }
 }
 
@@ -234,14 +241,16 @@ nonisolated final class CaptureEngine: NSObject, AVCapturePhotoCaptureDelegate,
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
-    func makeUIView(context: Context) -> PreviewView {
+    func makeUIView(context _: Context) -> PreviewView {
         let view = PreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_: PreviewView, context _: Context) {
+        // The session is attached once in makeUIView; there is nothing to refresh.
+    }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }

@@ -37,7 +37,7 @@ final class AppStore {
     var now: Date = MockHub.demoStart
 
     // Settings (`GET /settings`)
-    var settings: AppSettings = .default
+    var settings: AppSettings = .standard
     var settingsJustSaved = false
     @ObservationIgnored private var syncedSettings: AppSettings?
     @ObservationIgnored private var saveTask: Task<Void, Never>?

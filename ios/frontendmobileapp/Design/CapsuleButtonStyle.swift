@@ -31,8 +31,22 @@ struct CapsuleButtonStyle: ButtonStyle {
         }
     }
 
-    private var fontSize: CGFloat { size == .large ? 18 : (size == .compact ? 15 : 17) }
-    private var horizontalPadding: CGFloat { size == .large ? 30 : (size == .compact ? 16 : 20) }
+    private var fontSize: CGFloat {
+        switch size {
+        case .large: 18
+        case .standard: 17
+        case .compact: 15
+        }
+    }
+
+    private var horizontalPadding: CGFloat {
+        switch size {
+        case .large: 30
+        case .standard: 20
+        case .compact: 16
+        }
+    }
+
     private var minHeight: CGFloat { size == .large ? 56 : 44 }
 
     func makeBody(configuration: Configuration) -> some View {

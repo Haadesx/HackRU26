@@ -120,13 +120,17 @@ struct VerifyView: View {
                     }
                 }
             }
-            Button("Keep it", role: .cancel) {}
+            Button("Keep it", role: .cancel) {
+                // Nothing to do: a cancel-role button only dismisses the dialog.
+            }
         } message: {
             Text("Nothing is added, and the photos are deleted.")
         }
         .confirmationDialog("Clear what MedCheck read?", isPresented: $confirmManual, titleVisibility: .visible) {
             Button("Clear and type it myself", role: .destructive) { draft.clearForManualEntry() }
-            Button("Keep what was read", role: .cancel) {}
+            Button("Keep what was read", role: .cancel) {
+                // Nothing to do: a cancel-role button only dismisses the dialog.
+            }
         }
     }
 

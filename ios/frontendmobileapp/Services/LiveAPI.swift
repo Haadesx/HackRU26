@@ -36,7 +36,8 @@ final class LiveAPI: MedCheckAPI {
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
 
-        let data: Data, response: URLResponse
+        let data: Data
+        let response: URLResponse
         do {
             (data, response) = try await session.data(for: req)
         } catch {
@@ -52,7 +53,7 @@ final class LiveAPI: MedCheckAPI {
         return try decode(T.self, from: data)
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    private func decode<T: Decodable>(_: T.Type, from data: Data) throws -> T {
         do { return try decoder.decode(T.self, from: data) } catch { throw APIError.badResponse }
     }
 

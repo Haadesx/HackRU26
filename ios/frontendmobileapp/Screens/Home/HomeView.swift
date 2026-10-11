@@ -67,8 +67,7 @@ struct HomeView: View {
 
     private var greeting: String {
         let hour = Fmt.calendar.component(.hour, from: store.now)
-        let part = hour < 12 ? "morning" : (hour < 17 ? "afternoon" : "evening")
-        return "Good \(part), Elena. Here's how Rosa is doing."
+        return "Good \(Fmt.dayPart(forHour: hour)), Elena. Here's how Rosa is doing."
     }
 
     private var header: some View {

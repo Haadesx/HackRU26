@@ -141,18 +141,14 @@ struct Scan: Codable, Identifiable, Hashable {
     var labelImageUrl: String?
     var manual: Bool?                 // UI addition: created by "Enter the details by hand"
 
-    init(id: Int, status: ScanStatus, fields: [ScanField], photoCount: Int = 0, createdAt: Date? = nil,
-         events: [ScanEvent] = [], labelImageUrl: String? = nil, manual: Bool? = nil) {
-        self.id = id
-        self.status = status
-        self.fields = fields
-        self.photoCount = photoCount
-        self.createdAt = createdAt
-        self.events = events
-        self.labelImageUrl = labelImageUrl
-        self.manual = manual
-    }
+    var missingFields: [ScanField] { fields.filter { $0.state == .missing } }
 
+    func field(_ key: String) -> ScanField? { fields.first { $0.key == key } }
+    func value(_ key: String) -> String? { field(key)?.value }
+}
+
+// Decoding lives in an extension so the struct keeps its synthesized memberwise initializer.
+extension Scan {
     /// Lenient: `POST /scans/{id}/photos` may answer with just the fields found so far.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -165,11 +161,6 @@ struct Scan: Codable, Identifiable, Hashable {
         labelImageUrl = try c.decodeIfPresent(String.self, forKey: .labelImageUrl)
         manual = try c.decodeIfPresent(Bool.self, forKey: .manual)
     }
-
-    var missingFields: [ScanField] { fields.filter { $0.state == .missing } }
-
-    func field(_ key: String) -> ScanField? { fields.first { $0.key == key } }
-    func value(_ key: String) -> String? { field(key)?.value }
 }
 
 // MARK: - Hub state
@@ -297,7 +288,7 @@ struct AppSettings: Codable, Equatable {
     var remindAgain: RemindAgain
     var voiceLanguage: VoiceLanguage
 
-    static let `default` = AppSettings(
+    static let standard = AppSettings(
         caregivers: [],
         firstReminderDays: 7, secondReminderDays: 5, urgentDays: 3,
         textMissedDoses: true, textNoRefills: true, textWrongBottle: false,
