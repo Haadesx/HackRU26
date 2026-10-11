@@ -3,9 +3,9 @@
 > **Audience:** ChatGPT and Hermes (senior technical review).
 > **Maintainer:** Apollo (orchestrator) · **Canonical branch:** `feat/integration`
 > **Repo:** https://github.com/Haadesx/HackRU26 · **Operator:** Varesh
-> **Last updated:** 2026-10-11 ~05:00 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal), **submission frozen at `7f93e60`**.
-> **Final submission commit:** `7f93e60afb915f037d8127787fe1e02bbe8a5ec6` on `feat/integration`
-> (submission URL: https://github.com/Haadesx/HackRU26/tree/feat/integration).
+> **Last updated:** 2026-10-11 ~05:10 UTC — **safety corrections complete** (fail-closed verification, required dosage-form confirmation, safe rehearsal).
+> **Code freeze:** `7f93e60afb915f037d8127787fe1e02bbe8a5ec6` · **final tip** `a1e1f266dc14cd82ec3d02e78a1a7454d43e3e65` (docs-only delta) on `feat/integration` —
+> submission URL: https://github.com/Haadesx/HackRU26/tree/feat/integration.
 > **Canonical branch:** `feat/integration` — current commit recorded below each pass.
 > **Submission deadline:** Sunday 2026-10-11 12:00 EDT (per Hermes mission
 > `MEDCHECK-HACKRU26-DEMO-HARDENING`).
