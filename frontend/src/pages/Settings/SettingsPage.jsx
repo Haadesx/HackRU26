@@ -36,13 +36,13 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-7">
-      <h1 className="text-[38px] font-bold leading-tight">Settings</h1>
+    <div className="grid items-start gap-7 xl:grid-cols-2">
+      <h1 className="text-[38px] font-bold leading-tight xl:col-span-2">Settings</h1>
 
       <Card as="section" aria-labelledby="people-h" className="flex flex-col gap-3">
         <div>
           <h2 id="people-h" className="text-xl font-bold">People who get texts</h2>
-          <p className="text-ink-soft">Only these people ever hear from MedCheck. {data.patient.name} chose them.</p>
+          <p className="max-w-[70ch] text-ink-soft">Only these people ever hear from MedCheck. {data.patient.name} chose them.</p>
         </div>
         <ul>
           {s.caregivers.map((c) => (
@@ -80,7 +80,7 @@ export default function SettingsPage() {
       <Card as="section" aria-labelledby="when-h" className="flex flex-col gap-4">
         <div>
           <h2 id="when-h" className="text-xl font-bold">When to text you</h2>
-          <p className="text-ink-soft">MedCheck warns you as each medication's supply gets low.</p>
+          <p className="max-w-[70ch] text-ink-soft">MedCheck warns you as each medication's supply gets low.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
           {[["first", "First reminder"], ["second", "Second reminder"], ["urgent", "Urgent"]].map(([k, label]) => (
@@ -98,7 +98,7 @@ export default function SettingsPage() {
       <Card as="section" aria-labelledby="rem-h" className="flex flex-col gap-4">
         <div>
           <h2 id="rem-h" className="text-xl font-bold">{data.patient.name}'s reminders</h2>
-          <p className="text-ink-soft">How MedCheck speaks to {data.patient.name} through the wearable.</p>
+          <p className="max-w-[70ch] text-ink-soft">How MedCheck speaks to {data.patient.name} through the wearable.</p>
         </div>
         <label className="flex max-w-xs flex-col gap-1.5">
           <span className="font-bold">Remind again if a dose is missed</span>
@@ -117,7 +117,7 @@ export default function SettingsPage() {
       </Card>
 
       {(dirty || saved) && (
-        <div className="sticky bottom-24 z-30 flex items-center justify-end gap-3 rounded-full bg-white/90 p-2 shadow-dialog backdrop-blur">
+        <div className="sticky bottom-24 z-30 flex items-center justify-end gap-3 rounded-full bg-white/90 p-2 shadow-dialog backdrop-blur xl:col-span-2">
           {saved && !dirty && <span role="status" className="mr-auto pl-4 font-bold text-ok">Settings saved</span>}
           {dirty && <Button variant="secondary" onClick={() => setS(data.settings)}>Undo changes</Button>}
           <Button onClick={() => save()} busy={busy === "save"} disabled={!dirty}>Save settings</Button>
@@ -127,7 +127,7 @@ export default function SettingsPage() {
       <Card as="section" aria-labelledby="priv-h" className="flex flex-col gap-4">
         <div>
           <h2 id="priv-h" className="text-xl font-bold">Privacy</h2>
-          <p className="text-ink-soft">Everything is processed on the hub in {data.patient.name}'s home. Camera images are never saved.</p>
+          <p className="max-w-[70ch] text-ink-soft">Everything is processed on the hub in {data.patient.name}'s home. Camera images are never saved.</p>
         </div>
         <div className="rounded-2xl bg-mist px-5 py-4">
           <strong>What MedCheck stores</strong>

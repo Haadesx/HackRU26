@@ -3,9 +3,16 @@
 @tailwind utilities;
 
 @layer base {
-  html { -webkit-text-size-adjust: 100%; }
-  body { @apply font-sans text-ink bg-page text-[17px] leading-normal antialiased; }
+  html { -webkit-text-size-adjust: 100%; color-scheme: light; }
+  body { @apply font-sans text-ink bg-page text-[17px] leading-[1.5] antialiased; }
+  h1, h2, h3 { text-wrap: balance; }
+  button, a, input, select, textarea, label { touch-action: manipulation; }
+  button, a { -webkit-tap-highlight-color: rgba(31, 58, 104, 0.12); }
   :focus-visible { outline: 3px solid theme("colors.navy"); outline-offset: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
 }
 
 @layer components {
@@ -16,7 +23,7 @@
     --pill-glow: rgba(100, 150, 210, 0.22);
     --pill-text: theme("colors.navy");
     @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 min-h-[44px]
-      font-bold text-base select-none cursor-pointer transition-[transform,box-shadow] duration-100;
+      font-bold text-base select-none cursor-pointer transition-[transform,box-shadow,filter] duration-100;
     color: var(--pill-text);
     background:
       linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.12) 38%, rgba(255,255,255,0) 55%, rgba(21,34,56,.07) 100%),
@@ -25,6 +32,7 @@
       var(--pill-blend);
     box-shadow: inset 0 -3px 6px rgba(21,34,56,.10), 0 3px 0 var(--pill-edge), 0 6px 14px var(--pill-glow);
   }
+  .pill:not(:disabled):not([aria-disabled="true"]):hover { filter: brightness(1.04) saturate(1.05); }
   .pill:active:not(:disabled) {
     transform: translateY(3px);
     box-shadow: inset 0 -2px 4px rgba(21,34,56,.10), 0 0 0 var(--pill-edge);
@@ -51,6 +59,11 @@
   .field {
     @apply w-full min-h-[44px] rounded-full border-2 border-line bg-white px-4 text-ink
       placeholder:text-ink-muted focus:border-sky focus:outline-none;
+  }
+  .field:focus-visible {
+    border-color: theme("colors.navy");
+    outline: 3px solid theme("colors.sky");
+    outline-offset: 2px;
   }
   .link { @apply font-bold text-navy underline-offset-4 hover:underline; }
 }
