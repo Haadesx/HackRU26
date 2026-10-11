@@ -358,5 +358,6 @@ Before the demo: items 1–3, with the hub reachable from the phone's network.
 - `feat/ios-aparajita`: `b503d96` (handoff), `1f83520` (records that SHA), both docs-only on top of `d5e922e`.
 - Contract-conformance milestone (code + docs): `b42266c`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
 - Track tab and dose scanner (code + docs): `8e8df9d`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
+- Parity with `feat/integrate-track-tab` (code + docs): `7548aae`, verified on GitHub as the tip of `feat/ios-aparajita` on 2026-10-11.
 - Earlier: bottles at 75% and device snapshot `f57851a`, `c869e8d`.
 - The docs-only commit that records these lines has its own SHA; `git log feat/ios-aparajita` is authoritative.
